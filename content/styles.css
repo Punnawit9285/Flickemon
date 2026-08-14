@@ -1,0 +1,543 @@
+/**
+ * Flickemon Chrome Extension Stylesheet
+ * ──────────────────────────────────────
+ * Scoped styles for injected Flickemon widget, Pomodoro timer, and Modals.
+ * Automatically adapts to Light, Dark, and Pink themes via Ionic variables & body class inheritance.
+ */
+
+:root, body {
+    --flick-bg: var(--ion-background-color, #f4f5f8);
+    --flick-card-bg: var(--ion-card-background, #ffffff);
+    --flick-text: var(--ion-text-color, #1f2937);
+    --flick-text-muted: var(--ion-color-medium, #6b7280);
+    --flick-border: var(--ion-border-color, #e5e7eb);
+    --flick-primary: var(--ion-color-primary, #3b82f6);
+    --flick-primary-hover: #2563eb;
+    --flick-danger: var(--ion-color-danger, #ef4444);
+    --flick-success: var(--ion-color-success, #10b981);
+    --flick-warning: var(--ion-color-warning, #f59e0b);
+}
+
+
+
+
+/* ────────────────────────── Injected Cards ────────────────────────── */
+
+.flickemon-card {
+    background: var(--flick-card-bg);
+    color: var(--flick-text);
+    border: 1px solid var(--flick-border);
+    border-radius: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    margin: 1rem 0;
+    padding: 1rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    transition: background 0.3s ease, color 0.3s ease;
+}
+
+.flickemon-card .flickemon-header,
+.flickemon-card .pomodoro-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 700;
+    font-size: 1.05rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--flick-border);
+    margin-bottom: 0.75rem;
+}
+
+.header-left { display: flex; align-items: center; gap: 0.5rem; }
+.header-icon-svg { color: var(--flick-primary); width: 22px; height: 22px; display: inline-block; vertical-align: middle; }
+.header-actions { display: flex; align-items: center; gap: 0.25rem; }
+
+.icon-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    color: var(--flick-text-muted);
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+.icon-btn:hover { background: rgba(0,0,0,0.05); color: var(--flick-text); }
+
+/* ────────────────────────── Flickemon Widget HUD ────────────────────────── */
+
+.hud-columns { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.hud-col.partner-col { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 0.75rem; }
+
+.battle-col-box {
+    flex: 1;
+    min-width: 250px;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.75rem;
+    border: 1.5px solid var(--flick-primary);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.02);
+}
+
+.partner-mini-sprite, .wild-mini-sprite {
+    width: 36px;
+    height: 36px;
+    object-fit: contain;
+    image-rendering: pixelated;
+    flex-shrink: 0;
+}
+
+.partner-info, .battle-info { flex: 1; min-width: 0; }
+.name-line { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 2px; }
+.pk-name { font-weight: 700; font-size: 0.95rem; color: var(--flick-text); }
+.pk-lvl { font-size: 0.8rem; font-weight: 600; color: var(--flick-text-muted); }
+
+.vs-badge {
+    font-size: 0.75rem;
+    font-weight: 800;
+    color: #d97706;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    padding: 2px 6px;
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+
+.exp-bar-track, .hp-bar-track, .progress-bar-track {
+    width: 100%;
+    height: 6px;
+    background: var(--flick-border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 3px 0;
+}
+.exp-bar-fill { height: 100%; background: var(--flick-primary); transition: width 0.3s ease; }
+.hp-bar-fill { height: 100%; background: #dc2626; transition: width 0.3s ease; }
+
+.exp-text { font-size: 0.7rem; color: var(--flick-text-muted); text-align: left; }
+.flickemon-card .header-actions { display: flex; align-items: center; gap: 0.25rem; position: relative; }
+
+.flickemon-card .icon-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    color: var(--flick-text-muted);
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+.flickemon-card .icon-btn:hover { background: rgba(0,0,0,0.05); color: var(--flick-text); }
+
+/* Popover Options Menu */
+.options-popover-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: var(--flick-card-bg);
+    border: 1px solid var(--flick-border);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+    z-index: 9999;
+    min-width: 140px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+.popover-item { padding: 10px 14px; font-weight: 600; font-size: 0.9rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; color: var(--flick-text); }
+.popover-icon { display: flex; align-items: center; color: var(--flick-primary); }
+.popover-item:hover { background: rgba(0,0,0,0.05); }
+
+/* Start Badge Button */
+.start-game-badge-btn {
+    background: var(--flick-primary);
+    color: #fff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.start-game-badge-btn:hover { background: var(--flick-primary-hover); }
+
+/* ────────────────────────── Pomodoro Timer ────────────────────────── */
+
+.pomodoro-body { text-align: center; }
+.phase-badge { font-weight: 700; color: var(--flick-primary); margin-bottom: 0.25rem; font-size: 0.9rem; }
+.timer-display { font-size: 2.2rem; font-weight: 800; font-family: monospace; margin: 0.25rem 0; }
+
+.controls-row { display: flex; justify-content: center; gap: 0.5rem; margin-top: 0.75rem; }
+.pomo-btn { padding: 6px 16px; border-radius: 6px; font-weight: 700; cursor: pointer; border: none; font-size: 0.85rem; }
+.primary-btn { background: var(--flick-primary); color: #fff; }
+.secondary-btn { background: var(--flick-border); color: var(--flick-text); }
+.danger-btn { background: var(--flick-danger); color: #fff; }
+.tertiary-btn { background: transparent; color: var(--flick-text-muted); }
+
+.settings-panel { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--flick-border); text-align: left; }
+.duration-inputs { display: flex; gap: 0.75rem; margin: 0.5rem 0; }
+.duration-inputs label { font-size: 0.8rem; font-weight: 600; }
+.duration-inputs input { width: 50px; padding: 4px; border-radius: 4px; border: 1px solid var(--flick-border); background: var(--flick-card-bg); color: var(--flick-text); }
+
+/* ────────────────────────── Full Modals ────────────────────────── */
+
+.flickemon-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+.flickemon-modal-card {
+    background: var(--flick-card-bg);
+    color: var(--flick-text);
+    border: 1px solid var(--flick-border);
+    border-radius: 16px;
+    width: 100%;
+    max-width: 680px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+    overflow: hidden;
+}
+.modal-header { padding: 1rem; border-bottom: 1px solid var(--flick-border); display: flex; justify-content: space-between; align-items: center; }
+.modal-header h2 { margin: 0; font-size: 1.2rem; font-weight: 800; }
+.modal-close-btn { background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: var(--flick-text-muted); }
+.modal-body { padding: 1rem; overflow-y: auto; flex: 1; }
+
+/* Starter Grid */
+.gen-tabs { display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.5rem; margin-bottom: 1rem; }
+.gen-tab-btn { background: var(--flick-bg); border: 1px solid var(--flick-border); color: var(--flick-text); padding: 6px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.gen-tab-btn.active { background: var(--flick-primary); color: #fff; border-color: var(--flick-primary); }
+
+.starters-grid, .party-grid, .pokedex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.75rem; }
+.starter-card, .party-card, .dex-card {
+    border: 1px solid var(--flick-border);
+    border-radius: 10px;
+    padding: 0.75rem;
+    text-align: center;
+    background: var(--flick-bg);
+}
+.starter-card img, .party-card img, .dex-card img { width: 64px; height: 64px; object-fit: contain; }
+.starter-card h4, .party-card h4 { margin: 0.25rem 0; font-size: 0.9rem; }
+.choose-starter-btn, .switch-pk-btn { background: var(--flick-primary); color: #fff; border: none; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; cursor: pointer; margin-top: 0.5rem; }
+
+/* Pokédex Styles */
+.dex-card.unseen img { display: none; }
+.dex-card.silhouette img { filter: brightness(0); opacity: 0.4; }
+.dex-num { font-size: 0.7rem; color: var(--flick-text-muted); display: block; }
+
+/* Type Badges */
+.type-pill { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; color: #fff; margin: 1px; }
+.type-pill.fire { background: #ee8130; }
+.type-pill.water { background: #6390f0; }
+.type-pill.grass { background: #7ac74c; }
+.type-pill.electric { background: #f7d02c; color: #000; }
+.type-pill.poison { background: #a33ea1; }
+.type-pill.flying { background: #a890f0; }
+.type-pill.bug { background: #a6b91a; }
+.type-pill.normal { background: #a8a878; }
+.type-pill.ground { background: #e2bf65; }
+.type-pill.psychic { background: #f95587; }
+.type-pill.rock { background: #b6a136; }
+.type-pill.ghost { background: #735797; }
+.type-pill.dragon { background: #6f35fc; }
+.type-pill.dark { background: #705746; }
+.type-pill.steel { background: #b7b7ce; }
+.type-pill.fairy { background: #d685ad; }
+.type-pill.ice { background: #96d9d6; color: #000; }
+.type-pill.fighting { background: #c22e28; }
+
+/* Evolution Overlay */
+.evolution-overlay-screen {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(8px);
+    z-index: 20000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    text-align: center;
+}
+.evo-box h2 { font-size: 1.5rem; font-weight: 800; margin-bottom: 1.5rem; }
+.evo-sprites { display: flex; align-items: center; justify-content: center; gap: 1.5rem; }
+.evo-sprites img { width: 120px; height: 120px; object-fit: contain; }
+.evo-sprites .arrow { font-size: 2rem; }
+
+/* ====================================================
+   Flickemon Vanilla JS Modals (Chrome Extension)
+   ==================================================== */
+
+.flickemon-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.flickemon-modal-container {
+    width: 90%;
+    max-width: 500px;
+    height: 80vh;
+    max-height: 600px;
+    background: var(--flick-bg, #fff0f5);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    position: relative;
+}
+
+/* Modal Header */
+.flickemon-modal-header {
+    background: var(--flick-primary, #f48fb1);
+    color: #fff;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    z-index: 2;
+}
+.dark-theme .flickemon-modal-header {
+    color: var(--flick-text);
+}
+
+.flickemon-modal-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0;
+    line-height: 1;
+    color: #4a148c; /* Dark text for contrast on pink */
+}
+
+.dark-theme .flickemon-modal-title {
+    color: var(--flick-text);
+}
+
+.flickemon-modal-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    background: none;
+    border: none;
+    color: #4a148c;
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+}
+.dark-theme .flickemon-modal-close { color: var(--flick-text); }
+
+/* Tabs */
+.flickemon-tabs {
+    display: flex;
+    margin-top: 16px;
+    gap: 8px;
+    justify-content: space-around;
+}
+
+.flickemon-tab-btn {
+    background: none;
+    border: none;
+    color: rgba(74, 20, 140, 0.6);
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    text-transform: uppercase;
+}
+.dark-theme .flickemon-tab-btn { color: var(--flick-text-muted); }
+
+.flickemon-tab-btn:hover {
+    color: rgba(74, 20, 140, 0.9);
+}
+.dark-theme .flickemon-tab-btn:hover { color: var(--flick-text); }
+
+.flickemon-tab-btn.active {
+    color: #e91e63;
+    border-bottom: 2px solid #e91e63;
+}
+.dark-theme .flickemon-tab-btn.active {
+    color: var(--flick-primary);
+    border-bottom: 2px solid var(--flick-primary);
+}
+
+/* Modal Content Area */
+.flickemon-modal-content {
+    flex: 1;
+    overflow-y: auto;
+    background: #fff5f8; /* very light pink */
+    position: relative;
+    padding: 16px;
+}
+.dark-theme .flickemon-modal-content { background: var(--flick-bg); }
+
+/* Type Badges */
+.type-badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 0.75rem;
+    color: #fff;
+    font-weight: 600;
+    text-transform: capitalize;
+    display: inline-block;
+    margin: 0 4px;
+}
+.type-badge[data-type="fire"] { background: #F08030; }
+.type-badge[data-type="water"] { background: #6890F0; }
+.type-badge[data-type="grass"] { background: #78C850; }
+.type-badge[data-type="electric"] { background: #F8D030; color: #333; }
+.type-badge[data-type="poison"] { background: #A040A0; }
+.type-badge[data-type="flying"] { background: #A890F0; }
+.type-badge[data-type="bug"] { background: #A8B820; }
+.type-badge[data-type="normal"] { background: #A8A878; }
+.type-badge[data-type="psychic"] { background: #F85888; }
+.type-badge[data-type="fighting"] { background: #C03028; }
+.type-badge[data-type="rock"] { background: #B8A038; }
+.type-badge[data-type="ground"] { background: #E0C068; color: #333; }
+.type-badge[data-type="ghost"] { background: #705898; }
+.type-badge[data-type="dragon"] { background: #7038F8; }
+.type-badge[data-type="ice"] { background: #98D8D8; color: #333; }
+.type-badge[data-type="dark"] { background: #705848; }
+.type-badge[data-type="steel"] { background: #B8B8D0; color: #333; }
+.type-badge[data-type="fairy"] { background: #EE99AC; }
+
+/* Settings / Stats rows */
+.flickemon-list-card {
+    background: #fce4ec; /* slightly darker pink */
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+.dark-theme .flickemon-list-card { background: var(--flick-card-bg); }
+
+.flickemon-list-item {
+    display: flex;
+    flex-direction: column;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+    color: #4a148c;
+}
+.dark-theme .flickemon-list-item { border-bottom: 1px solid var(--flick-border); color: var(--flick-text); }
+.flickemon-list-item:last-child { border-bottom: none; }
+
+.flickemon-list-item-title {
+    font-size: 0.9rem;
+    color: #4a148c;
+}
+.dark-theme .flickemon-list-item-title { color: var(--flick-text); }
+
+.flickemon-list-item-sub {
+    font-size: 0.85rem;
+    color: #c2185b;
+}
+.dark-theme .flickemon-list-item-sub { color: var(--flick-text-muted); }
+
+/* Reset Button */
+.flickemon-danger-btn {
+    width: 100%;
+    padding: 12px;
+    background: transparent;
+    border: 2px solid #e91e63;
+    color: #e91e63;
+    font-weight: 700;
+    border-radius: 4px;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+}
+.flickemon-danger-btn:hover {
+    background: rgba(233, 30, 99, 0.1);
+}
+
+/* Party List */
+.flickemon-party-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    background: #e91e63; /* Pink background for active */
+    color: white;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+.flickemon-party-row.inactive {
+    background: #fce4ec;
+    color: #4a148c;
+}
+.dark-theme .flickemon-party-row.inactive { background: var(--flick-card-bg); color: var(--flick-text); }
+
+.party-sprite { width: 40px; height: 40px; image-rendering: pixelated; margin-right: 12px; }
+.party-info { flex: 1; display: flex; flex-direction: column; }
+.party-name { font-size: 0.9rem; font-weight: 600; }
+.party-level { font-size: 0.8rem; opacity: 0.9; }
+.party-star { color: #ffd700; font-size: 1.2rem; }
+
+/* Pokédex Grid */
+.flickemon-pokedex-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+    text-align: center;
+}
+@media (max-width: 400px) {
+    .flickemon-pokedex-grid { grid-template-columns: repeat(4, 1fr); }
+}
+
+.pokedex-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 0;
+}
+.pokedex-sprite { width: 48px; height: 48px; image-rendering: pixelated; }
+.pokedex-unknown {
+    width: 48px; height: 48px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; color: #ccc; font-weight: bold;
+}
+.pokedex-num { font-size: 0.7rem; color: #999; margin-top: 4px; }
+.pokedex-name { font-size: 0.7rem; font-weight: 600; color: #4a148c; }
+.dark-theme .pokedex-name { color: var(--flick-text); }
+
+/* My Partner Stats Grid */
+.partner-section { text-align: center; padding: 16px 0; color: #4a148c; }
+.dark-theme .partner-section { color: var(--flick-text); }
+.partner-big-sprite { width: 128px; height: 128px; image-rendering: pixelated; }
+.partner-big-name { font-size: 1.5rem; font-weight: 800; margin: 8px 0 4px; }
+.partner-types { margin-bottom: 8px; }
+.partner-big-level { font-size: 1.1rem; font-weight: 600; color: #c2185b; margin-bottom: 8px; }
+.dark-theme .partner-big-level { color: var(--flick-text-muted); }
+
+.partner-exp-wrap { max-width: 300px; margin: 8px auto; }
+.partner-exp-bar-bg { height: 6px; background: rgba(0,0,0,0.1); border-radius: 3px; overflow: hidden; }
+.partner-exp-bar-fill { height: 100%; background: #e91e63; transition: width 0.3s; }
+.partner-exp-text { font-size: 0.8rem; color: #c2185b; margin-top: 4px; }
+.dark-theme .partner-exp-text { color: var(--flick-text-muted); }
+
+.partner-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    max-width: 280px;
+    margin: 16px auto;
+}
+.stat-box { display: flex; justify-content: space-between; padding: 8px 12px; background: #fff; border-radius: 8px; }
+.dark-theme .stat-box { background: var(--flick-card-bg); }
+.stat-box-label { font-size: 0.8rem; color: #c2185b; }
+.dark-theme .stat-box-label { color: var(--flick-text-muted); }
+.stat-box-value { font-size: 0.85rem; font-weight: 700; }

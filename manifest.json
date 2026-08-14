@@ -1,0 +1,31 @@
+{
+    "manifest_version": 3,
+    "name": "Flickémon",
+    "version": "1.0.0",
+    "description": "Gamify FlickPlayer studying with Pokémon! Battle, catch, evolve — all while watching lectures.",
+    "permissions": ["storage"],
+    "content_scripts": [
+        {
+            "matches": ["*://*.docchula.com/*", "*://localhost/*"],
+            "js": [
+                "content/flickemon-config.js",
+                "content/flickemon-engine.js",
+                "content/flickemon-ui.js",
+                "content/content-script.js"
+            ],
+            "css": ["content/styles.css"],
+            "run_at": "document_idle"
+        }
+    ],
+    "icons": {
+        "48": "icons/flickemon-48.png",
+        "128": "icons/flickemon-128.png"
+    },
+    "action": {
+        "default_popup": "popup/popup.html",
+        "default_icon": {
+            "48": "icons/flickemon-48.png",
+            "128": "icons/flickemon-128.png"
+        }
+    }
+}
