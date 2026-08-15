@@ -86,28 +86,22 @@ class FlickemonEngine {
             }
         }
 
-        // 2. Background Sync: Fetch from cloud sync
+        // 2. Background Sync: Merge in any progress made on other devices
         if (chrome.storage.sync) {
             const syncData = await chrome.storage.sync.get([this.STORAGE_KEY]);
-            const cloudState = syncData ? syncData[this.STORAGE_KEY] : null;
+            const cloudSummary = syncData ? syncData[this.STORAGE_KEY] : null;
 
-            if (cloudState) {
-                // Determine which state is newer
-                const localTime = this.gameState.lastSyncedAt || 0;
-                const cloudTime = cloudState.lastSyncedAt || 0;
+            const localTime = this.gameState.lastSyncedAt || 0;
+            const cloudTime = cloudSummary ? (cloudSummary.lastSyncedAt || 0) : 0;
 
-                if (cloudTime > localTime) {
-                    this.gameState = cloudState;
-                    if (chrome.storage.local) {
-                        chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
-                    }
-                    this.emitState();
-                } else if (localTime > cloudTime && this.gameState.hasStarted) {
-                    // Local is newer, push to cloud
-                    this.saveToSyncStorage();
+            if (cloudSummary && cloudTime > localTime) {
+                this.mergeSyncSummary(cloudSummary);
+                if (chrome.storage.local) {
+                    chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
                 }
+                this.emitState();
             } else if (this.gameState.hasStarted) {
-                // Cloud is empty but local has save, migrate local to cloud
+                // Local is newer (or cloud is empty), push our summary up
                 this.saveToSyncStorage();
             }
         }
@@ -129,7 +123,7 @@ class FlickemonEngine {
             if (areaName === 'sync' && changes[this.STORAGE_KEY]) {
                 const newValue = changes[this.STORAGE_KEY].newValue;
                 if (newValue && (!this.gameState.lastSyncedAt || newValue.lastSyncedAt > this.gameState.lastSyncedAt)) {
-                    this.gameState = newValue;
+                    this.mergeSyncSummary(newValue);
                     if (chrome.storage.local) {
                         chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
                     }
@@ -144,8 +138,9 @@ class FlickemonEngine {
         if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) return false;
 
         const syncData = await chrome.storage.sync.get([this.STORAGE_KEY]);
-        if (syncData && syncData[this.STORAGE_KEY]) {
-            this.gameState = syncData[this.STORAGE_KEY];
+        const cloudSummary = syncData ? syncData[this.STORAGE_KEY] : null;
+        if (cloudSummary) {
+            this.mergeSyncSummary(cloudSummary);
             if (chrome.storage.local) {
                 chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
             }
@@ -183,9 +178,58 @@ class FlickemonEngine {
         }
     }
 
+    // chrome.storage.sync caps each item at 8KB, and the full local state
+    // (unbounded party/pokedex history) can grow far past that. Sync only
+    // a compact cross-device summary; the full state stays local-only.
+    buildSyncSummary() {
+        const active = this.getActivePokemon();
+        return {
+            hasStarted: this.gameState.hasStarted,
+            lastSyncedAt: this.gameState.lastSyncedAt,
+            totalMinutesWatched: this.gameState.totalMinutesWatched,
+            activePokemon: active ? {
+                speciesId: active.speciesId,
+                level: active.level,
+                totalExp: active.totalExp,
+            } : null,
+            caughtIds: this.gameState.pokedex.filter(e => e.caught).map(e => e.speciesId),
+        };
+    }
+
     saveToSyncStorage() {
-        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-            chrome.storage.sync.set({ [this.STORAGE_KEY]: this.gameState });
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) return;
+
+        const result = chrome.storage.sync.set({ [this.STORAGE_KEY]: this.buildSyncSummary() });
+        if (result && typeof result.catch === 'function') {
+            result.catch(err => console.warn('[Flickémon] Cloud sync failed:', err));
+        }
+    }
+
+    // Applies a compact cloud summary onto local state without clobbering
+    // the full local party/pokedex history, which never leaves this device.
+    mergeSyncSummary(summary) {
+        if (!summary) return;
+
+        this.gameState.hasStarted = this.gameState.hasStarted || summary.hasStarted;
+        this.gameState.totalMinutesWatched = Math.max(this.gameState.totalMinutesWatched, summary.totalMinutesWatched || 0);
+        this.gameState.lastSyncedAt = summary.lastSyncedAt || this.gameState.lastSyncedAt;
+
+        for (const speciesId of summary.caughtIds || []) {
+            this.updatePokedex(speciesId, true);
+        }
+
+        if (summary.activePokemon) {
+            const { speciesId, level, totalExp } = summary.activePokemon;
+            let match = this.gameState.party.find(p => p.speciesId === speciesId);
+            if (!match) {
+                match = { instanceId: this.generateId(), speciesId, level, totalExp };
+                this.gameState.party.push(match);
+                this.updatePokedex(speciesId, true);
+            } else if (totalExp > match.totalExp) {
+                match.level = level;
+                match.totalExp = totalExp;
+            }
+            this.gameState.activeInstanceId = match.instanceId;
         }
     }
 

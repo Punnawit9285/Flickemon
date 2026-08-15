@@ -20,7 +20,7 @@ function getBackSpriteUrl(pokemonId) {
 // ─────────────────────────── EXP & Leveling ───────────────────────────
 
 const EXP_PER_MINUTE = 30;
-const BATTLE_WIN_EXP_BONUS = 22;
+const BATTLE_WIN_EXP_BONUS = 1;
 
 function calculateRealMaxHp(baseHp, level) {
     return Math.floor(((2 * baseHp) * level) / 100) + level + 10;
