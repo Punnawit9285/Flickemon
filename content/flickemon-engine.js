@@ -11,6 +11,7 @@ class FlickemonEngine {
         this.config = window.FlickemonConfig;
 
         this.gameState = this.createEmptyState();
+        this.isLoaded = false;
         this.wildOpponent = null;
         this.wildHpAcc = 0;
         this.respawnTimer = null;
@@ -19,6 +20,45 @@ class FlickemonEngine {
         this.wildListeners = [];
         this.encounterListeners = [];
         this.evolutionListeners = [];
+        this.adminDamageMultiplier = 1;
+    }
+
+    adminInstantKillOpponent() {
+        if (this.wildOpponent && (this.wildOpponent.status === 'fighting' || this.wildOpponent.status === 'battling')) {
+            this.wildHpAcc = 0;
+            this.onVideoProgress(0.001);
+        }
+    }
+
+    adminSetDamageMultiplier(multiplier) {
+        this.adminDamageMultiplier = Math.max(1, multiplier);
+    }
+
+    adminGetDamageMultiplier() {
+        return this.adminDamageMultiplier;
+    }
+
+    async adminSetPokemonLevel(level) {
+        const active = this.getActivePokemon();
+        if (!active) return;
+
+        const targetLevel = Math.min(100, Math.max(1, level));
+        active.level = targetLevel;
+        active.totalExp = this.config.expForLevel(targetLevel);
+
+        const evolution = this.config.canEvolveAt(active.speciesId, active.level);
+        if (evolution) {
+            const fromSpecies = this.config.getSpeciesById(active.speciesId);
+            const toSpecies = this.config.getSpeciesById(evolution.toId);
+            if (fromSpecies && toSpecies) {
+                active.speciesId = evolution.toId;
+                this.updatePokedex(evolution.toId, true);
+                this.evolutionListeners.forEach(cb => cb({ from: fromSpecies, to: toSpecies }));
+            }
+        }
+
+        this.emitState();
+        await this.saveGameState();
     }
 
     createEmptyState() {
@@ -30,21 +70,93 @@ class FlickemonEngine {
             pokedex: [],
             totalMinutesWatched: 0,
             lastSyncedAt: 0,
+            wildOpponent: null,
         };
     }
 
     async init() {
-        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-            const data = await chrome.storage.local.get([this.STORAGE_KEY]);
-            if (data && data[this.STORAGE_KEY]) {
-                this.gameState = data[this.STORAGE_KEY];
+        if (typeof chrome === 'undefined' || !chrome.storage) return;
+
+        // 1. Optimistic UI: Fast load from local storage
+        if (chrome.storage.local) {
+            const localData = await chrome.storage.local.get([this.STORAGE_KEY]);
+            if (localData && localData[this.STORAGE_KEY]) {
+                this.gameState = localData[this.STORAGE_KEY];
+                this.emitState();
             }
         }
-        this.emitState();
 
-        if (this.gameState.hasStarted && !this.wildOpponent) {
-            this.spawnWildOpponent();
+        // 2. Background Sync: Fetch from cloud sync
+        if (chrome.storage.sync) {
+            const syncData = await chrome.storage.sync.get([this.STORAGE_KEY]);
+            const cloudState = syncData ? syncData[this.STORAGE_KEY] : null;
+
+            if (cloudState) {
+                // Determine which state is newer
+                const localTime = this.gameState.lastSyncedAt || 0;
+                const cloudTime = cloudState.lastSyncedAt || 0;
+
+                if (cloudTime > localTime) {
+                    this.gameState = cloudState;
+                    if (chrome.storage.local) {
+                        chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
+                    }
+                    this.emitState();
+                } else if (localTime > cloudTime && this.gameState.hasStarted) {
+                    // Local is newer, push to cloud
+                    this.saveToSyncStorage();
+                }
+            } else if (this.gameState.hasStarted) {
+                // Cloud is empty but local has save, migrate local to cloud
+                this.saveToSyncStorage();
+            }
         }
+
+        this.isLoaded = true;
+
+        if (this.gameState.hasStarted) {
+            if (this.gameState.wildOpponent && this.gameState.wildOpponent.status === 'fighting') {
+                this.wildOpponent = this.gameState.wildOpponent;
+                this.wildHpAcc = this.wildOpponent.currentHp;
+                this.emitWild();
+            } else if (!this.wildOpponent) {
+                this.spawnWildOpponent();
+            }
+        }
+
+        // Listen for remote sync changes from other devices
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+            if (areaName === 'sync' && changes[this.STORAGE_KEY]) {
+                const newValue = changes[this.STORAGE_KEY].newValue;
+                if (newValue && (!this.gameState.lastSyncedAt || newValue.lastSyncedAt > this.gameState.lastSyncedAt)) {
+                    this.gameState = newValue;
+                    if (chrome.storage.local) {
+                        chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
+                    }
+                    this.emitState();
+                }
+            }
+        });
+    }
+
+    // Explicit manual sync used by the Settings "Force Cloud Sync" button
+    async forceCloudSync() {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) return false;
+
+        const syncData = await chrome.storage.sync.get([this.STORAGE_KEY]);
+        if (syncData && syncData[this.STORAGE_KEY]) {
+            this.gameState = syncData[this.STORAGE_KEY];
+            if (chrome.storage.local) {
+                chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
+            }
+            this.emitState();
+
+            if (this.gameState.hasStarted && !this.wildOpponent) {
+                this.spawnWildOpponent();
+            }
+            return true;
+        }
+        return false;
     }
 
     onStateChange(cb) { this.stateListeners.push(cb); cb(this.gameState); return () => this.stateListeners = this.stateListeners.filter(l => l !== cb); }
@@ -56,10 +168,24 @@ class FlickemonEngine {
     emitWild() { this.wildListeners.forEach(cb => cb(this.wildOpponent ? { ...this.wildOpponent } : null)); }
 
     async saveGameState() {
+        if (!this.isLoaded) return; // Prevent overwriting cloud save during initial load!
+
         this.gameState.lastSyncedAt = Date.now();
         this.emitState();
-        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-            await chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
+
+        if (typeof chrome !== 'undefined' && chrome.storage) {
+            // Instantly save to local (Optimistic UI)
+            if (chrome.storage.local) {
+                chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
+            }
+            // Push to cloud sync in background
+            this.saveToSyncStorage();
+        }
+    }
+
+    saveToSyncStorage() {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+            chrome.storage.sync.set({ [this.STORAGE_KEY]: this.gameState });
         }
     }
 
@@ -161,7 +287,7 @@ class FlickemonEngine {
 
             // Damage calculation (~150 seconds / 2.5 mins to defeat)
             const TARGET_BATTLE_SECONDS = 150;
-            const damagePerSec = this.wildOpponent.maxHp / TARGET_BATTLE_SECONDS;
+            const damagePerSec = (this.wildOpponent.maxHp / TARGET_BATTLE_SECONDS) * this.adminDamageMultiplier;
             this.wildHpAcc -= secondsWatched * damagePerSec;
             this.wildOpponent.currentHp = Math.max(0, Math.ceil(this.wildHpAcc));
 
@@ -200,6 +326,7 @@ class FlickemonEngine {
             this.emitWild();
         }
 
+        this.gameState.wildOpponent = this.wildOpponent;
         this.gameState.totalMinutesWatched += secondsWatched / 60;
         await this.saveGameState();
     }
@@ -222,8 +349,10 @@ class FlickemonEngine {
             fightDurationSeconds: 0,
         };
 
+        this.gameState.wildOpponent = this.wildOpponent;
         this.updatePokedex(wildSpecies.id, false);
         this.emitWild();
+        this.saveGameState();
     }
 
     rollWildPokemon() {

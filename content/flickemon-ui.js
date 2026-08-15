@@ -189,25 +189,42 @@ class FlickemonUI {
             { gen: 5, label: 'Gen 5', region: 'Unova', games: 'Black & White' },
             { gen: 6, label: 'Gen 6', region: 'Kalos', games: 'X & Y' },
             { gen: 7, label: 'Gen 7', region: 'Alola', games: 'Sun & Moon' },
+            { gen: 8, label: 'Gen 8', region: 'Galar', games: 'Sword & Shield' },
+            { gen: 9, label: 'Gen 9', region: 'Paldea', games: 'Scarlet & Violet' },
             { gen: 0, label: 'Special', region: 'Special Starters', games: 'Yellow & Let\'s Go' },
         ];
 
         modal.body.innerHTML = `
             <div class="starter-modal-content">
+                <div class="starter-modal-header-text">
+                    <h1 class="starter-hero-title">Choose Your Partner!</h1>
+                    <p class="starter-hero-subtitle">Select a Pokémon to begin your Flickémon journey</p>
+                </div>
                 <div class="gen-tabs">
                     ${genTabs.map(t => `
                         <button class="gen-tab-btn ${t.gen === 1 ? 'active' : ''}" data-gen="${t.gen}">
-                            <strong>${t.gen === 0 ? t.label : `${t.region} (${t.label})`}</strong><br/>
-                            <small style="font-size: 0.7em; opacity: 0.8;">${t.games}</small>
+                            <strong>${t.gen === 0 ? t.label : `${t.region} (GEN ${t.gen})`}</strong><br/>
+                            <small>${t.games}</small>
                         </button>
                     `).join('')}
                 </div>
                 <div class="starters-grid"></div>
+                <div class="starter-confirm-container" style="display: none; margin-top: 1.5rem; text-align: center;">
+                    <button class="starter-confirm-btn" style="background: var(--flick-primary); color: #fff; border: none; padding: 16px 24px; border-radius: 32px; font-size: 1.2rem; font-weight: 800; width: 100%; cursor: pointer; transition: all 0.2s;">I CHOOSE YOU!</button>
+                </div>
             </div>
         `;
 
+        let currentSelectedId = null;
+
         const renderGrid = (gen) => {
             const grid = modal.body.querySelector('.starters-grid');
+            const confirmContainer = modal.body.querySelector('.starter-confirm-container');
+            const confirmBtn = modal.body.querySelector('.starter-confirm-btn');
+
+            confirmContainer.style.display = 'none';
+            currentSelectedId = null;
+
             let starters;
             if (gen === 0) {
                 starters = options.filter(s => s.id === 25 || s.id === 133);
@@ -216,26 +233,53 @@ class FlickemonUI {
             } else {
                 starters = options.filter(s => s.generation === gen);
             }
-            
+
             grid.innerHTML = starters.map(s => `
                 <div class="starter-card" data-id="${s.id}">
-                    <img src="${this.config.getSpriteUrl(s.id)}" alt="${s.name}"/>
-                    <h4>${s.name}</h4>
+                    <img class="starter-card-img" src="${this.config.getSpriteUrl(s.id)}" alt="${s.name}"/>
+                    <h4 class="starter-card-name">${s.name}</h4>
                     <div class="types-row">
                         ${s.types.map(t => `<span class="type-pill ${t}">${t}</span>`).join('')}
                     </div>
-                    <button class="choose-starter-btn">Choose ${s.name}</button>
+                    <div class="starter-card-stats">
+                        <div class="stat-col">
+                            <span>HP ${s.baseStats.hp}</span>
+                            <span>DEF ${s.baseStats.defense}</span>
+                        </div>
+                        <div class="stat-col">
+                            <span>ATK ${s.baseStats.attack}</span>
+                            <span>SPD ${s.baseStats.speed}</span>
+                        </div>
+                    </div>
                 </div>
             `).join('');
 
             grid.querySelectorAll('.starter-card').forEach(card => {
-                card.querySelector('.choose-starter-btn').addEventListener('click', async () => {
+                card.addEventListener('click', () => {
+                    grid.querySelectorAll('.starter-card').forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected');
                     const speciesId = parseInt(card.getAttribute('data-id'), 10);
-                    await this.engine.chooseStarter(speciesId);
-                    this.closeModal(modal.overlay);
+                    currentSelectedId = speciesId;
+                    const nameEl = card.querySelector('.starter-card-name');
+                    const name = nameEl ? nameEl.textContent : '';
+                    const activeBtn = modal.body.querySelector('.starter-confirm-btn');
+                    if (activeBtn) {
+                        activeBtn.textContent = `I CHOOSE YOU! (${name.toUpperCase()})`;
+                    }
+                    if (confirmContainer) {
+                        confirmContainer.style.display = 'block';
+                    }
                 });
             });
         };
+
+        const globalConfirmBtn = modal.body.querySelector('.starter-confirm-btn');
+        globalConfirmBtn?.addEventListener('click', async () => {
+            if (currentSelectedId) {
+                await this.engine.chooseStarter(currentSelectedId);
+                this.closeModal(modal.overlay);
+            }
+        });
 
         renderGrid(1);
 
@@ -392,6 +436,14 @@ class FlickemonUI {
             </div>
             <button class="flickemon-danger-btn reset-progress-btn">RESET MY GAME PROGRESS</button>
             <br/><br/>
+            <div class="flickemon-list-card">
+                <div class="flickemon-list-item">
+                    <span class="flickemon-list-item-title">Cloud Save Sync</span>
+                    <span class="flickemon-list-item-sub">Manually pull the latest save from your Chrome profile</span>
+                </div>
+            </div>
+            <button class="flickemon-primary-btn force-sync-btn" style="background: #10b981; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">☁️ FORCE CLOUD SYNC</button>
+            <br/><br/>
             <div class="flickemon-list-card admin-section">
                 <div class="flickemon-list-item">
                     <span class="flickemon-list-item-title">Admin Monitoring Portal</span>
@@ -403,8 +455,25 @@ class FlickemonUI {
                         <button class="unlock-admin-btn" style="background:#e91e63; color:white; border:none; border-radius:4px; padding:0 16px; cursor:pointer;">Unlock</button>
                     </div>
                 </div>
-                <div class="flickemon-list-item admin-unlocked-panel" style="display: none;">
-                    <span class="flickemon-list-item-title" style="color: #10b981;">✅ Admin Access Granted (Passcode 9285)</span>
+                <div class="flickemon-list-item admin-unlocked-panel" style="display: none; padding: 12px;">
+                    <span class="flickemon-list-item-title" style="color: #10b981; display: block; margin-bottom: 12px;">✅ Admin Access Granted (Passcode 9285)</span>
+                    <div style="background: rgba(233,30,99,0.06); padding: 12px; border-radius: 8px;">
+                        <h4 style="margin: 0 0 8px 0; color: var(--flick-primary);">⚡ Local Game Testing Tools</h4>
+                        <div style="margin-bottom: 8px;">
+                            <button class="admin-kill-btn" style="background:#ef4444; color:white; border:none; padding:6px 12px; border-radius:4px; font-weight:700; cursor:pointer;">⚠️ Instant Kill Opponent</button>
+                        </div>
+                        <div style="margin-bottom: 8px; display:flex; align-items:center; gap:8px;">
+                            <span style="font-size:0.85rem; font-weight:600;">Damage Speed:</span>
+                            <button class="dmg-spd-btn" data-spd="1" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer; background:var(--flick-primary); color:#fff;">1x</button>
+                            <button class="dmg-spd-btn" data-spd="10" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">10x</button>
+                            <button class="dmg-spd-btn" data-spd="100" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">100x</button>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span style="font-size:0.85rem; font-weight:600;">Set Level:</span>
+                            <input type="number" class="admin-lvl-input" min="1" max="100" value="5" style="width:60px; padding:4px; border-radius:4px; border:1px solid #ccc; background:var(--flick-card-bg); color:var(--flick-text);"/>
+                            <button class="admin-set-lvl-btn" style="background:var(--flick-primary); color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:700;">Set Level</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
@@ -415,6 +484,28 @@ class FlickemonUI {
                 this.closeModal(modal.overlay);
             }
         });
+
+        const forceSyncBtn = modal.body.querySelector('.force-sync-btn');
+        if (forceSyncBtn) {
+            forceSyncBtn.addEventListener('click', async () => {
+                const success = await this.engine.forceCloudSync();
+                if (success) {
+                    forceSyncBtn.textContent = '✅ SYNCED SUCCESSFULLY';
+                    forceSyncBtn.style.background = '#059669';
+                    setTimeout(() => {
+                        forceSyncBtn.textContent = '☁️ FORCE CLOUD SYNC';
+                        forceSyncBtn.style.background = '#10b981';
+                    }, 2000);
+                } else {
+                    forceSyncBtn.textContent = '❌ SYNC FAILED';
+                    forceSyncBtn.style.background = '#ef4444';
+                    setTimeout(() => {
+                        forceSyncBtn.textContent = '☁️ FORCE CLOUD SYNC';
+                        forceSyncBtn.style.background = '#10b981';
+                    }, 2000);
+                }
+            });
+        }
 
         const passcodeBtn = modal.body.querySelector('.unlock-admin-btn');
         const passcodeInput = modal.body.querySelector('.admin-passcode-input');
@@ -427,6 +518,30 @@ class FlickemonUI {
                 alert('Invalid Admin Passcode!');
             }
         });
+
+        adminPanel.querySelector('.admin-kill-btn').addEventListener('click', () => {
+            this.engine.adminInstantKillOpponent();
+        });
+
+        adminPanel.querySelectorAll('.dmg-spd-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const spd = parseInt(btn.getAttribute('data-spd'), 10);
+                this.engine.adminSetDamageMultiplier(spd);
+                adminPanel.querySelectorAll('.dmg-spd-btn').forEach(b => {
+                    b.style.background = 'transparent';
+                    b.style.color = 'var(--flick-text)';
+                });
+                btn.style.background = 'var(--flick-primary)';
+                btn.style.color = '#fff';
+            });
+        });
+
+        adminPanel.querySelector('.admin-set-lvl-btn').addEventListener('click', async () => {
+            const lvl = parseInt(adminPanel.querySelector('.admin-lvl-input').value, 10);
+            if (lvl >= 1 && lvl <= 100) {
+                await this.engine.adminSetPokemonLevel(lvl);
+            }
+        });
     }
 
     // ────────────────────────── Evolution Overlay ──────────────────────────
@@ -436,13 +551,14 @@ class FlickemonUI {
         overlay.className = 'evolution-overlay-screen';
         overlay.innerHTML = `
             <div class="evo-box">
-                <h2>✨ What? ${evo.from.name} is evolving! ✨</h2>
+                <div class="evo-sparkles">✨</div>
+                <h2>Evolution!</h2>
                 <div class="evo-sprites">
                     <img src="${this.config.getSpriteUrl(evo.from.id)}" class="old-sprite"/>
                     <span class="arrow">➡️</span>
                     <img src="${this.config.getSpriteUrl(evo.to.id)}" class="new-sprite"/>
                 </div>
-                <h3>Congratulations! Your ${evo.from.name} evolved into ${evo.to.name}! 🎉</h3>
+                <p class="evo-desc">${evo.from.name} evolved into ${evo.to.name}!</p>
             </div>
         `;
         document.body.appendChild(overlay);
