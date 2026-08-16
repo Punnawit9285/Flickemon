@@ -106,12 +106,38 @@ in `chrome://extensions` — those logs do **not** appear in the page console.
 | **Battle state** | Deliberately **not** synced. Resuming another device's half-finished battle would be confusing; each device fights its own. |
 | **Signed out** | Game is fully playable; it just stays local-only. Auth gates sync, never play. |
 
-## Cost
+## Cost / free-tier headroom
 
-Firestore's free tier (50k reads + 20k writes/day) covers roughly 200–400 active
-students at this write rate. Past that, raise `CLOUD_PUSH_DEBOUNCE_MS` and
-`CLOUD_POLL_INTERVAL_MS` in `background/firebase-config.js` before paying for a
-higher tier.
+Firestore's free (Spark) tier allows **20k writes + 50k reads per day**. Writes are
+the binding constraint, not reads.
+
+At the shipped cadence (`CLOUD_PUSH_DEBOUNCE_MS = 120s`, i.e. 30 writes/hr of active
+watching) with **100 students**:
+
+| Day type | Active watching / student | Writes/day | % of free tier |
+|---|---|---|---|
+| Typical | 1.5h | 4,500 | 23% |
+| Heavy | 3h | 9,000 | 45% |
+| Exam cram | 5h | 15,000 | 75% |
+| Extreme | 8h | 24,000 | **120% — over** |
+
+**Break-even is ~6.7h of active watching per student per day at 100 users.** Normal
+and exam-period usage fit comfortably; only a sustained all-day-every-student
+scenario exceeds it.
+
+Scaling levers, in order of preference:
+
+1. Raise `CLOUD_PUSH_DEBOUNCE_MS` in `content/flickemon-engine.js` — it scales
+   linearly. 180s → 10h/student/day break-even at 100 users. The only cost is how
+   much progress a crash could lose (immediate flushes on catch/evolve/starter/reset
+   and on tab-close are unaffected).
+2. Raise `CLOUD_POLL_INTERVAL_MS` if reads ever become the constraint (they aren't
+   at these ratios).
+3. Blaze pay-as-you-go: beyond the free quota, writes are ~$0.18 per 100k. Even
+   3× over budget is single-digit dollars/month at this scale.
+
+Rough scaling rule: **users × active-hours ≤ 670/day** stays free at 120s debounce.
+So 200 students at 3.3h/day, or 300 at 2.2h/day, also fit.
 
 ## Privacy note
 

@@ -5,6 +5,16 @@
  * Manages: Game state, Party, Pokédex, Wild battles, Defeat-only EXP, Evolution, and local chrome.storage.local persistence.
  */
 
+// This file is loaded as a classic content script (see manifest.json), so it
+// can't `import` background/firebase-config.js the way the service worker
+// does — these mirror the same tuning intent for the content-script side.
+// Sized so 100 concurrent students stay under Firestore's free-tier write
+// quota (20k/day) even on a heavy exam-cram day (~5h active watching each):
+// 100 users x 5h x (3600/120s) = 15,000 writes/day, 75% of budget.
+const CLOUD_PUSH_DEBOUNCE_MS = 120000;
+const CLOUD_POLL_INTERVAL_MS = 90000;
+const LOCAL_SAVE_DEBOUNCE_MS = 1000;
+
 class FlickemonEngine {
     constructor() {
         this.STORAGE_KEY = 'flickemon_ext_save_v2';
@@ -167,12 +177,11 @@ class FlickemonEngine {
     startCloudPolling() {
         if (typeof document === 'undefined' || this.cloudPollTimer) return;
 
-        const POLL_MS = 90000;
         this.cloudPollTimer = setInterval(() => {
             if (document.visibilityState === 'visible') {
                 this.pullFromCloud().catch(() => {});
             }
-        }, POLL_MS);
+        }, CLOUD_POLL_INTERVAL_MS);
 
         // Returning to the tab is the moment a stale save is most visible.
         document.addEventListener('visibilitychange', () => {
@@ -290,7 +299,7 @@ class FlickemonEngine {
         this.cloudPushTimer = setTimeout(() => {
             this.cloudPushTimer = null;
             this.flushCloud();
-        }, 45000);
+        }, CLOUD_PUSH_DEBOUNCE_MS);
     }
 
     /** Manual "Sync now" from Settings: pull, then push. */
@@ -341,7 +350,7 @@ class FlickemonEngine {
         this.localSaveTimer = setTimeout(() => {
             this.localSaveTimer = null;
             this.writeLocal();
-        }, 1000);
+        }, LOCAL_SAVE_DEBOUNCE_MS);
     }
 
     hasStarted() { return this.gameState.hasStarted; }
