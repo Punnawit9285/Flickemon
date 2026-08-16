@@ -7,3 +7,11 @@
 # updates that Chrome accepts as genuinely yours.
 *.pem
 *.crx
+
+# npm deps — the Firebase SDK is NOT used (sync talks to Firebase REST via
+# fetch, deliberately, so MV3 needs no bundler). Kept ignored in case tooling
+# is ever added.
+node_modules/
+
+# Build output
+dist/

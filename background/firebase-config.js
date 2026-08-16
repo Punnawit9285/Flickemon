@@ -10,10 +10,10 @@
 
 export const FIREBASE_CONFIG = {
     // Firebase console → Project settings → General → Web API Key
-    apiKey: '',
+    apiKey: 'AIzaSyD-wuNcQDX8yndxnmoZVvz8v2c6WPksz0U',
 
     // Firebase console → Project settings → General → Project ID
-    projectId: '',
+    projectId: 'flickemon-83a1b',
 };
 
 /** Sync is inert until both values above are provided. */
