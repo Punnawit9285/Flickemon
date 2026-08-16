@@ -2,3 +2,8 @@
 *.zip
 *.log
 .vscode/
+
+# Extension signing key — NEVER commit. Whoever holds this can publish
+# updates that Chrome accepts as genuinely yours.
+*.pem
+*.crx
