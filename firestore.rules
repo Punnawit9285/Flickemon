@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// Flickémon save data.
+// Deploy with:  firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Each student owns exactly one save document, keyed by their Firebase uid.
+    // They can read and write only their own; nobody can read anyone else's.
+    match /saves/{uid} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == uid;
+    }
+
+    // Default deny. Any collection not matched above is unreachable by clients.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -58,7 +58,7 @@ class FlickemonEngine {
         }
 
         this.emitState();
-        await this.saveGameState();
+        await this.saveGameState({ immediate: true });
     }
 
     createEmptyState() {
@@ -86,26 +86,6 @@ class FlickemonEngine {
             }
         }
 
-        // 2. Background Sync: Merge in any progress made on other devices
-        if (chrome.storage.sync) {
-            const syncData = await chrome.storage.sync.get([this.STORAGE_KEY]);
-            const cloudSummary = syncData ? syncData[this.STORAGE_KEY] : null;
-
-            const localTime = this.gameState.lastSyncedAt || 0;
-            const cloudTime = cloudSummary ? (cloudSummary.lastSyncedAt || 0) : 0;
-
-            if (cloudSummary && cloudTime > localTime) {
-                this.mergeSyncSummary(cloudSummary);
-                if (chrome.storage.local) {
-                    chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
-                }
-                this.emitState();
-            } else if (this.gameState.hasStarted) {
-                // Local is newer (or cloud is empty), push our summary up
-                this.saveToSyncStorage();
-            }
-        }
-
         this.isLoaded = true;
 
         if (this.gameState.hasStarted) {
@@ -118,40 +98,210 @@ class FlickemonEngine {
             }
         }
 
-        // Listen for remote sync changes from other devices
-        chrome.storage.onChanged.addListener((changes, areaName) => {
-            if (areaName === 'sync' && changes[this.STORAGE_KEY]) {
-                const newValue = changes[this.STORAGE_KEY].newValue;
-                if (newValue && (!this.gameState.lastSyncedAt || newValue.lastSyncedAt > this.gameState.lastSyncedAt)) {
-                    this.mergeSyncSummary(newValue);
-                    if (chrome.storage.local) {
-                        chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
-                    }
-                    this.emitState();
-                }
-            }
-        });
+        // 2. Cloud: adopt progress made on the student's other devices.
+        //    Never blocks gameplay — a failure here just leaves us local-only.
+        this.pullFromCloud().catch(() => {});
+        this.startCloudPolling();
     }
 
-    // Explicit manual sync used by the Settings "Force Cloud Sync" button
-    async forceCloudSync() {
-        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) return false;
+    // ─────────────────────── Cloud Sync (Firestore) ───────────────────────
 
-        const syncData = await chrome.storage.sync.get([this.STORAGE_KEY]);
-        const cloudSummary = syncData ? syncData[this.STORAGE_KEY] : null;
-        if (cloudSummary) {
-            this.mergeSyncSummary(cloudSummary);
-            if (chrome.storage.local) {
-                chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
-            }
+    async sendToWorker(message) {
+        if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) return null;
+        try {
+            return await chrome.runtime.sendMessage(message);
+        } catch {
+            return null; // worker asleep / extension reloading
+        }
+    }
+
+    async getSyncStatus() {
+        const status = await this.sendToWorker({ type: 'AUTH_STATUS' });
+        return status || { configured: false, signedIn: false, email: null, pending: false };
+    }
+
+    async signIn() {
+        const res = await this.sendToWorker({ type: 'AUTH_SIGN_IN' });
+        if (!res || res.ok === false) {
+            throw new Error(res?.error || 'Sign-in failed');
+        }
+        // First sign-in on this device: reconcile local progress with the account.
+        await this.pullFromCloud();
+        await this.flushCloud();
+        return res;
+    }
+
+    async signOut() {
+        // Don't strand unsaved progress in the cloud queue.
+        await this.flushCloud();
+        await this.sendToWorker({ type: 'AUTH_SIGN_OUT' });
+        this.emitState();
+    }
+
+    /** Pulls the cloud save and merges it into local state. */
+    async pullFromCloud() {
+        const res = await this.sendToWorker({ type: 'CLOUD_PULL' });
+        if (!res || !res.signedIn) return false;
+
+        // Retry anything parked while offline now that we know we're online.
+        this.sendToWorker({ type: 'CLOUD_FLUSH_PENDING' });
+
+        if (!res.state) {
+            // Account has no save yet — this device seeds it.
+            if (this.gameState.hasStarted) await this.flushCloud();
+            return true;
+        }
+
+        const changed = this.mergeCloudState(res.state);
+        if (changed) {
+            this.writeLocal();
             this.emitState();
-
             if (this.gameState.hasStarted && !this.wildOpponent) {
                 this.spawnWildOpponent();
             }
-            return true;
         }
-        return false;
+        return true;
+    }
+
+    /** Re-checks the cloud while this tab is open and visible. */
+    startCloudPolling() {
+        if (typeof document === 'undefined' || this.cloudPollTimer) return;
+
+        const POLL_MS = 90000;
+        this.cloudPollTimer = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                this.pullFromCloud().catch(() => {});
+            }
+        }, POLL_MS);
+
+        // Returning to the tab is the moment a stale save is most visible.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                this.pullFromCloud().catch(() => {});
+            } else {
+                this.flushCloud(); // leaving — don't lose the last stretch
+            }
+        });
+
+        // Last chance to persist before the tab goes away.
+        window.addEventListener('pagehide', () => this.flushCloud());
+    }
+
+    /** State shared across devices. Battle state is deliberately device-local. */
+    buildCloudPayload() {
+        return {
+            hasStarted: this.gameState.hasStarted,
+            activeInstanceId: this.gameState.activeInstanceId,
+            party: this.gameState.party,
+            pokedex: this.gameState.pokedex,
+            totalMinutesWatched: this.gameState.totalMinutesWatched,
+            lastSyncedAt: this.gameState.lastSyncedAt,
+        };
+    }
+
+    /**
+     * Merges a cloud save into local state. Every rule is monotonic — progress
+     * can only move forward — so a stale device can never erase a newer one.
+     * Returns whether anything actually changed.
+     */
+    mergeCloudState(cloud) {
+        if (!cloud) return false;
+        const before = JSON.stringify(this.buildCloudPayload());
+
+        this.gameState.hasStarted = this.gameState.hasStarted || Boolean(cloud.hasStarted);
+        this.gameState.totalMinutesWatched = Math.max(
+            this.gameState.totalMinutesWatched || 0,
+            cloud.totalMinutesWatched || 0
+        );
+
+        // Pokédex: union. Caught outranks merely seen.
+        for (const entry of cloud.pokedex || []) {
+            this.updatePokedex(entry.speciesId, Boolean(entry.caught));
+        }
+
+        // Party: one instance per species (the game already enforces this),
+        // so reconcile by species and keep whichever is further along.
+        for (const remote of cloud.party || []) {
+            const local = this.gameState.party.find(p => p.speciesId === remote.speciesId);
+            if (!local) {
+                this.gameState.party.push({ ...remote });
+            } else if ((remote.totalExp || 0) > (local.totalExp || 0)) {
+                local.level = remote.level;
+                local.totalExp = remote.totalExp;
+            }
+        }
+
+        // Active partner: follow the cloud's choice, matched by species since
+        // instanceIds are generated per-device and won't line up.
+        const remoteActive = (cloud.party || []).find(p => p.instanceId === cloud.activeInstanceId);
+        if (remoteActive) {
+            const localMatch = this.gameState.party.find(p => p.speciesId === remoteActive.speciesId);
+            if (localMatch) this.gameState.activeInstanceId = localMatch.instanceId;
+        }
+        if (!this.getActivePokemon() && this.gameState.party.length > 0) {
+            this.gameState.activeInstanceId = this.gameState.party[0].instanceId;
+        }
+
+        this.gameState.lastSyncedAt = Math.max(this.gameState.lastSyncedAt || 0, cloud.lastSyncedAt || 0);
+
+        return JSON.stringify(this.buildCloudPayload()) !== before;
+    }
+
+    /** Pushes local state up right now, cancelling any pending debounced push. */
+    async flushCloud() {
+        if (!this.isLoaded || !this.cloudDirty) return;
+
+        if (this.cloudPushTimer) {
+            clearTimeout(this.cloudPushTimer);
+            this.cloudPushTimer = null;
+        }
+
+        if (this.cloudInFlight) {
+            this.cloudQueuedWhileInFlight = true;
+            return;
+        }
+
+        this.cloudDirty = false;
+        this.cloudInFlight = true;
+        try {
+            const res = await this.sendToWorker({ type: 'CLOUD_PUSH', state: this.buildCloudPayload() });
+            if (res && res.ok) {
+                this.lastCloudSyncAt = res.syncedAt;
+            } else if (res && res.reason === 'offline') {
+                this.cloudDirty = true; // worker parked it; keep our own flag set too
+            }
+        } finally {
+            this.cloudInFlight = false;
+            if (this.cloudQueuedWhileInFlight) {
+                this.cloudQueuedWhileInFlight = false;
+                this.cloudDirty = true;
+                this.scheduleCloudPush(false);
+            }
+        }
+    }
+
+    scheduleCloudPush(immediate) {
+        this.cloudDirty = true;
+        if (immediate) {
+            this.flushCloud();
+            return;
+        }
+        if (this.cloudPushTimer) return; // already coalescing
+        this.cloudPushTimer = setTimeout(() => {
+            this.cloudPushTimer = null;
+            this.flushCloud();
+        }, 45000);
+    }
+
+    /** Manual "Sync now" from Settings: pull, then push. */
+    async forceCloudSync() {
+        const status = await this.getSyncStatus();
+        if (!status.signedIn) return false;
+
+        await this.pullFromCloud();
+        this.cloudDirty = true;
+        await this.flushCloud();
+        return true;
     }
 
     onStateChange(cb) { this.stateListeners.push(cb); cb(this.gameState); return () => this.stateListeners = this.stateListeners.filter(l => l !== cb); }
@@ -162,75 +312,36 @@ class FlickemonEngine {
     emitState() { this.stateListeners.forEach(cb => cb({ ...this.gameState })); }
     emitWild() { this.wildListeners.forEach(cb => cb(this.wildOpponent ? { ...this.wildOpponent } : null)); }
 
-    async saveGameState() {
-        if (!this.isLoaded) return; // Prevent overwriting cloud save during initial load!
+    /**
+     * Records a state change. Writes are tiered because `onVideoProgress` runs
+     * on every `timeupdate` (~4x/sec): local writes coalesce to ~1/sec, and
+     * cloud pushes coalesce to ~45s unless the change is worth keeping now
+     * (catch, evolution, starter choice, reset).
+     */
+    async saveGameState(opts = {}) {
+        if (!this.isLoaded) return; // Prevent clobbering a save mid-load
 
         this.gameState.lastSyncedAt = Date.now();
         this.emitState();
 
-        if (typeof chrome !== 'undefined' && chrome.storage) {
-            // Instantly save to local (Optimistic UI)
-            if (chrome.storage.local) {
-                chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
-            }
-            // Push to cloud sync in background
-            this.saveToSyncStorage();
-        }
+        this.scheduleLocalSave();
+        this.scheduleCloudPush(opts.immediate === true);
     }
 
-    // chrome.storage.sync caps each item at 8KB, and the full local state
-    // (unbounded party/pokedex history) can grow far past that. Sync only
-    // a compact cross-device summary; the full state stays local-only.
-    buildSyncSummary() {
-        const active = this.getActivePokemon();
-        return {
-            hasStarted: this.gameState.hasStarted,
-            lastSyncedAt: this.gameState.lastSyncedAt,
-            totalMinutesWatched: this.gameState.totalMinutesWatched,
-            activePokemon: active ? {
-                speciesId: active.speciesId,
-                level: active.level,
-                totalExp: active.totalExp,
-            } : null,
-            caughtIds: this.gameState.pokedex.filter(e => e.caught).map(e => e.speciesId),
-        };
-    }
-
-    saveToSyncStorage() {
-        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) return;
-
-        const result = chrome.storage.sync.set({ [this.STORAGE_KEY]: this.buildSyncSummary() });
+    writeLocal() {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+        const result = chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
         if (result && typeof result.catch === 'function') {
-            result.catch(err => console.warn('[Flickémon] Cloud sync failed:', err));
+            result.catch(err => console.warn('[Flickémon] Local save failed:', err));
         }
     }
 
-    // Applies a compact cloud summary onto local state without clobbering
-    // the full local party/pokedex history, which never leaves this device.
-    mergeSyncSummary(summary) {
-        if (!summary) return;
-
-        this.gameState.hasStarted = this.gameState.hasStarted || summary.hasStarted;
-        this.gameState.totalMinutesWatched = Math.max(this.gameState.totalMinutesWatched, summary.totalMinutesWatched || 0);
-        this.gameState.lastSyncedAt = summary.lastSyncedAt || this.gameState.lastSyncedAt;
-
-        for (const speciesId of summary.caughtIds || []) {
-            this.updatePokedex(speciesId, true);
-        }
-
-        if (summary.activePokemon) {
-            const { speciesId, level, totalExp } = summary.activePokemon;
-            let match = this.gameState.party.find(p => p.speciesId === speciesId);
-            if (!match) {
-                match = { instanceId: this.generateId(), speciesId, level, totalExp };
-                this.gameState.party.push(match);
-                this.updatePokedex(speciesId, true);
-            } else if (totalExp > match.totalExp) {
-                match.level = level;
-                match.totalExp = totalExp;
-            }
-            this.gameState.activeInstanceId = match.instanceId;
-        }
+    scheduleLocalSave() {
+        if (this.localSaveTimer) return; // coalesce into the pending write
+        this.localSaveTimer = setTimeout(() => {
+            this.localSaveTimer = null;
+            this.writeLocal();
+        }, 1000);
     }
 
     hasStarted() { return this.gameState.hasStarted; }
@@ -252,7 +363,7 @@ class FlickemonEngine {
         this.gameState.activeInstanceId = starterInstance.instanceId;
         this.updatePokedex(speciesId, true);
 
-        await this.saveGameState();
+        await this.saveGameState({ immediate: true });
         this.spawnWildOpponent();
     }
 
@@ -291,12 +402,14 @@ class FlickemonEngine {
         this.wildOpponent = null;
         if (this.respawnTimer) clearTimeout(this.respawnTimer);
         this.emitWild();
-        await this.saveGameState();
+        await this.saveGameState({ immediate: true });
     }
 
     async onVideoProgress(secondsWatched) {
         const active = this.getActivePokemon();
         if (!this.gameState.hasStarted || !active) return;
+
+        let capturedThisTick = false;
 
         if (!this.wildOpponent) {
             this.spawnWildOpponent();
@@ -325,7 +438,8 @@ class FlickemonEngine {
                 if (this.respawnTimer) clearTimeout(this.respawnTimer);
                 this.respawnTimer = setTimeout(() => this.spawnWildOpponent(), 3000);
                 this.emitWild();
-                await this.saveGameState();
+                // Encounter resolved with EXP gained — worth persisting now.
+                await this.saveGameState({ immediate: true });
                 return;
             }
 
@@ -336,7 +450,8 @@ class FlickemonEngine {
             this.wildOpponent.currentHp = Math.max(0, Math.ceil(this.wildHpAcc));
 
             if (this.wildOpponent.currentHp === 0) {
-                // Defeated & Captured!
+                // Defeated & Captured! Worth pushing to the cloud right away.
+                capturedThisTick = true;
                 this.wildOpponent.status = 'captured';
                 const winExp = Math.round(this.wildOpponent.wildLevel * this.config.BATTLE_WIN_EXP_BONUS);
                 this.wildOpponent.expGained = winExp;
@@ -372,7 +487,7 @@ class FlickemonEngine {
 
         this.gameState.wildOpponent = this.wildOpponent;
         this.gameState.totalMinutesWatched += secondsWatched / 60;
-        await this.saveGameState();
+        await this.saveGameState({ immediate: capturedThisTick });
     }
 
     spawnWildOpponent() {

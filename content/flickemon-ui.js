@@ -456,10 +456,14 @@ class FlickemonUI {
             <div class="flickemon-list-card">
                 <div class="flickemon-list-item">
                     <span class="flickemon-list-item-title">Cloud Save Sync</span>
-                    <span class="flickemon-list-item-sub">Manually pull the latest save from your Chrome profile</span>
+                    <span class="flickemon-list-item-sub sync-status-line">Checking…</span>
                 </div>
             </div>
-            <button class="flickemon-primary-btn force-sync-btn" style="background: #10b981; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">☁️ FORCE CLOUD SYNC</button>
+            <div class="sync-actions">
+                <button class="flickemon-primary-btn sync-signin-btn" style="display:none; background: var(--flick-primary); color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">Sign in with Google</button>
+                <button class="flickemon-primary-btn force-sync-btn" style="display:none; background: #10b981; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">☁️ SYNC NOW</button>
+                <button class="flickemon-primary-btn sync-signout-btn" style="display:none; background: transparent; color: var(--flick-text-muted); border: 1px solid var(--flick-border); padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">Sign out</button>
+            </div>
             <br/><br/>
             <div class="flickemon-list-card admin-section">
                 <div class="flickemon-list-item">
@@ -502,27 +506,74 @@ class FlickemonUI {
             }
         });
 
+        // ── Cloud sync controls ──
+        const statusLine = modal.body.querySelector('.sync-status-line');
+        const signInBtn = modal.body.querySelector('.sync-signin-btn');
+        const signOutBtn = modal.body.querySelector('.sync-signout-btn');
         const forceSyncBtn = modal.body.querySelector('.force-sync-btn');
-        if (forceSyncBtn) {
-            forceSyncBtn.addEventListener('click', async () => {
-                const success = await this.engine.forceCloudSync();
-                if (success) {
-                    forceSyncBtn.textContent = '✅ SYNCED SUCCESSFULLY';
-                    forceSyncBtn.style.background = '#059669';
-                    setTimeout(() => {
-                        forceSyncBtn.textContent = '☁️ FORCE CLOUD SYNC';
-                        forceSyncBtn.style.background = '#10b981';
-                    }, 2000);
-                } else {
-                    forceSyncBtn.textContent = '❌ SYNC FAILED';
-                    forceSyncBtn.style.background = '#ef4444';
-                    setTimeout(() => {
-                        forceSyncBtn.textContent = '☁️ FORCE CLOUD SYNC';
-                        forceSyncBtn.style.background = '#10b981';
-                    }, 2000);
-                }
-            });
-        }
+
+        const renderSyncStatus = async () => {
+            const status = await this.engine.getSyncStatus();
+
+            if (!status.configured) {
+                statusLine.textContent = 'Not configured — see SETUP-SYNC.md';
+                signInBtn.style.display = 'none';
+                signOutBtn.style.display = 'none';
+                forceSyncBtn.style.display = 'none';
+                return;
+            }
+
+            if (!status.signedIn) {
+                statusLine.textContent = 'Not signed in — progress stays on this device only';
+                signInBtn.style.display = 'block';
+                signOutBtn.style.display = 'none';
+                forceSyncBtn.style.display = 'none';
+                return;
+            }
+
+            statusLine.textContent = status.pending
+                ? `Signed in as ${status.email} • offline, will sync later`
+                : `Signed in as ${status.email} • synced`;
+            signInBtn.style.display = 'none';
+            signOutBtn.style.display = 'block';
+            forceSyncBtn.style.display = 'block';
+        };
+
+        signInBtn?.addEventListener('click', async () => {
+            signInBtn.disabled = true;
+            signInBtn.textContent = 'Signing in…';
+            try {
+                await this.engine.signIn();
+            } catch (err) {
+                alert(`Sign-in failed: ${err.message}`);
+            } finally {
+                signInBtn.disabled = false;
+                signInBtn.textContent = 'Sign in with Google';
+                renderSyncStatus();
+            }
+        });
+
+        signOutBtn?.addEventListener('click', async () => {
+            await this.engine.signOut();
+            renderSyncStatus();
+        });
+
+        forceSyncBtn?.addEventListener('click', async () => {
+            const original = '☁️ SYNC NOW';
+            forceSyncBtn.disabled = true;
+            forceSyncBtn.textContent = 'Syncing…';
+            const success = await this.engine.forceCloudSync();
+            forceSyncBtn.textContent = success ? '✅ SYNCED' : '❌ SYNC FAILED';
+            forceSyncBtn.style.background = success ? '#059669' : '#ef4444';
+            setTimeout(() => {
+                forceSyncBtn.disabled = false;
+                forceSyncBtn.textContent = original;
+                forceSyncBtn.style.background = '#10b981';
+                renderSyncStatus();
+            }, 2000);
+        });
+
+        renderSyncStatus();
 
         const passcodeBtn = modal.body.querySelector('.unlock-admin-btn');
         const passcodeInput = modal.body.querySelector('.admin-passcode-input');

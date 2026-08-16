@@ -3,7 +3,20 @@
     "name": "Flickémon",
     "version": "1.0.0",
     "description": "Gamify FlickPlayer studying with Pokémon! Battle, catch, evolve — all while watching lectures.",
-    "permissions": ["storage"],
+    "permissions": ["storage", "identity"],
+    "host_permissions": [
+        "https://identitytoolkit.googleapis.com/*",
+        "https://securetoken.googleapis.com/*",
+        "https://firestore.googleapis.com/*"
+    ],
+    "background": {
+        "service_worker": "background/service-worker.js",
+        "type": "module"
+    },
+    "oauth2": {
+        "client_id": "REPLACE_WITH_YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+        "scopes": ["openid", "email", "profile"]
+    },
     "content_scripts": [
         {
             "matches": ["*://*.docchula.com/*", "*://localhost/*"],
