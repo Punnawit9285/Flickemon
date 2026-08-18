@@ -105,6 +105,7 @@ in `chrome://extensions` — those logs do **not** appear in the page console.
 | **Merge rule** | Monotonic — study time takes the max, Pokédex unions, party keeps the higher EXP per species. A stale device can never erase a newer one. |
 | **Battle state** | Deliberately **not** synced. Resuming another device's half-finished battle would be confusing; each device fights its own. |
 | **Starting a game** | "Start Game" requires sign-in first, so a returning student resumes their existing partner instead of being offered a second starter that would merge into their account. If sync is unconfigured, it falls back to local-only play rather than locking the game. |
+| **When sign-in fails** | Signing in is the only option offered up front. If an attempt actually fails (misconfigured OAuth, offline, background worker asleep), a "Continue without signing in" bypass appears so a broken dependency never makes the game unplayable. A save made that way is unowned, and is discarded on a later sign-in if the account already has one — so the bypass can never create a second starter. |
 | **Shared devices** | Each save records the Firebase uid that owns it. A different student signing in on the same machine gets a clean slate, so one student's party can never merge into another's account. A save predating sign-in has no owner and is adopted into the first account that signs in. |
 
 ## Cost / free-tier headroom

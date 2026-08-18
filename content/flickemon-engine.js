@@ -130,7 +130,13 @@ class FlickemonEngine {
 
     async getSyncStatus() {
         const status = await this.sendToWorker({ type: 'AUTH_STATUS' });
-        return status || { configured: false, signedIn: false, email: null, pending: false };
+        // `reachable: false` means the service worker never answered, which is
+        // NOT the same as sync being unconfigured — conflating them would let a
+        // transient worker hiccup silently drop a student into local-only play.
+        if (!status) {
+            return { reachable: false, configured: false, signedIn: false, email: null, pending: false };
+        }
+        return { reachable: true, ...status };
     }
 
     async signIn() {
@@ -148,16 +154,44 @@ class FlickemonEngine {
         // deliberately kept, so a student's pre-existing local progress is
         // adopted into their account rather than thrown away.
         if (this.gameState.ownerUid && this.gameState.ownerUid !== res.uid) {
-            this.gameState = this.createEmptyState();
-            this.wildOpponent = null;
-            if (this.respawnTimer) clearTimeout(this.respawnTimer);
-            this.emitWild();
+            this.discardLocalState();
         }
+
+        // An unowned save was made before signing in (either a legacy save, or
+        // one from "continue without signing in"). If the account already has a
+        // save, that account is the source of truth and the local one is
+        // dropped — merging it is what produces a second starter. Only when the
+        // account is empty is the local save adopted.
+        if (!this.gameState.ownerUid && this.gameState.hasStarted) {
+            const existing = await this.sendToWorker({ type: 'CLOUD_PULL' });
+            if (existing && existing.signedIn && existing.state && existing.state.hasStarted) {
+                this.discardLocalState();
+            }
+        }
+
         this.gameState.ownerUid = res.uid;
 
         await this.pullFromCloud();
         await this.flushCloud();
         return res;
+    }
+
+    /** Wipes this device's save without touching anything in the cloud. */
+    discardLocalState() {
+        // Drop any pending push first: it carries the state we're discarding,
+        // and letting it land would write the previous owner's progress into
+        // the account that just signed in.
+        this.cloudDirty = false;
+        this.cloudQueuedWhileInFlight = false;
+        if (this.cloudPushTimer) {
+            clearTimeout(this.cloudPushTimer);
+            this.cloudPushTimer = null;
+        }
+
+        this.gameState = this.createEmptyState();
+        this.wildOpponent = null;
+        if (this.respawnTimer) clearTimeout(this.respawnTimer);
+        this.emitWild();
     }
 
     async signOut() {

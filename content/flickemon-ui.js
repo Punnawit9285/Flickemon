@@ -205,13 +205,13 @@ class FlickemonUI {
 
         // Sync not set up at all (dev build / missing Firebase config). Don't
         // make the game unplayable — fall back to local-only play.
-        if (!status.configured) {
+        if (status.reachable && !status.configured) {
             this.openStarterModal();
             return;
         }
 
         if (!status.signedIn) {
-            this.openSignInGateModal();
+            this.openSignInGateModal({ workerDown: !status.reachable });
             return;
         }
 
@@ -229,7 +229,16 @@ class FlickemonUI {
         this.openStarterModal();
     }
 
-    openSignInGateModal() {
+    /**
+     * Signing in is the intended path, so it's the only thing offered up front.
+     * But auth can be genuinely unavailable — a misconfigured OAuth client, an
+     * offline student, a background worker that won't wake — and walling the
+     * game off behind a broken dependency is worse than syncing late. The
+     * bypass is therefore revealed only once an attempt has actually failed,
+     * and a save made that way is dropped if the account already has one (see
+     * FlickemonEngine.signIn), so it can never create a second starter.
+     */
+    openSignInGateModal({ workerDown = false } = {}) {
         const modal = this.createModalOverlay('Sign in to play');
 
         modal.body.innerHTML = `
@@ -242,11 +251,30 @@ class FlickemonUI {
                 </p>
                 <button class="signin-gate-btn">Sign in with Google</button>
                 <p class="signin-gate-error"></p>
+                <button class="signin-gate-skip">Continue without signing in</button>
+                <p class="signin-gate-skip-note">
+                    Progress stays on this device only, and will not appear on your
+                    other devices until you sign in.
+                </p>
             </div>
         `;
 
         const btn = modal.body.querySelector('.signin-gate-btn');
         const errEl = modal.body.querySelector('.signin-gate-error');
+        const skipBtn = modal.body.querySelector('.signin-gate-skip');
+        const skipNote = modal.body.querySelector('.signin-gate-skip-note');
+
+        const revealBypass = () => {
+            skipBtn.classList.add('visible');
+            skipNote.classList.add('visible');
+        };
+
+        // Nothing to attempt if the worker never answered — offer the bypass now.
+        if (workerDown) {
+            errEl.textContent = 'Could not reach the sync service.';
+            errEl.classList.add('visible');
+            revealBypass();
+        }
 
         btn.addEventListener('click', async () => {
             btn.disabled = true;
@@ -263,8 +291,14 @@ class FlickemonUI {
                 errEl.textContent = e.message || 'Sign-in failed';
                 errEl.classList.add('visible');
                 btn.disabled = false;
-                btn.textContent = 'Sign in with Google';
+                btn.textContent = 'Try signing in again';
+                revealBypass();
             }
+        });
+
+        skipBtn.addEventListener('click', () => {
+            this.closeModal(modal.overlay);
+            this.openStarterModal();
         });
     }
 

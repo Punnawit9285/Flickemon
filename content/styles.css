@@ -728,3 +728,28 @@
     color: var(--flick-danger);
 }
 .signin-gate-error.visible { display: block; }
+
+/* Bypass shown only after a sign-in attempt fails */
+.signin-gate-skip {
+    display: none;
+    background: transparent;
+    border: none;
+    color: var(--flick-text-muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+    margin-top: 1.25rem;
+}
+.signin-gate-skip.visible { display: inline-block; }
+.signin-gate-skip:hover { color: var(--flick-text); }
+
+.signin-gate-skip-note {
+    display: none;
+    margin: 0.5rem auto 0 auto;
+    max-width: 20rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--flick-text-muted);
+}
+.signin-gate-skip-note.visible { display: block; }
