@@ -80,7 +80,7 @@ class FlickemonUI {
                 </div>
             `;
             card.querySelector('.start-game-badge-btn').addEventListener('click', () => {
-                this.openStarterModal();
+                this.beginGameFlow();
             });
             return;
         }
@@ -188,6 +188,83 @@ class FlickemonUI {
             this.isCollapsed = !this.isCollapsed;
             widgetBody.style.display = this.isCollapsed ? 'none' : 'block';
             collapseBtn.innerHTML = this.isCollapsed ? chevronDownSvg : chevronUpSvg;
+        });
+    }
+
+    // ────────────────────────── Sign-In Gate ──────────────────────────
+
+    /**
+     * Entry point for "Start Game". Auth happens BEFORE starter selection on
+     * purpose: if a student signs in on a second device after already picking
+     * a starter locally, the monotonic cloud merge folds BOTH starters into
+     * their account. Gating here means a returning student resumes their real
+     * partner and is never offered a choice they've already made.
+     */
+    async beginGameFlow() {
+        const status = await this.engine.getSyncStatus();
+
+        // Sync not set up at all (dev build / missing Firebase config). Don't
+        // make the game unplayable — fall back to local-only play.
+        if (!status.configured) {
+            this.openStarterModal();
+            return;
+        }
+
+        if (!status.signedIn) {
+            this.openSignInGateModal();
+            return;
+        }
+
+        await this.resumeOrChooseStarter();
+    }
+
+    /** Restore the account's existing save, or pick a starter if it's a new account. */
+    async resumeOrChooseStarter() {
+        await this.engine.pullFromCloud();
+
+        // A save just came down from the account — resume it instead of
+        // offering a starter choice.
+        if (this.engine.hasStarted()) return;
+
+        this.openStarterModal();
+    }
+
+    openSignInGateModal() {
+        const modal = this.createModalOverlay('Sign in to play');
+
+        modal.body.innerHTML = `
+            <div class="signin-gate">
+                <div class="signin-gate-icon">☁️</div>
+                <h2 class="signin-gate-title">Sign in to start</h2>
+                <p class="signin-gate-text">
+                    Your Pokémon, Pokédex and study time are saved to your account,
+                    so your progress follows you to any device you study on.
+                </p>
+                <button class="signin-gate-btn">Sign in with Google</button>
+                <p class="signin-gate-error"></p>
+            </div>
+        `;
+
+        const btn = modal.body.querySelector('.signin-gate-btn');
+        const errEl = modal.body.querySelector('.signin-gate-error');
+
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            btn.textContent = 'Signing in…';
+            errEl.classList.remove('visible');
+
+            try {
+                // signIn() already pulls the account's save down, so branch on
+                // the merged result rather than paying for a second read.
+                await this.engine.signIn();
+                this.closeModal(modal.overlay);
+                if (!this.engine.hasStarted()) this.openStarterModal();
+            } catch (e) {
+                errEl.textContent = e.message || 'Sign-in failed';
+                errEl.classList.add('visible');
+                btn.disabled = false;
+                btn.textContent = 'Sign in with Google';
+            }
         });
     }
 

@@ -15,7 +15,7 @@
         "type": "module"
     },
     "oauth2": {
-        "client_id": "228657760659-l874kp90l9pm0875vkku5q9pq6jvb91m.apps.googleusercontent.com",
+        "client_id": "228657760659-h74u8t3qngt0vl3h7i4b8u16a6v5pktl.apps.googleusercontent.com",
         "scopes": ["openid", "email", "profile"]
     },
     "content_scripts": [

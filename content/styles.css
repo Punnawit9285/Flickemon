@@ -677,3 +677,54 @@
 .stat-box { display: flex; justify-content: space-between; padding: 8px 12px; background: var(--flick-card-bg, #fff); border-radius: 8px; }
 .stat-box-label { font-size: 0.8rem; color: var(--flick-text-muted, #c2185b); }
 .stat-box-value { font-size: 0.85rem; font-weight: 700; }
+
+/* ────────────────────────── Sign-In Gate ────────────────────────── */
+
+.signin-gate {
+    text-align: center;
+    padding: 1.5rem 1rem;
+    color: var(--flick-text);
+}
+.signin-gate-icon {
+    font-size: 3rem;
+    line-height: 1;
+    margin-bottom: 0.75rem;
+}
+.signin-gate-title {
+    font-size: 1.5rem;
+    font-weight: 800;
+    margin: 0 0 0.75rem 0;
+    color: var(--flick-text);
+}
+.signin-gate-text {
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: var(--flick-text-muted);
+    margin: 0 auto 1.5rem auto;
+    max-width: 22rem;
+}
+.signin-gate-btn {
+    background: var(--flick-primary);
+    color: #fff;
+    border: none;
+    padding: 14px 24px;
+    border-radius: 32px;
+    font-size: 1rem;
+    font-weight: 800;
+    cursor: pointer;
+    width: 100%;
+    max-width: 20rem;
+    transition: background 0.2s, opacity 0.2s;
+}
+.signin-gate-btn:hover:not(:disabled) { background: var(--flick-primary-hover); }
+.signin-gate-btn:disabled { opacity: 0.6; cursor: default; }
+
+.signin-gate-error {
+    display: none;
+    margin: 1rem auto 0 auto;
+    max-width: 22rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--flick-danger);
+}
+.signin-gate-error.visible { display: block; }

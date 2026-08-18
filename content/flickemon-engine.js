@@ -81,6 +81,9 @@ class FlickemonEngine {
             totalMinutesWatched: 0,
             lastSyncedAt: 0,
             wildOpponent: null,
+            // Firebase uid this save belongs to; guards against one student's
+            // progress leaking into another's account on a shared device.
+            ownerUid: null,
         };
     }
 
@@ -135,7 +138,23 @@ class FlickemonEngine {
         if (!res || res.ok === false) {
             throw new Error(res?.error || 'Sign-in failed');
         }
-        // First sign-in on this device: reconcile local progress with the account.
+
+        // Shared-device guard. On a faculty lab PC, student B signing in after
+        // student A would otherwise merge A's still-resident local party into
+        // B's account (the merge is monotonic, so it keeps everything it sees).
+        // Discard the previous owner's state before pulling B's save.
+        //
+        // ownerUid is absent for a save made before sign-in existed; that one is
+        // deliberately kept, so a student's pre-existing local progress is
+        // adopted into their account rather than thrown away.
+        if (this.gameState.ownerUid && this.gameState.ownerUid !== res.uid) {
+            this.gameState = this.createEmptyState();
+            this.wildOpponent = null;
+            if (this.respawnTimer) clearTimeout(this.respawnTimer);
+            this.emitWild();
+        }
+        this.gameState.ownerUid = res.uid;
+
         await this.pullFromCloud();
         await this.flushCloud();
         return res;
