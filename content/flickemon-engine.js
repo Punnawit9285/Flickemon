@@ -194,6 +194,19 @@ class FlickemonEngine {
         this.emitWild();
     }
 
+    /**
+     * Sign out and immediately offer a different account. Local state is
+     * discarded rather than kept: the next student to sign in must not inherit
+     * this one's party, and whatever is here has already been pushed upstream.
+     */
+    async switchAccount() {
+        await this.flushCloud();
+        await this.sendToWorker({ type: 'AUTH_SWITCH' });
+        this.discardLocalState();
+        this.writeLocal();
+        this.emitState();
+    }
+
     async signOut() {
         // Don't strand unsaved progress in the cloud queue.
         await this.flushCloud();

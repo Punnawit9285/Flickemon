@@ -55,6 +55,17 @@ export const FIREBASE_CONFIG = {
 These are **not secrets** — Firebase web API keys are public by design. Access is
 controlled entirely by the security rules in the next step.
 
+## 4b. Restrict who may sign in ⚠️ confirm the domain
+
+`ALLOWED_EMAIL_DOMAINS` in `background/firebase-config.js` defaults to
+`docchula.com`. **Confirm this is the domain your students' Google accounts
+actually use** — if they sign in with a university address such as
+`@student.chula.ac.th`, add it to the list, or nobody will be able to sign in.
+
+The same domain appears in `firestore.rules`. Keep the two in sync: the
+extension's copy only produces a friendly error message and can be edited out by
+anyone running it unpacked, so **the rules file is the actual restriction**.
+
 ## 5. Deploy the security rules
 
 ```sh
@@ -107,6 +118,8 @@ in `chrome://extensions` — those logs do **not** appear in the page console.
 | **Starting a game** | "Start Game" requires sign-in first, so a returning student resumes their existing partner instead of being offered a second starter that would merge into their account. If sync is unconfigured, it falls back to local-only play rather than locking the game. |
 | **When sign-in fails** | Signing in is the only option offered up front. If an attempt actually fails (misconfigured OAuth, offline, background worker asleep), a "Continue without signing in" bypass appears so a broken dependency never makes the game unplayable. A save made that way is unowned, and is discarded on a later sign-in if the account already has one — so the bypass can never create a second starter. |
 | **Shared devices** | Each save records the Firebase uid that owns it. A different student signing in on the same machine gets a clean slate, so one student's party can never merge into another's account. A save predating sign-in has no owner and is adopted into the first account that signs in. |
+| **Who can sign in** | Only addresses on `ALLOWED_EMAIL_DOMAINS`. Enforced twice: in the extension for a clear error message, and in `firestore.rules` (server-side) as the real boundary. A rejected account is also dropped from Chrome's token cache so the student can immediately try a different one. |
+| **Switch account** | Settings → **Switch account** clears the cached Google token and re-prompts. Local progress is discarded on switch, so the next student never inherits the previous one's party. |
 
 ## Cost / free-tier headroom
 

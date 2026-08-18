@@ -573,6 +573,7 @@ class FlickemonUI {
             <div class="sync-actions">
                 <button class="flickemon-primary-btn sync-signin-btn" style="display:none; background: var(--flick-primary); color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">Sign in with Google</button>
                 <button class="flickemon-primary-btn force-sync-btn" style="display:none; background: #10b981; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">☁️ SYNC NOW</button>
+                <button class="flickemon-primary-btn sync-switch-btn" style="display:none; background: transparent; color: var(--flick-primary); border: 1px solid var(--flick-primary); padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">Switch account</button>
                 <button class="flickemon-primary-btn sync-signout-btn" style="display:none; background: transparent; color: var(--flick-text-muted); border: 1px solid var(--flick-border); padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">Sign out</button>
             </div>
             <br/><br/>
@@ -621,6 +622,7 @@ class FlickemonUI {
         const statusLine = modal.body.querySelector('.sync-status-line');
         const signInBtn = modal.body.querySelector('.sync-signin-btn');
         const signOutBtn = modal.body.querySelector('.sync-signout-btn');
+        const switchBtn = modal.body.querySelector('.sync-switch-btn');
         const forceSyncBtn = modal.body.querySelector('.force-sync-btn');
 
         const renderSyncStatus = async () => {
@@ -630,6 +632,7 @@ class FlickemonUI {
                 statusLine.textContent = 'Not configured — see SETUP-SYNC.md';
                 signInBtn.style.display = 'none';
                 signOutBtn.style.display = 'none';
+                switchBtn.style.display = 'none';
                 forceSyncBtn.style.display = 'none';
                 return;
             }
@@ -638,6 +641,7 @@ class FlickemonUI {
                 statusLine.textContent = 'Not signed in — progress stays on this device only';
                 signInBtn.style.display = 'block';
                 signOutBtn.style.display = 'none';
+                switchBtn.style.display = 'none';
                 forceSyncBtn.style.display = 'none';
                 return;
             }
@@ -647,6 +651,7 @@ class FlickemonUI {
                 : `Signed in as ${status.email} • synced`;
             signInBtn.style.display = 'none';
             signOutBtn.style.display = 'block';
+            switchBtn.style.display = 'block';
             forceSyncBtn.style.display = 'block';
         };
 
@@ -660,6 +665,21 @@ class FlickemonUI {
             } finally {
                 signInBtn.disabled = false;
                 signInBtn.textContent = 'Sign in with Google';
+                renderSyncStatus();
+            }
+        });
+
+        switchBtn?.addEventListener('click', async () => {
+            switchBtn.disabled = true;
+            switchBtn.textContent = 'Switching…';
+            await this.engine.switchAccount();
+            try {
+                await this.engine.signIn();
+            } catch (err) {
+                alert(err.message);
+            } finally {
+                switchBtn.disabled = false;
+                switchBtn.textContent = 'Switch account';
                 renderSyncStatus();
             }
         });

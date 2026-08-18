@@ -11,7 +11,7 @@
  */
 
 import { isConfigured } from './firebase-config.js';
-import { signIn, signOut, getStatus } from './auth.js';
+import { signIn, signOut, getStatus, switchAccount } from './auth.js';
 import { pullState, pushState } from './firestore.js';
 
 /** Offline pushes park here until connectivity returns. */
@@ -74,6 +74,11 @@ const handlers = {
 
     async AUTH_SIGN_OUT() {
         await signOut();
+        return { ok: true };
+    },
+
+    async AUTH_SWITCH() {
+        await switchAccount();
         return { ok: true };
     },
 

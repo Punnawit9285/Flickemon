@@ -14,7 +14,7 @@
  * evicted after ~30s idle, so anything held in a module variable is lost.
  */
 
-import { FIREBASE_CONFIG, isConfigured } from './firebase-config.js';
+import { FIREBASE_CONFIG, isConfigured, isAllowedEmail, ALLOWED_EMAIL_DOMAINS } from './firebase-config.js';
 
 const AUTH_KEY = 'flickemon_auth_v1';
 
@@ -120,8 +120,40 @@ export async function signIn() {
 
     const googleToken = await getGoogleToken(true);
     const auth = await exchangeForFirebase(googleToken);
+
+    // Only permitted domains may hold a save. Reject before persisting anything,
+    // and drop Chrome's cached Google token too — otherwise the same rejected
+    // account is handed back silently on every subsequent attempt, with no way
+    // for the student to pick a different one.
+    if (!isAllowedEmail(auth.email)) {
+        await revokeGoogleToken(googleToken);
+        await clearAuth();
+        const allowed = ALLOWED_EMAIL_DOMAINS.map(d => '@' + d).join(' or ');
+        throw new Error(
+            `${auth.email || 'That account'} can't be used. Sign in with your ${allowed} account.`
+        );
+    }
+
     await writeAuth({ ...auth, googleToken });
     return { uid: auth.uid, email: auth.email };
+}
+
+/**
+ * Forgets the current account so the next sign-in can use a different one.
+ *
+ * chrome.identity hands back a cached token for the Chrome profile's account,
+ * so without clearing that cache "switch account" would silently re-authorise
+ * the same person. clearAllCachedAuthTokens also makes Chrome show its account
+ * chooser again when the profile has more than one Google account.
+ */
+export async function switchAccount() {
+    const auth = await readAuth();
+    await revokeGoogleToken(auth?.googleToken);
+    await new Promise(resolve => {
+        if (!chrome.identity.clearAllCachedAuthTokens) return resolve();
+        chrome.identity.clearAllCachedAuthTokens(() => resolve());
+    });
+    await clearAuth();
 }
 
 export async function signOut() {
