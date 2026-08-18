@@ -67,8 +67,9 @@ const handlers = {
         };
     },
 
-    async AUTH_SIGN_IN() {
-        const { uid, email } = await signIn();
+    async AUTH_SIGN_IN(msg) {
+        // `prompt` lets the caller force Google's account chooser (switch account).
+        const { uid, email } = await signIn({ prompt: msg.prompt });
         return { ok: true, uid, email };
     },
 

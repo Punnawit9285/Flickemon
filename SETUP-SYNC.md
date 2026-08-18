@@ -33,13 +33,33 @@ new one on every load. Pin it:
 
 > Alternative: publish to the Chrome Web Store first and use the ID it assigns.
 
-## 3. Create the OAuth client
+## 3. Set up the OAuth client
 
-1. <https://console.cloud.google.com/apis/credentials> (same project as Firebase)
-2. **Create Credentials → OAuth client ID → Application type: Chrome Extension**
-3. Paste the extension ID from step 2
-4. Copy the generated client ID into `manifest.json`, replacing
-   `REPLACE_WITH_YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com`
+Auth uses `chrome.identity.launchWebAuthFlow`, which needs a **Web application**
+OAuth client — *not* a Chrome Extension one. (`getAuthToken` was replaced because
+it can only offer accounts already signed into the Chrome profile, so a student
+whose Chrome holds a personal Gmail could never reach their faculty account.)
+
+Firebase already created a web client for this project, so the quickest path is
+to reuse it:
+
+1. <https://console.cloud.google.com/apis/credentials> → open the **Web client**
+   (auto created by Google Service)
+2. Under **Authorized redirect URIs** → **+ Add URI**:
+   ```
+   https://joaglgcgbblaoiioeebpjlbjlahiagcm.chromiumapp.org/
+   ```
+3. **Save**, then wait — Google warns changes take *5 minutes to a few hours*
+   to take effect
+4. Its client ID must match `WEB_OAUTH_CLIENT_ID` in
+   `background/firebase-config.js`
+
+> Prefer a dedicated client? Create another **Web application** client with the
+> same redirect URI and put its ID in `WEB_OAUTH_CLIENT_ID`. Leave the Firebase
+> one alone either way — Firebase Auth uses it internally.
+
+> The manifest no longer has an `oauth2` block, and the Chrome Extension–type
+> client is now unused. You can delete it, or leave it; nothing reads it.
 
 ## 4. Fill in the Firebase config
 
@@ -119,7 +139,7 @@ in `chrome://extensions` — those logs do **not** appear in the page console.
 | **When sign-in fails** | Signing in is the only option offered up front. If an attempt actually fails (misconfigured OAuth, offline, background worker asleep), a "Continue without signing in" bypass appears so a broken dependency never makes the game unplayable. A save made that way is unowned, and is discarded on a later sign-in if the account already has one — so the bypass can never create a second starter. |
 | **Shared devices** | Each save records the Firebase uid that owns it. A different student signing in on the same machine gets a clean slate, so one student's party can never merge into another's account. A save predating sign-in has no owner and is adopted into the first account that signs in. |
 | **Who can sign in** | Only addresses on `ALLOWED_EMAIL_DOMAINS`. Enforced twice: in the extension for a clear error message, and in `firestore.rules` (server-side) as the real boundary. A rejected account is also dropped from Chrome's token cache so the student can immediately try a different one. |
-| **Switch account** | Settings → **Switch account** clears the cached Google token and re-prompts. Local progress is discarded on switch, so the next student never inherits the previous one's party. |
+| **Switch account** | Settings → **Switch account** re-opens Google's chooser with `prompt=select_account`, so any account is reachable — not just ones signed into Chrome. Local progress is discarded on switch, so the next student never inherits the previous one's party. |
 
 ## Cost / free-tier headroom
 

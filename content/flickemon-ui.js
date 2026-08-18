@@ -672,9 +672,8 @@ class FlickemonUI {
         switchBtn?.addEventListener('click', async () => {
             switchBtn.disabled = true;
             switchBtn.textContent = 'Switching…';
-            await this.engine.switchAccount();
             try {
-                await this.engine.signIn();
+                await this.engine.switchAccount();
             } catch (err) {
                 alert(err.message);
             } finally {

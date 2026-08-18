@@ -24,6 +24,23 @@ export function isConfigured() {
 // Firestore collection holding one save document per student, keyed by Firebase uid.
 export const SAVES_COLLECTION = 'saves';
 
+// ─────────────────────── OAuth client ───────────────────────
+//
+// Auth uses chrome.identity.launchWebAuthFlow, which needs a **Web application**
+// OAuth client (not a Chrome Extension one). getAuthToken was replaced because
+// it can only offer Google accounts already signed into the Chrome profile —
+// a student whose Chrome holds their personal Gmail could never reach their
+// faculty account, which a mandatory email domain makes fatal.
+//
+// This defaults to the web client Firebase created for this project. Whichever
+// client you use, it MUST list this exact redirect URI:
+//
+//     https://joaglgcgbblaoiioeebpjlbjlahiagcm.chromiumapp.org/
+//
+// (chrome.identity.getRedirectURL() derives it from the extension ID.)
+export const WEB_OAUTH_CLIENT_ID =
+    '228657760659-l874kp90l9pm0875vkku5q9pq6jvb91m.apps.googleusercontent.com';
+
 // ─────────────────────── Who may sign in ───────────────────────
 //
 // ⚠️ CONFIRM THIS LIST before rolling out — an empty or wrong entry locks out

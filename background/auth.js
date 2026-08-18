@@ -6,15 +6,23 @@
  * keeps the extension build-step-free.
  *
  * Flow:
- *   1. chrome.identity.getAuthToken  → Google OAuth access token
- *   2. accounts:signInWithIdp        → Firebase idToken + refreshToken + uid
- *   3. securetoken refresh           → new idToken when the old one expires
+ *   1. chrome.identity.launchWebAuthFlow → Google OAuth access token
+ *   2. accounts:signInWithIdp            → Firebase idToken + refreshToken + uid
+ *   3. securetoken refresh               → new idToken when the old one expires
+ *
+ * launchWebAuthFlow rather than getAuthToken: the latter can only return
+ * accounts already signed into the Chrome profile, so a student whose Chrome
+ * holds a personal Gmail could never reach their faculty account. This opens a
+ * real Google chooser, so any account is reachable, and it accepts an `hd`
+ * hint to pre-filter to the permitted domain.
  *
  * Tokens live in chrome.storage.local, NOT in memory: an MV3 service worker is
  * evicted after ~30s idle, so anything held in a module variable is lost.
  */
 
-import { FIREBASE_CONFIG, isConfigured, isAllowedEmail, ALLOWED_EMAIL_DOMAINS } from './firebase-config.js';
+import {
+    FIREBASE_CONFIG, isConfigured, isAllowedEmail, ALLOWED_EMAIL_DOMAINS, WEB_OAUTH_CLIENT_ID,
+} from './firebase-config.js';
 
 const AUTH_KEY = 'flickemon_auth_v1';
 
@@ -34,24 +42,62 @@ async function clearAuth() {
     await chrome.storage.local.remove([AUTH_KEY]);
 }
 
-/** Google OAuth access token for the profile signed into this Chrome. */
-function getGoogleToken(interactive) {
-    return new Promise((resolve, reject) => {
-        chrome.identity.getAuthToken({ interactive }, (token) => {
-            if (chrome.runtime.lastError || !token) {
-                reject(new Error(chrome.runtime.lastError?.message || 'Google sign-in was cancelled'));
-                return;
-            }
-            resolve(token);
-        });
-    });
+function randomState() {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Drop a Google token Chrome has cached, so the next sign-in re-prompts. */
-function revokeGoogleToken(token) {
-    return new Promise((resolve) => {
-        if (!token) return resolve();
-        chrome.identity.removeCachedAuthToken({ token }, () => resolve());
+/**
+ * Opens Google's account chooser and returns an OAuth access token.
+ *
+ * `prompt: 'select_account'` forces the chooser even when Google already has a
+ * session, which is what makes "switch account" work — otherwise Google would
+ * silently reuse the signed-in account.
+ */
+function launchGoogleAuth({ prompt } = {}) {
+    const state = randomState();
+    const redirectUri = chrome.identity.getRedirectURL();
+
+    const params = new URLSearchParams({
+        client_id: WEB_OAUTH_CLIENT_ID,
+        redirect_uri: redirectUri,
+        response_type: 'token',
+        scope: 'openid email profile',
+        state,
+        include_granted_scopes: 'true',
+    });
+    if (prompt) params.set('prompt', prompt);
+
+    // Domain hint: pre-filters the chooser when exactly one domain is allowed.
+    // It is only a hint — Google does not enforce it, so the real checks in
+    // signIn() and firestore.rules still do the work.
+    if (ALLOWED_EMAIL_DOMAINS.length === 1) params.set('hd', ALLOWED_EMAIL_DOMAINS[0]);
+
+    const url = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+
+    return new Promise((resolve, reject) => {
+        chrome.identity.launchWebAuthFlow({ url, interactive: true }, (responseUrl) => {
+            if (chrome.runtime.lastError || !responseUrl) {
+                reject(new Error(chrome.runtime.lastError?.message || 'Sign-in was cancelled'));
+                return;
+            }
+
+            // Implicit flow returns the token in the URL fragment.
+            const fragment = new URL(responseUrl).hash.replace(/^#/, '');
+            const out = new URLSearchParams(fragment);
+
+            const err = out.get('error');
+            if (err) return reject(new Error(`Google rejected the sign-in: ${err}`));
+
+            if (out.get('state') !== state) {
+                return reject(new Error('Sign-in response did not match the request'));
+            }
+
+            const token = out.get('access_token');
+            if (!token) return reject(new Error('Google returned no access token'));
+            resolve(token);
+        });
     });
 }
 
@@ -115,18 +161,16 @@ async function refreshIdToken(auth) {
  * Interactive sign-in. Only call in response to a user gesture — Chrome
  * suppresses the account chooser otherwise.
  */
-export async function signIn() {
+export async function signIn({ prompt } = {}) {
     if (!isConfigured()) throw new Error('Cloud sync is not configured yet (see SETUP-SYNC.md)');
 
-    const googleToken = await getGoogleToken(true);
+    const googleToken = await launchGoogleAuth({ prompt });
     const auth = await exchangeForFirebase(googleToken);
 
-    // Only permitted domains may hold a save. Reject before persisting anything,
-    // and drop Chrome's cached Google token too — otherwise the same rejected
-    // account is handed back silently on every subsequent attempt, with no way
-    // for the student to pick a different one.
+    // Only permitted domains may hold a save. Reject before persisting anything.
+    // The student can retry immediately with a different account, because every
+    // sign-in opens Google's chooser rather than reusing a cached token.
     if (!isAllowedEmail(auth.email)) {
-        await revokeGoogleToken(googleToken);
         await clearAuth();
         const allowed = ALLOWED_EMAIL_DOMAINS.map(d => '@' + d).join(' or ');
         throw new Error(
@@ -139,26 +183,14 @@ export async function signIn() {
 }
 
 /**
- * Forgets the current account so the next sign-in can use a different one.
- *
- * chrome.identity hands back a cached token for the Chrome profile's account,
- * so without clearing that cache "switch account" would silently re-authorise
- * the same person. clearAllCachedAuthTokens also makes Chrome show its account
- * chooser again when the profile has more than one Google account.
+ * Forgets the current account. The next sign-in passes prompt=select_account,
+ * so Google shows its chooser instead of silently reusing the same session.
  */
 export async function switchAccount() {
-    const auth = await readAuth();
-    await revokeGoogleToken(auth?.googleToken);
-    await new Promise(resolve => {
-        if (!chrome.identity.clearAllCachedAuthTokens) return resolve();
-        chrome.identity.clearAllCachedAuthTokens(() => resolve());
-    });
     await clearAuth();
 }
 
 export async function signOut() {
-    const auth = await readAuth();
-    await revokeGoogleToken(auth?.googleToken);
     await clearAuth();
 }
 

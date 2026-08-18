@@ -139,8 +139,8 @@ class FlickemonEngine {
         return { reachable: true, ...status };
     }
 
-    async signIn() {
-        const res = await this.sendToWorker({ type: 'AUTH_SIGN_IN' });
+    async signIn({ prompt } = {}) {
+        const res = await this.sendToWorker({ type: 'AUTH_SIGN_IN', prompt });
         if (!res || res.ok === false) {
             throw new Error(res?.error || 'Sign-in failed');
         }
@@ -205,6 +205,8 @@ class FlickemonEngine {
         this.discardLocalState();
         this.writeLocal();
         this.emitState();
+        // Force Google's chooser, otherwise it silently reuses the same session.
+        return await this.signIn({ prompt: 'select_account' });
     }
 
     async signOut() {
