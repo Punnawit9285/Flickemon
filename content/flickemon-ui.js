@@ -139,7 +139,7 @@ class FlickemonUI {
                                     <div class="hp-bar-fill" style="width: ${Math.round((wild.currentHp / wild.maxHp) * 100)}%;"></div>
                                 </div>
                                 <div class="status-line ${wild.status}">
-                                    ${wild.status === 'captured' ? `🏆 Captured! (+${wild.expGained || 0} EXP)` : wild.status === 'escaped' ? `💨 Escaped! (+${wild.expGained || 0} EXP)` : `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`}
+                                    ${wild.status === 'captured' ? `🏆 Captured! (+${wild.expGained || 0} EXP)` : wild.status === 'defeated' ? `💥 Defeated! (+${wild.expGained || 0} EXP)` : wild.status === 'escaped' ? `💨 Escaped! (+${wild.expGained || 0} EXP)` : `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`}
                                 </div>
                             </div>
                         ` : '<div class="searching-text">Searching for wild Pokémon...</div>'}
@@ -558,6 +558,24 @@ class FlickemonUI {
         modal.body.innerHTML = `
             <div class="flickemon-list-card">
                 <div class="flickemon-list-item">
+                    <span class="flickemon-list-item-title">Battle Mode</span>
+                    <span class="flickemon-list-item-sub">What happens when you win a battle</span>
+                </div>
+                <div class="flickemon-list-item">
+                    <div class="mode-switch">
+                        <button class="mode-btn" data-mode="capture">
+                            <strong>🏆 Capture</strong>
+                            <small>Defeated Pokémon join your party and Pokédex</small>
+                        </button>
+                        <button class="mode-btn" data-mode="exp">
+                            <strong>⚡ EXP</strong>
+                            <small>No capture, but ~2x faster levelling</small>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="flickemon-list-card">
+                <div class="flickemon-list-item">
                     <span class="flickemon-list-item-title">Cloud Save Sync</span>
                     <span class="flickemon-list-item-sub sync-status-line">Checking…</span>
                 </div>
@@ -654,6 +672,20 @@ class FlickemonUI {
                 restoreBtn.textContent = 'Restore last snapshot';
             }
         });
+
+        // ── Battle mode switch ──
+        const modeBtns = modal.body.querySelectorAll('.mode-btn');
+        const paintMode = () => {
+            const active = this.engine.getBattleMode();
+            modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === active));
+        };
+        modeBtns.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                await this.engine.setBattleMode(btn.dataset.mode);
+                paintMode();
+            });
+        });
+        paintMode();
 
         // ── Cloud sync controls ──
         const statusLine = modal.body.querySelector('.sync-status-line');

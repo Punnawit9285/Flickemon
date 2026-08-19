@@ -753,3 +753,32 @@
     color: var(--flick-text-muted);
 }
 .signin-gate-skip-note.visible { display: block; }
+
+/* EXP mode: battle won without a capture */
+.status-line.defeated { color: var(--flick-primary); font-weight: 700; }
+
+/* ────────────────────────── Battle Mode Switch ────────────────────────── */
+
+.mode-switch { display: flex; gap: 8px; width: 100%; }
+.mode-btn {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 10px;
+    border: 2px solid var(--flick-border);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--flick-text-muted);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.mode-btn strong { font-size: 0.95rem; font-weight: 800; }
+.mode-btn small { font-size: 0.7rem; line-height: 1.35; }
+.mode-btn:hover { border-color: var(--flick-primary); }
+.mode-btn.active {
+    border-color: var(--flick-primary);
+    color: var(--flick-text);
+    background: rgba(var(--ion-color-primary-rgb, 233, 30, 99), 0.08);
+}

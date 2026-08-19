@@ -79,6 +79,9 @@ class FlickemonEngine {
             // cannot infer. Present so future migrations have something to key off.
             schemaVersion: 1,
             hasStarted: false,
+            // 'capture' (defeated Pokémon join the party) or 'exp' (no capture,
+            // higher EXP). See BATTLE_MODES in flickemon-config.js.
+            battleMode: 'capture',
             isHidden: false,
             activeInstanceId: null,
             party: [],
@@ -119,6 +122,7 @@ class FlickemonEngine {
             if (!Number.isFinite(p.totalExp)) p.totalExp = this.config.expForLevel(p.level);
         });
 
+        if (s.battleMode !== this.config.BATTLE_MODES.EXP) s.battleMode = this.config.BATTLE_MODES.CAPTURE;
         if (!Number.isFinite(s.totalMinutesWatched) || s.totalMinutesWatched < 0) s.totalMinutesWatched = 0;
         if (!Number.isFinite(s.lastSyncedAt)) s.lastSyncedAt = 0;
 
@@ -371,6 +375,7 @@ class FlickemonEngine {
             party: this.gameState.party,
             pokedex: this.gameState.pokedex,
             totalMinutesWatched: this.gameState.totalMinutesWatched,
+            battleMode: this.gameState.battleMode,
             lastSyncedAt: this.gameState.lastSyncedAt,
         };
     }
@@ -416,6 +421,15 @@ class FlickemonEngine {
         }
         if (!this.getActivePokemon() && this.gameState.party.length > 0) {
             this.gameState.activeInstanceId = this.gameState.party[0].instanceId;
+        }
+
+        // Battle mode is a preference, so the newer write wins. Everything else
+        // here is monotonic, but "most recently chosen" is the right rule for a
+        // setting — max() would be meaningless for a string.
+        if (cloud.battleMode && (cloud.lastSyncedAt || 0) > (this.gameState.lastSyncedAt || 0)) {
+            this.gameState.battleMode = cloud.battleMode === this.config.BATTLE_MODES.EXP
+                ? this.config.BATTLE_MODES.EXP
+                : this.config.BATTLE_MODES.CAPTURE;
         }
 
         this.gameState.lastSyncedAt = Math.max(this.gameState.lastSyncedAt || 0, cloud.lastSyncedAt || 0);
@@ -521,6 +535,31 @@ class FlickemonEngine {
     }
 
     hasStarted() { return this.gameState.hasStarted; }
+
+    getBattleMode() {
+        return this.gameState.battleMode === this.config.BATTLE_MODES.EXP
+            ? this.config.BATTLE_MODES.EXP
+            : this.config.BATTLE_MODES.CAPTURE;
+    }
+
+    isCaptureMode() { return this.getBattleMode() === this.config.BATTLE_MODES.CAPTURE; }
+
+    /** EXP multiplier for a won battle, which depends on the active mode. */
+    getWinExpBonus() {
+        return this.isCaptureMode()
+            ? this.config.BATTLE_WIN_EXP_BONUS
+            : this.config.EXP_MODE_WIN_EXP_BONUS;
+    }
+
+    async setBattleMode(mode) {
+        const next = mode === this.config.BATTLE_MODES.EXP
+            ? this.config.BATTLE_MODES.EXP
+            : this.config.BATTLE_MODES.CAPTURE;
+        if (next === this.gameState.battleMode) return;
+        this.gameState.battleMode = next;
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+    }
     getGameState() { return { ...this.gameState }; }
 
     async chooseStarter(speciesId) {
@@ -599,7 +638,9 @@ class FlickemonEngine {
             const levelDiff = this.wildOpponent.wildLevel - active.level;
             if (levelDiff >= 4 && this.wildOpponent.fightDurationSeconds >= 90) {
                 this.wildOpponent.status = 'escaped';
-                const partialExp = Math.round(this.wildOpponent.wildLevel * 10);
+                const partialExp = Math.round(
+                    this.wildOpponent.wildLevel * this.config.ESCAPE_EXP_MULTIPLIER
+                );
                 this.wildOpponent.expGained = partialExp;
                 this.addExpToActive(partialExp);
 
@@ -627,21 +668,29 @@ class FlickemonEngine {
             this.wildOpponent.currentHp = Math.max(0, Math.ceil(this.wildHpAcc));
 
             if (this.wildOpponent.currentHp === 0) {
-                // Defeated & Captured! Worth pushing to the cloud right away.
+                // Battle won. Worth pushing to the cloud right away.
                 capturedThisTick = true;
-                this.wildOpponent.status = 'captured';
-                const winExp = Math.round(this.wildOpponent.wildLevel * this.config.BATTLE_WIN_EXP_BONUS);
+
+                const captured = this.isCaptureMode();
+                this.wildOpponent.status = captured ? 'captured' : 'defeated';
+                const winExp = Math.round(this.wildOpponent.wildLevel * this.getWinExpBonus());
                 this.wildOpponent.expGained = winExp;
 
-                if (!this.gameState.party.some(p => p.speciesId === this.wildOpponent.wildSpecies.id)) {
-                    this.gameState.party.push({
-                        instanceId: this.generateId(),
-                        speciesId: this.wildOpponent.wildSpecies.id,
-                        level: this.wildOpponent.wildLevel,
-                        totalExp: this.config.expForLevel(this.wildOpponent.wildLevel),
-                    });
+                if (captured) {
+                    if (!this.gameState.party.some(p => p.speciesId === this.wildOpponent.wildSpecies.id)) {
+                        this.gameState.party.push({
+                            instanceId: this.generateId(),
+                            speciesId: this.wildOpponent.wildSpecies.id,
+                            level: this.wildOpponent.wildLevel,
+                            totalExp: this.config.expForLevel(this.wildOpponent.wildLevel),
+                        });
+                    }
+                    this.updatePokedex(this.wildOpponent.wildSpecies.id, true);
+                } else {
+                    // EXP mode: the encounter still counts as SEEN — the student
+                    // did meet it — but it is not added to the party or marked caught.
+                    this.updatePokedex(this.wildOpponent.wildSpecies.id, false);
                 }
-                this.updatePokedex(this.wildOpponent.wildSpecies.id, true);
 
                 const evoResult = this.addExpToActive(winExp);
 
@@ -649,7 +698,7 @@ class FlickemonEngine {
                     wildSpecies: this.wildOpponent.wildSpecies,
                     wildLevel: this.wildOpponent.wildLevel,
                     won: true,
-                    captured: true,
+                    captured,
                     expGained: winExp,
                     evolved: !!evoResult,
                     evolvedInto: evoResult || undefined,

@@ -20,7 +20,30 @@ function getBackSpriteUrl(pokemonId) {
 // ─────────────────────────── EXP & Leveling ───────────────────────────
 
 const EXP_PER_MINUTE = 30;
-const BATTLE_WIN_EXP_BONUS = 1;
+// ── Battle rewards ──
+//
+// Two battle modes trade collection against levelling speed:
+//   capture — the defeated Pokémon joins the party and the Pokédex, EXP x1
+//   exp     — no capture (seen only), EXP x6
+//
+// Measured against the corrected escape reward below: capture x6 reaches level
+// 36 in ~18.6h, EXP x12 in ~9.7h — a 1.9x gap. Deliberately not wider: the
+// player gives up Pokédex progress across all 1025 species, and a 4-5x gap
+// would make capture mode strictly the worse choice rather than a real decision.
+//
+// These are x6/x12 rather than x1/x6 because escapes no longer pay x10. When
+// losing supplied 86% of all EXP, a x1 win bonus still levelled in ~19h; with
+// that removed, x1 would take ~90h.
+const BATTLE_WIN_EXP_BONUS = 6;
+const EXP_MODE_WIN_EXP_BONUS = 12;
+
+// Consolation EXP when a fight is abandoned, as a multiple of the wild level.
+// MUST stay below the win bonuses, or losing pays better than winning. This was
+// previously a hardcoded x10 in the engine: with a x1 win bonus an escape was
+// worth 18x a win, and 86% of all EXP came from losing fights.
+const ESCAPE_EXP_MULTIPLIER = 0.5;
+
+const BATTLE_MODES = { CAPTURE: 'capture', EXP: 'exp' };
 
 function calculateRealMaxHp(baseHp, level) {
     return Math.floor(((2 * baseHp) * level) / 100) + level + 10;
@@ -1644,6 +1667,9 @@ window.FlickemonConfig = {
     getBackSpriteUrl,
     EXP_PER_MINUTE,
     BATTLE_WIN_EXP_BONUS,
+    EXP_MODE_WIN_EXP_BONUS,
+    ESCAPE_EXP_MULTIPLIER,
+    BATTLE_MODES,
     calculateRealMaxHp,
     expForLevel,
     levelFromExp,
