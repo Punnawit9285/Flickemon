@@ -82,6 +82,10 @@ class FlickemonEngine {
             // 'capture' (defeated Pokémon join the party) or 'exp' (no capture,
             // higher EXP). See BATTLE_MODES in flickemon-config.js.
             battleMode: 'capture',
+            // speciesId lists. Deliberately not instanceIds: those are generated
+            // per device, so they would not survive a cross-device merge.
+            favouriteIds: [],
+            teamIds: [],
             isHidden: false,
             activeInstanceId: null,
             party: [],
@@ -123,6 +127,13 @@ class FlickemonEngine {
         });
 
         if (s.battleMode !== this.config.BATTLE_MODES.EXP) s.battleMode = this.config.BATTLE_MODES.CAPTURE;
+
+        const ownedSpecies = new Set(s.party.map(p => p.speciesId));
+        const cleanIds = list => Array.isArray(list)
+            ? [...new Set(list.filter(id => Number.isFinite(id) && ownedSpecies.has(id)))]
+            : [];
+        s.favouriteIds = cleanIds(s.favouriteIds);
+        s.teamIds = cleanIds(s.teamIds).slice(0, this.config.MAX_TEAM_SIZE);
         if (!Number.isFinite(s.totalMinutesWatched) || s.totalMinutesWatched < 0) s.totalMinutesWatched = 0;
         if (!Number.isFinite(s.lastSyncedAt)) s.lastSyncedAt = 0;
 
@@ -376,6 +387,8 @@ class FlickemonEngine {
             pokedex: this.gameState.pokedex,
             totalMinutesWatched: this.gameState.totalMinutesWatched,
             battleMode: this.gameState.battleMode,
+            favouriteIds: this.gameState.favouriteIds,
+            teamIds: this.gameState.teamIds,
             lastSyncedAt: this.gameState.lastSyncedAt,
         };
     }
@@ -426,10 +439,14 @@ class FlickemonEngine {
         // Battle mode is a preference, so the newer write wins. Everything else
         // here is monotonic, but "most recently chosen" is the right rule for a
         // setting — max() would be meaningless for a string.
-        if (cloud.battleMode && (cloud.lastSyncedAt || 0) > (this.gameState.lastSyncedAt || 0)) {
-            this.gameState.battleMode = cloud.battleMode === this.config.BATTLE_MODES.EXP
-                ? this.config.BATTLE_MODES.EXP
-                : this.config.BATTLE_MODES.CAPTURE;
+        if ((cloud.lastSyncedAt || 0) > (this.gameState.lastSyncedAt || 0)) {
+            if (cloud.battleMode) {
+                this.gameState.battleMode = cloud.battleMode === this.config.BATTLE_MODES.EXP
+                    ? this.config.BATTLE_MODES.EXP
+                    : this.config.BATTLE_MODES.CAPTURE;
+            }
+            if (Array.isArray(cloud.favouriteIds)) this.gameState.favouriteIds = [...cloud.favouriteIds];
+            if (Array.isArray(cloud.teamIds)) this.gameState.teamIds = [...cloud.teamIds];
         }
 
         this.gameState.lastSyncedAt = Math.max(this.gameState.lastSyncedAt || 0, cloud.lastSyncedAt || 0);
@@ -600,6 +617,52 @@ class FlickemonEngine {
     }
 
     getParty() { return [...this.gameState.party]; }
+
+    // ─────────────────────── Favourites & Team ───────────────────────
+
+    isFavourite(speciesId) { return (this.gameState.favouriteIds || []).includes(speciesId); }
+
+    async toggleFavourite(speciesId) {
+        const list = this.gameState.favouriteIds || (this.gameState.favouriteIds = []);
+        const i = list.indexOf(speciesId);
+        if (i >= 0) list.splice(i, 1); else list.push(speciesId);
+        this.emitState();
+        await this.saveGameState();
+    }
+
+    /**
+     * Species training together. The active partner is always a member — it is
+     * implicit rather than stored, so switching partners can never leave the
+     * team in a state where the Pokémon actually battling is excluded.
+     */
+    getTeam() {
+        const active = this.getActivePokemon();
+        const stored = (this.gameState.teamIds || []).filter(id => !active || id !== active.speciesId);
+        const team = active ? [active.speciesId, ...stored] : stored;
+        return team.slice(0, this.config.MAX_TEAM_SIZE);
+    }
+
+    isOnTeam(speciesId) { return this.getTeam().includes(speciesId); }
+
+    isTeamFull() { return this.getTeam().length >= this.config.MAX_TEAM_SIZE; }
+
+    /** Returns false when the change was rejected (team full, or it's the active). */
+    async toggleTeamMember(speciesId) {
+        const active = this.getActivePokemon();
+        if (active && speciesId === active.speciesId) return false; // always aboard
+
+        const list = this.gameState.teamIds || (this.gameState.teamIds = []);
+        const i = list.indexOf(speciesId);
+        if (i >= 0) {
+            list.splice(i, 1);
+        } else {
+            if (this.isTeamFull()) return false;
+            list.push(speciesId);
+        }
+        this.emitState();
+        await this.saveGameState();
+        return true;
+    }
     getPokedex() { return [...this.gameState.pokedex]; }
     getCaughtCount() { return this.gameState.pokedex.filter(p => p.caught).length; }
 
@@ -796,20 +859,69 @@ class FlickemonEngine {
             active.level = newLevel;
         }
 
+        // Everyone else on the team trains alongside, at a reduced rate.
+        this.shareExpWithTeam(exp, active.speciesId);
+
         const evolution = this.config.canEvolveAt(active.speciesId, active.level);
         if (evolution) {
             const fromSpecies = this.config.getSpeciesById(active.speciesId);
             const toSpecies = this.config.getSpeciesById(evolution.toId);
             if (fromSpecies && toSpecies) {
+                const tIdx = (this.gameState.teamIds || []).indexOf(active.speciesId);
+                const fIdx = (this.gameState.favouriteIds || []).indexOf(active.speciesId);
                 active.speciesId = evolution.toId;
+                if (tIdx >= 0) this.gameState.teamIds[tIdx] = evolution.toId;
+                if (fIdx >= 0) this.gameState.favouriteIds[fIdx] = evolution.toId;
                 this.updatePokedex(evolution.toId, true);
                 this.evolutionListeners.forEach(cb => cb({ from: fromSpecies, to: toSpecies }));
+                this.emitState();
                 return toSpecies;
             }
         }
 
         this.emitState();
         return null;
+    }
+
+    /**
+     * Awards TEAM_EXP_SHARE of `exp` to every team member except the partner,
+     * who already received the full amount.
+     *
+     * Team members evolve too, but silently: the evolution overlay is a
+     * five-second fullscreen takeover, and several members crossing a threshold
+     * on the same battle would stack them. The Pokédex is still updated, so the
+     * change is visible in the party list and dex.
+     */
+    shareExpWithTeam(exp, activeSpeciesId) {
+        const shared = Math.round(exp * this.config.TEAM_EXP_SHARE);
+        if (shared <= 0) return;
+
+        for (const speciesId of this.getTeam()) {
+            if (speciesId === activeSpeciesId) continue;
+
+            const member = this.gameState.party.find(p => p.speciesId === speciesId);
+            if (!member || member.level >= this.config.MAX_LEVEL) continue;
+
+            member.totalExp += shared;
+            member.level = Math.min(
+                this.config.MAX_LEVEL,
+                this.config.levelFromExp(member.totalExp)
+            );
+
+            const evo = this.config.canEvolveAt(member.speciesId, member.level);
+            if (evo) {
+                const to = this.config.getSpeciesById(evo.toId);
+                if (to) {
+                    // Keep teamIds pointing at the species that now exists.
+                    const idx = (this.gameState.teamIds || []).indexOf(member.speciesId);
+                    const favIdx = (this.gameState.favouriteIds || []).indexOf(member.speciesId);
+                    member.speciesId = evo.toId;
+                    if (idx >= 0) this.gameState.teamIds[idx] = evo.toId;
+                    if (favIdx >= 0) this.gameState.favouriteIds[favIdx] = evo.toId;
+                    this.updatePokedex(evo.toId, true);
+                }
+            }
+        }
     }
 
     updatePokedex(speciesId, caught) {

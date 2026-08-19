@@ -786,3 +786,77 @@
     .mode-toggle-label { display: none; }
     .mode-toggle-btn { padding: 4px 8px; }
 }
+
+/* ────────────────────────── Party Tab ────────────────────────── */
+
+.party-team-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    border-radius: 8px;
+    background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.08);
+    border: 1px solid var(--flick-border);
+}
+.party-team-summary strong { font-size: 0.9rem; color: var(--flick-primary); }
+.party-team-summary span { font-size: 0.72rem; color: var(--flick-text-muted); }
+
+.party-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.party-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background: var(--flick-card-bg);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.party-row:hover { transform: translateX(2px); border-color: var(--flick-border); }
+
+/* Active partner: the strongest signal in the list. */
+.party-row.is-active {
+    border-color: var(--flick-primary);
+    background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10);
+    cursor: default;
+}
+.party-row.is-active:hover { transform: none; }
+
+/* On the team but not the partner: present, but clearly secondary. */
+.party-row.on-team:not(.is-active) { border-color: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.35); }
+
+.party-row-sprite { width: 44px; height: 44px; image-rendering: pixelated; flex-shrink: 0; }
+.party-row-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.party-row-name {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    font-size: 0.9rem; font-weight: 700; color: var(--flick-text);
+}
+.party-row-level { font-size: 0.75rem; color: var(--flick-text-muted); }
+
+.badge {
+    font-size: 0.6rem; font-weight: 800; letter-spacing: 0.04em;
+    padding: 1px 6px; border-radius: 10px; text-transform: uppercase;
+}
+.badge-active { background: var(--flick-primary); color: #fff; }
+.badge-team { background: transparent; color: var(--flick-primary); border: 1px solid var(--flick-primary); }
+
+.party-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.row-btn {
+    width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 8px; border: 1px solid var(--flick-border);
+    background: transparent; color: var(--flick-text-muted);
+    font-size: 0.95rem; font-weight: 800; cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.row-btn:hover:not(:disabled) { border-color: var(--flick-primary); color: var(--flick-primary); }
+.row-btn:disabled { opacity: 0.35; cursor: default; }
+.fav-btn.on { color: #f59e0b; border-color: #f59e0b; background: rgba(245,158,11,0.10); }
+.team-btn.on { color: var(--flick-primary); border-color: var(--flick-primary); background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10); }

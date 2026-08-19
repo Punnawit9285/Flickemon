@@ -45,6 +45,14 @@ const ESCAPE_EXP_MULTIPLIER = 0.5;
 
 const BATTLE_MODES = { CAPTURE: 'capture', EXP: 'exp' };
 
+// ── Team & EXP share ──
+//
+// Up to six Pokémon (the active partner always among them) train together.
+// Non-active members earn a fraction of what the partner earns, so a team is
+// a way to bring others along without out-pacing your main.
+const MAX_TEAM_SIZE = 6;
+const TEAM_EXP_SHARE = 0.3;
+
 function calculateRealMaxHp(baseHp, level) {
     return Math.floor(((2 * baseHp) * level) / 100) + level + 10;
 }
@@ -1670,6 +1678,8 @@ window.FlickemonConfig = {
     EXP_MODE_WIN_EXP_BONUS,
     ESCAPE_EXP_MULTIPLIER,
     BATTLE_MODES,
+    MAX_TEAM_SIZE,
+    TEAM_EXP_SHARE,
     calculateRealMaxHp,
     expForLevel,
     levelFromExp,

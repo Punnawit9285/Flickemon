@@ -487,29 +487,88 @@ class FlickemonUI {
                     content.innerHTML = `<div class="partner-section"><p>No partner selected.</p></div>`;
                 }
             } else if (tab === 'party') {
+                const team = this.engine.getTeam();
+                const maxTeam = this.config.MAX_TEAM_SIZE;
+                const sharePct = Math.round(this.config.TEAM_EXP_SHARE * 100);
+
+                // Favourites first, then by level. Sorting a copy: the stored
+                // party order is meaningful elsewhere.
+                const ordered = [...party].sort((a, b) => {
+                    const fa = this.engine.isFavourite(a.speciesId) ? 0 : 1;
+                    const fb = this.engine.isFavourite(b.speciesId) ? 0 : 1;
+                    return fa !== fb ? fa - fb : b.level - a.level;
+                });
+
                 content.innerHTML = `
-                    <div class="flickemon-list-card">
-                        ${party.map(pk => {
+                    <div class="party-team-summary">
+                        <strong>Team ${team.length}/${maxTeam}</strong>
+                        <span>Team members earn ${sharePct}% of your partner's EXP</span>
+                    </div>
+                    <div class="party-list">
+                        ${ordered.map(pk => {
                             const sp = this.engine.getSpeciesForPokemon(pk);
                             if (!sp) return '';
                             const isActive = pk.instanceId === active?.instanceId;
+                            const fav = this.engine.isFavourite(pk.speciesId);
+                            const onTeam = this.engine.isOnTeam(pk.speciesId);
+                            const full = this.engine.isTeamFull();
                             return `
-                                <div class="flickemon-party-row ${isActive ? 'active' : 'inactive'}" data-id="${pk.instanceId}" style="cursor: ${isActive ? 'default' : 'pointer'}">
-                                    <img src="${this.config.getSpriteUrl(sp.id)}" alt="${sp.name}" class="party-sprite"/>
-                                    <div class="party-info">
-                                        <span class="party-name">${sp.name}</span>
-                                        <span class="party-level">Lv. ${pk.level}</span>
+                                <div class="party-row ${isActive ? 'is-active' : ''} ${onTeam ? 'on-team' : ''}"
+                                     data-instance="${pk.instanceId}" data-species="${pk.speciesId}">
+                                    <img src="${this.config.getSpriteUrl(sp.id)}" alt="${sp.name}" class="party-row-sprite"/>
+                                    <div class="party-row-info">
+                                        <span class="party-row-name">
+                                            ${sp.name}
+                                            ${isActive ? '<span class="badge badge-active">ACTIVE</span>' : ''}
+                                            ${onTeam && !isActive ? '<span class="badge badge-team">TEAM</span>' : ''}
+                                        </span>
+                                        <span class="party-row-level">Lv. ${pk.level}</span>
                                     </div>
-                                    ${isActive ? '<span class="party-star">★</span>' : ''}
+                                    <div class="party-row-actions">
+                                        <button class="row-btn fav-btn ${fav ? 'on' : ''}"
+                                                data-species="${pk.speciesId}"
+                                                title="${fav ? 'Remove from favourites' : 'Mark as favourite'}">${fav ? '★' : '☆'}</button>
+                                        <button class="row-btn team-btn ${onTeam ? 'on' : ''}"
+                                                data-species="${pk.speciesId}"
+                                                ${isActive ? 'disabled' : ''}
+                                                title="${isActive ? 'Your partner is always on the team'
+                                                        : onTeam ? 'Remove from team'
+                                                        : full ? `Team is full (${maxTeam})` : 'Add to team'}">
+                                            ${onTeam ? '✓' : '+'}
+                                        </button>
+                                    </div>
                                 </div>
                             `;
                         }).join('')}
                     </div>
                 `;
-                content.querySelectorAll('.flickemon-party-row.inactive').forEach(row => {
-                    row.addEventListener('click', async (e) => {
-                        const id = e.currentTarget.getAttribute('data-id');
-                        await this.engine.switchActivePokemon(id);
+
+                // Row click sets the active partner.
+                content.querySelectorAll('.party-row').forEach(row => {
+                    row.addEventListener('click', async () => {
+                        if (row.classList.contains('is-active')) return;
+                        await this.engine.switchActivePokemon(row.getAttribute('data-instance'));
+                        renderTab('party');
+                    });
+                });
+
+                // Buttons must not also trigger the row's set-active handler.
+                content.querySelectorAll('.fav-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        await this.engine.toggleFavourite(Number(btn.dataset.species));
+                        renderTab('party');
+                    });
+                });
+                content.querySelectorAll('.team-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        if (btn.disabled) return;
+                        const ok = await this.engine.toggleTeamMember(Number(btn.dataset.species));
+                        if (!ok) {
+                            alert(`Your team is full (${this.config.MAX_TEAM_SIZE}). Remove someone first.`);
+                            return;
+                        }
                         renderTab('party');
                     });
                 });
