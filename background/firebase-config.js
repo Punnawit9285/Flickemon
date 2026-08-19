@@ -24,6 +24,12 @@ export function isConfigured() {
 // Firestore collection holding one save document per student, keyed by Firebase uid.
 export const SAVES_COLLECTION = 'saves';
 
+// Admin roster. A document at admins/{uid} grants admin; security rules deny
+// every client write, so it can only be created from the Firebase console.
+// This replaces the old hardcoded passcode, which was readable by anyone who
+// opened the extension's source.
+export const ADMINS_COLLECTION = 'admins';
+
 // ─────────────────────── OAuth client ───────────────────────
 //
 // Auth uses chrome.identity.launchWebAuthFlow, which needs a **Web application**

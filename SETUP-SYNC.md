@@ -86,6 +86,27 @@ The same domain appears in `firestore.rules`. Keep the two in sync: the
 extension's copy only produces a friendly error message and can be edited out by
 anyone running it unpacked, so **the rules file is the actual restriction**.
 
+## 4c. Grant admin access
+
+There is no admin passcode. A passcode shipped inside an extension is readable
+by anyone who opens its source, so admin is a property of the signed-in account,
+checked against Firestore.
+
+To grant it, in the Firebase console → **Firestore → Data**:
+
+1. Start a collection named `admins`
+2. Add a document whose **Document ID is the person's Firebase uid**
+   (Authentication → Users, copy the User UID)
+3. Any fields are optional — presence of the document is what counts
+
+Security rules let a user read only their own `admins/{uid}` document and deny
+**all** client writes, so admin can only be granted from the console.
+
+**Scope of this control:** it authoritatively protects anything the server does.
+It cannot stop a determined student editing the extension on their own machine
+to reveal the panel — but those tools only alter that person's own save, which
+they could already do by editing `chrome.storage` directly.
+
 ## 5. Deploy the security rules
 
 ```sh

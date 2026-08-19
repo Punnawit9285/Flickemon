@@ -13,13 +13,28 @@ service cloud.firestore {
       return request.auth.token.email.matches('.*@docchula[.]com');
     }
 
+    function signedInStudent() {
+      return request.auth != null
+             && request.auth.token.email_verified == true
+             && allowedDomain();
+    }
+
     // Each student owns exactly one save document, keyed by their Firebase uid.
     // They can read and write only their own; nobody can read anyone else's.
     match /saves/{uid} {
-      allow read, write: if request.auth != null
-                         && request.auth.uid == uid
-                         && request.auth.token.email_verified == true
-                         && allowedDomain();
+      allow read, write: if signedInStudent() && request.auth.uid == uid;
+    }
+
+    // Admin roster. Presence of admins/{uid} grants admin.
+    //
+    // Read is limited to your own document, so nobody can enumerate the admin
+    // list. Writes are denied to EVERY client — admin is granted only by
+    // creating the document by hand in the Firebase console. That is what makes
+    // this a real control instead of the old hardcoded passcode, which anyone
+    // could read straight out of the extension's source.
+    match /admins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
     }
 
     // Default deny. Any collection not matched above is unreachable by clients.

@@ -10,7 +10,7 @@
  * monitoring portal can read them without parsing every blob.
  */
 
-import { FIREBASE_CONFIG, SAVES_COLLECTION } from './firebase-config.js';
+import { FIREBASE_CONFIG, SAVES_COLLECTION, ADMINS_COLLECTION } from './firebase-config.js';
 import { getIdToken } from './auth.js';
 
 function docUrl(uid) {
@@ -76,4 +76,33 @@ export async function pushState(state) {
 
     if (!res.ok) throw new Error(`Cloud write failed (${res.status})`);
     return { signedIn: true, ok: true };
+}
+
+/**
+ * Whether the signed-in student is an administrator.
+ *
+ * Admin status is a document at admins/{uid} that only the Firebase console can
+ * create — security rules deny all client writes. That makes this a real check
+ * rather than a shared secret: the extension's code is on the user's disk and
+ * can be edited freely, so anything meaningful must be decided by the server.
+ *
+ * Note what this does and does not buy. It authoritatively protects anything
+ * the SERVER does. It cannot stop someone editing the extension to reveal the
+ * panel locally — but those tools only alter that person's own save, which they
+ * could already do by editing chrome.storage directly.
+ */
+export async function checkAdmin() {
+    const auth = await getIdToken();
+    if (!auth) return { signedIn: false, isAdmin: false };
+
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}` +
+                `/databases/(default)/documents/${ADMINS_COLLECTION}/${auth.uid}`;
+
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${auth.idToken}` } });
+
+    // 404 = no admin document = ordinary student. 403 = rules deny = not admin.
+    if (res.status === 404 || res.status === 403) return { signedIn: true, isAdmin: false };
+    if (!res.ok) throw new Error(`Admin check failed (${res.status})`);
+
+    return { signedIn: true, isAdmin: true, email: auth.email };
 }

@@ -12,7 +12,7 @@
 
 import { isConfigured } from './firebase-config.js';
 import { signIn, signOut, getStatus, switchAccount } from './auth.js';
-import { pullState, pushState } from './firestore.js';
+import { pullState, pushState, checkAdmin } from './firestore.js';
 
 /** Offline pushes park here until connectivity returns. */
 const PENDING_KEY = 'flickemon_pending_push_v1';
@@ -81,6 +81,10 @@ const handlers = {
     async AUTH_SWITCH() {
         await switchAccount();
         return { ok: true };
+    },
+
+    async AUTH_IS_ADMIN() {
+        return await checkAdmin();
     },
 
     async CLOUD_PULL() {

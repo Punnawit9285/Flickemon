@@ -575,13 +575,13 @@ class FlickemonUI {
                     <span class="flickemon-list-item-sub">Student Player Monitoring Portal (Firestore cloud backend)</span>
                 </div>
                 <div class="flickemon-list-item">
-                    <div style="display: flex; gap: 8px;">
-                        <input type="password" class="admin-passcode-input" placeholder="Enter Admin Passcode" style="flex:1; padding:8px; border-radius:4px; border:1px solid #ccc;"/>
-                        <button class="unlock-admin-btn" style="background:#e91e63; color:white; border:none; border-radius:4px; padding:0 16px; cursor:pointer;">Unlock</button>
-                    </div>
+                    <button class="unlock-admin-btn" style="background:#e91e63; color:white; border:none; border-radius:4px; padding:10px 16px; cursor:pointer; font-weight:700; width:100%;">Unlock admin tools</button>
+                    <span class="admin-unlock-note" style="font-size:0.75rem; color:var(--flick-text-muted); margin-top:6px; display:block;">
+                        Access is granted to specific accounts, not by passcode.
+                    </span>
                 </div>
                 <div class="flickemon-list-item admin-unlocked-panel" style="display: none; padding: 12px;">
-                    <span class="flickemon-list-item-title" style="color: #10b981; display: block; margin-bottom: 12px;">✅ Admin Access Granted (Passcode 9285)</span>
+                    <span class="flickemon-list-item-title" style="color: #10b981; display: block; margin-bottom: 12px;">✅ Admin Access Granted</span>
                     <div style="background: rgba(233,30,99,0.06); padding: 12px; border-radius: 8px;">
                         <h4 style="margin: 0 0 8px 0; color: var(--flick-primary);">⚡ Local Game Testing Tools</h4>
                         <div style="margin-bottom: 8px;">
@@ -617,7 +617,7 @@ class FlickemonUI {
         `;
 
         // Reset lives inside the admin panel now, so these elements exist but stay
-        // hidden until the passcode unlocks it.
+        // hidden until the server confirms admin access.
         const resetBtn = modal.body.querySelector('.reset-progress-btn');
         const restoreBtn = modal.body.querySelector('.admin-restore-btn');
         const restoreNote = modal.body.querySelector('.admin-restore-note');
@@ -742,16 +742,34 @@ class FlickemonUI {
 
         renderSyncStatus();
 
-        const passcodeBtn = modal.body.querySelector('.unlock-admin-btn');
-        const passcodeInput = modal.body.querySelector('.admin-passcode-input');
+        const unlockBtn = modal.body.querySelector('.unlock-admin-btn');
+        const unlockNote = modal.body.querySelector('.admin-unlock-note');
         const adminPanel = modal.body.querySelector('.admin-unlocked-panel');
 
-        passcodeBtn.addEventListener('click', () => {
-            if (passcodeInput.value.trim() === '9285') {
-                adminPanel.style.display = 'block';
-                refreshRestore();
-            } else {
-                alert('Invalid Admin Passcode!');
+        // Admin status is decided by the server (a doc at admins/{uid} that no
+        // client can create), not by a secret shipped inside the extension.
+        unlockBtn.addEventListener('click', async () => {
+            unlockBtn.disabled = true;
+            unlockBtn.textContent = 'Checking…';
+            try {
+                if (await this.engine.isAdmin()) {
+                    adminPanel.style.display = 'block';
+                    unlockBtn.style.display = 'none';
+                    unlockNote.style.display = 'none';
+                    refreshRestore();
+                    return;
+                }
+                const status = await this.engine.getSyncStatus();
+                unlockNote.textContent = status.signedIn
+                    ? `${status.email} is not an administrator.`
+                    : 'Sign in first — admin access is tied to your account.';
+                unlockNote.style.color = 'var(--flick-danger)';
+            } catch {
+                unlockNote.textContent = 'Could not verify admin access. Check your connection.';
+                unlockNote.style.color = 'var(--flick-danger)';
+            } finally {
+                unlockBtn.disabled = false;
+                unlockBtn.textContent = 'Unlock admin tools';
             }
         });
 

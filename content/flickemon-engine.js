@@ -223,6 +223,17 @@ class FlickemonEngine {
         return { reachable: true, ...status };
     }
 
+    /**
+     * Server-verified admin check. Returns false on any failure, so a network
+     * problem denies access rather than granting it.
+     */
+    async isAdmin() {
+        const res = await this.sendToWorker({ type: 'AUTH_IS_ADMIN' });
+        // Strict `=== true`: only an explicit server affirmative grants access.
+        // A truthy-but-malformed value must not be mistaken for a yes.
+        return res?.isAdmin === true;
+    }
+
     async signIn({ prompt } = {}) {
         const res = await this.sendToWorker({ type: 'AUTH_SIGN_IN', prompt });
         if (!res || res.ok === false) {
