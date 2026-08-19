@@ -757,28 +757,32 @@
 /* EXP mode: battle won without a capture */
 .status-line.defeated { color: var(--flick-primary); font-weight: 700; }
 
-/* ────────────────────────── Battle Mode Switch ────────────────────────── */
 
-.mode-switch { display: flex; gap: 8px; width: 100%; }
-.mode-btn {
-    flex: 1 1 0;
-    display: flex;
-    flex-direction: column;
+/* ────────────────────────── Battle Mode Toggle (header) ────────────────────────── */
+
+.mode-toggle-btn {
+    display: inline-flex;
+    align-items: center;
     gap: 4px;
-    padding: 12px 10px;
-    border: 2px solid var(--flick-border);
-    border-radius: 10px;
+    padding: 4px 10px;
+    margin-right: 4px;
+    border-radius: 20px;
+    border: 1.5px solid var(--flick-border);
     background: transparent;
     color: var(--flick-text-muted);
+    font-size: 0.75rem;
+    font-weight: 800;
+    line-height: 1.4;
     cursor: pointer;
-    text-align: left;
+    white-space: nowrap;
     transition: border-color 0.2s, color 0.2s, background 0.2s;
 }
-.mode-btn strong { font-size: 0.95rem; font-weight: 800; }
-.mode-btn small { font-size: 0.7rem; line-height: 1.35; }
-.mode-btn:hover { border-color: var(--flick-primary); }
-.mode-btn.active {
-    border-color: var(--flick-primary);
-    color: var(--flick-text);
-    background: rgba(var(--ion-color-primary-rgb, 233, 30, 99), 0.08);
+.mode-toggle-btn:hover { border-color: var(--flick-primary); color: var(--flick-text); }
+.mode-toggle-btn.capture { border-color: #d97706; color: #d97706; background: rgba(217,119,6,0.08); }
+.mode-toggle-btn.exp     { border-color: var(--flick-primary); color: var(--flick-primary); background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10); }
+
+/* The header gets tight on narrow widgets — drop to just the icon. */
+@media (max-width: 420px) {
+    .mode-toggle-label { display: none; }
+    .mode-toggle-btn { padding: 4px 8px; }
 }

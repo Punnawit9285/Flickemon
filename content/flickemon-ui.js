@@ -90,6 +90,7 @@ class FlickemonUI {
         if (!active || !activeSpecies) return;
 
         const expProg = this.engine.getExpProgress(active);
+        const isCaptureMode = this.engine.isCaptureMode();
 
         card.innerHTML = `
             <div class="flickemon-header">
@@ -98,6 +99,12 @@ class FlickemonUI {
                     <span class="header-title">Flickémon</span>
                 </div>
                 <div class="header-actions">
+                    <button class="mode-toggle-btn ${isCaptureMode ? 'capture' : 'exp'}"
+                            title="${isCaptureMode
+                                ? 'Capture mode — defeated Pokémon join your party. Click to switch to EXP mode (~2x faster levelling, no captures).'
+                                : 'EXP mode — ~2x faster levelling, no captures. Click to switch to Capture mode.'}">
+                        ${isCaptureMode ? '🏆' : '⚡'}<span class="mode-toggle-label">${isCaptureMode ? 'Capture' : 'EXP'}</span>
+                    </button>
                     <button class="icon-btn menu-trigger-btn" title="Options">${ellipsisSvg}</button>
                     <button class="icon-btn widget-collapse-btn" title="Toggle Collapse">${chevronUpSvg}</button>
 
@@ -147,6 +154,13 @@ class FlickemonUI {
                 </div>
             </div>
         `;
+
+        card.querySelector('.mode-toggle-btn')?.addEventListener('click', async (e) => {
+            e.stopPropagation(); // don't let the document handler close the popover first
+            const modes = this.config.BATTLE_MODES;
+            await this.engine.setBattleMode(this.engine.isCaptureMode() ? modes.EXP : modes.CAPTURE);
+            // setBattleMode emits state, which re-renders this header.
+        });
 
         const menuBtn = card.querySelector('.menu-trigger-btn');
         const popover = card.querySelector('.options-popover-menu');
@@ -558,24 +572,6 @@ class FlickemonUI {
         modal.body.innerHTML = `
             <div class="flickemon-list-card">
                 <div class="flickemon-list-item">
-                    <span class="flickemon-list-item-title">Battle Mode</span>
-                    <span class="flickemon-list-item-sub">What happens when you win a battle</span>
-                </div>
-                <div class="flickemon-list-item">
-                    <div class="mode-switch">
-                        <button class="mode-btn" data-mode="capture">
-                            <strong>🏆 Capture</strong>
-                            <small>Defeated Pokémon join your party and Pokédex</small>
-                        </button>
-                        <button class="mode-btn" data-mode="exp">
-                            <strong>⚡ EXP</strong>
-                            <small>No capture, but ~2x faster levelling</small>
-                        </button>
-                    </div>
-                </div>
-            </div>
-            <div class="flickemon-list-card">
-                <div class="flickemon-list-item">
                     <span class="flickemon-list-item-title">Cloud Save Sync</span>
                     <span class="flickemon-list-item-sub sync-status-line">Checking…</span>
                 </div>
@@ -672,20 +668,6 @@ class FlickemonUI {
                 restoreBtn.textContent = 'Restore last snapshot';
             }
         });
-
-        // ── Battle mode switch ──
-        const modeBtns = modal.body.querySelectorAll('.mode-btn');
-        const paintMode = () => {
-            const active = this.engine.getBattleMode();
-            modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === active));
-        };
-        modeBtns.forEach(btn => {
-            btn.addEventListener('click', async () => {
-                await this.engine.setBattleMode(btn.dataset.mode);
-                paintMode();
-            });
-        });
-        paintMode();
 
         // ── Cloud sync controls ──
         const statusLine = modal.body.querySelector('.sync-status-line');
