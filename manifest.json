@@ -20,8 +20,7 @@
     "content_scripts": [
         {
             "matches": [
-                "*://*.docchula.com/*",
-                "*://localhost/*"
+                "https://flick.docchula.com/*"
             ],
             "js": [
                 "content/flickemon-config.js",
