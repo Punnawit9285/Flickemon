@@ -32,14 +32,17 @@ export const SAVES_COLLECTION = 'saves';
 // a student whose Chrome holds their personal Gmail could never reach their
 // faculty account, which a mandatory email domain makes fatal.
 //
-// This defaults to the web client Firebase created for this project. Whichever
-// client you use, it MUST list this exact redirect URI:
+// Whichever client is used here, it MUST list this exact redirect URI:
 //
 //     https://joaglgcgbblaoiioeebpjlbjlahiagcm.chromiumapp.org/
 //
 // (chrome.identity.getRedirectURL() derives it from the extension ID.)
+//
+// Verified working: Google accepts this client with that redirect, plus the
+// prompt and hd parameters below. A previous value pointed at a client that
+// had since been deleted, which surfaced as "Error 401: deleted_client".
 export const WEB_OAUTH_CLIENT_ID =
-    '228657760659-l874kp90l9pm0875vkku5q9pq6jvb91m.apps.googleusercontent.com';
+    '228657760659-e67kpce652d37alkrnffdinjv74jri15.apps.googleusercontent.com';
 
 // ─────────────────────── Who may sign in ───────────────────────
 //

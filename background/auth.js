@@ -51,9 +51,11 @@ function randomState() {
 /**
  * Opens Google's account chooser and returns an OAuth access token.
  *
- * `prompt: 'select_account'` forces the chooser even when Google already has a
- * session, which is what makes "switch account" work — otherwise Google would
- * silently reuse the signed-in account.
+ * The chooser is forced on EVERY sign-in, not just when switching. Students
+ * are usually browsing signed into a personal Google account while needing to
+ * use their faculty one; without this, Google silently reuses whichever session
+ * it already has and the student never gets to pick, then hits a confusing
+ * "this account can't be used" rejection from the domain check.
  */
 function launchGoogleAuth({ prompt } = {}) {
     const state = randomState();
@@ -161,7 +163,7 @@ async function refreshIdToken(auth) {
  * Interactive sign-in. Only call in response to a user gesture — Chrome
  * suppresses the account chooser otherwise.
  */
-export async function signIn({ prompt } = {}) {
+export async function signIn({ prompt = 'select_account' } = {}) {
     if (!isConfigured()) throw new Error('Cloud sync is not configured yet (see SETUP-SYNC.md)');
 
     const googleToken = await launchGoogleAuth({ prompt });
