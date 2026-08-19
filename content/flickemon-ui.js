@@ -558,14 +558,6 @@ class FlickemonUI {
         modal.body.innerHTML = `
             <div class="flickemon-list-card">
                 <div class="flickemon-list-item">
-                    <span class="flickemon-list-item-title">Reset Game Progress</span>
-                    <span class="flickemon-list-item-sub">Restart starter selection and reset party to 0</span>
-                </div>
-            </div>
-            <button class="flickemon-danger-btn reset-progress-btn">RESET MY GAME PROGRESS</button>
-            <br/><br/>
-            <div class="flickemon-list-card">
-                <div class="flickemon-list-item">
                     <span class="flickemon-list-item-title">Cloud Save Sync</span>
                     <span class="flickemon-list-item-sub sync-status-line">Checking…</span>
                 </div>
@@ -600,6 +592,8 @@ class FlickemonUI {
                             <button class="dmg-spd-btn" data-spd="1" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer; background:var(--flick-primary); color:#fff;">1x</button>
                             <button class="dmg-spd-btn" data-spd="10" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">10x</button>
                             <button class="dmg-spd-btn" data-spd="100" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">100x</button>
+                            <button class="dmg-spd-btn" data-spd="1000" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">1000x</button>
+                            <button class="dmg-spd-btn" data-spd="10000" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">10000x</button>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="font-size:0.85rem; font-weight:600;">Set Level:</span>
@@ -607,14 +601,57 @@ class FlickemonUI {
                             <button class="admin-set-lvl-btn" style="background:var(--flick-primary); color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-weight:700;">Set Level</button>
                         </div>
                     </div>
+
+                    <div style="background: rgba(239,68,68,0.06); padding: 12px; border-radius: 8px; margin-top: 12px;">
+                        <h4 style="margin: 0 0 4px 0; color: var(--flick-danger);">⚠️ Danger Zone</h4>
+                        <p style="margin: 0 0 10px 0; font-size: 0.75rem; color: var(--flick-text-muted);">
+                            Wipes this student's party, Pokédex and study time on every signed-in device.
+                            A snapshot is kept so it can be undone.
+                        </p>
+                        <button class="flickemon-danger-btn reset-progress-btn">RESET GAME PROGRESS</button>
+                        <button class="admin-restore-btn" style="display:none; width:100%; margin-top:8px; padding:10px; background:transparent; border:2px solid var(--flick-success); color:var(--flick-success); font-weight:700; border-radius:4px; cursor:pointer; text-transform:uppercase; font-size:0.85rem;">Restore last snapshot</button>
+                        <p class="admin-restore-note" style="margin:6px 0 0 0; font-size:0.7rem; color:var(--flick-text-muted);"></p>
+                    </div>
                 </div>
             </div>
         `;
 
-        modal.body.querySelector('.reset-progress-btn').addEventListener('click', async () => {
-            if (confirm('Are you sure you want to reset your Flickémon progress? This will reset your starter, party, and Pokédex.')) {
-                await this.engine.resetGameState();
+        // Reset lives inside the admin panel now, so these elements exist but stay
+        // hidden until the passcode unlocks it.
+        const resetBtn = modal.body.querySelector('.reset-progress-btn');
+        const restoreBtn = modal.body.querySelector('.admin-restore-btn');
+        const restoreNote = modal.body.querySelector('.admin-restore-note');
+
+        /** Surfaces the snapshot taken before the last destructive action. */
+        const refreshRestore = async () => {
+            const backup = await this.engine.peekBackup();
+            if (!backup) {
+                restoreBtn.style.display = 'none';
+                restoreNote.textContent = '';
+                return;
+            }
+            restoreBtn.style.display = 'block';
+            restoreNote.textContent = `Snapshot from ${new Date(backup.savedAt).toLocaleString()}`;
+        };
+
+        resetBtn.addEventListener('click', async () => {
+            if (!confirm('Reset this student\'s Flickémon progress?\n\nParty, Pokédex and study time will be cleared on every signed-in device. A snapshot is kept so this can be undone.')) return;
+            await this.engine.resetGameState();
+            await refreshRestore();
+            this.closeModal(modal.overlay);
+        });
+
+        restoreBtn.addEventListener('click', async () => {
+            if (!confirm('Restore the last snapshot? This replaces current progress on every signed-in device.')) return;
+            restoreBtn.disabled = true;
+            restoreBtn.textContent = 'Restoring…';
+            const ok = await this.engine.restoreBackup();
+            if (ok) {
                 this.closeModal(modal.overlay);
+            } else {
+                alert('No snapshot available to restore.');
+                restoreBtn.disabled = false;
+                restoreBtn.textContent = 'Restore last snapshot';
             }
         });
 
@@ -712,6 +749,7 @@ class FlickemonUI {
         passcodeBtn.addEventListener('click', () => {
             if (passcodeInput.value.trim() === '9285') {
                 adminPanel.style.display = 'block';
+                refreshRestore();
             } else {
                 alert('Invalid Admin Passcode!');
             }

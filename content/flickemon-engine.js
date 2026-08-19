@@ -18,6 +18,8 @@ const LOCAL_SAVE_DEBOUNCE_MS = 1000;
 class FlickemonEngine {
     constructor() {
         this.STORAGE_KEY = 'flickemon_ext_save_v2';
+        // Last state before anything destructive, so progress is recoverable.
+        this.BACKUP_KEY = 'flickemon_ext_save_backup_v1';
         this.config = window.FlickemonConfig;
 
         this.gameState = this.createEmptyState();
@@ -73,6 +75,9 @@ class FlickemonEngine {
 
     createEmptyState() {
         return {
+            // Bumped only when the shape changes in a way normalizeState()
+            // cannot infer. Present so future migrations have something to key off.
+            schemaVersion: 1,
             hasStarted: false,
             isHidden: false,
             activeInstanceId: null,
@@ -87,6 +92,85 @@ class FlickemonEngine {
         };
     }
 
+    /**
+     * Reconciles a stored save with the current state shape.
+     *
+     * Saves written by an older version are missing fields the current code
+     * assumes exist — a save without `pokedex` used to throw inside init(),
+     * which left the widget unrendered and looked exactly like lost progress.
+     * Everything is layered over createEmptyState() so every field is present,
+     * then obviously-bad values are repaired rather than trusted.
+     */
+    normalizeState(raw) {
+        const base = this.createEmptyState();
+        if (!raw || typeof raw !== 'object') return base;
+
+        const s = { ...base, ...raw };
+
+        s.party = Array.isArray(s.party) ? s.party : [];
+        s.pokedex = Array.isArray(s.pokedex) ? s.pokedex : [];
+
+        // Drop entries that would break lookups later.
+        s.party = s.party.filter(p => p && p.instanceId && Number.isFinite(p.speciesId));
+        s.pokedex = s.pokedex.filter(e => e && Number.isFinite(e.speciesId));
+
+        s.party.forEach(p => {
+            if (!Number.isFinite(p.level)) p.level = 1;
+            if (!Number.isFinite(p.totalExp)) p.totalExp = this.config.expForLevel(p.level);
+        });
+
+        if (!Number.isFinite(s.totalMinutesWatched) || s.totalMinutesWatched < 0) s.totalMinutesWatched = 0;
+        if (!Number.isFinite(s.lastSyncedAt)) s.lastSyncedAt = 0;
+
+        // The active pointer must name a party member that actually exists.
+        if (!s.party.some(p => p.instanceId === s.activeInstanceId)) {
+            s.activeInstanceId = s.party.length ? s.party[0].instanceId : null;
+        }
+        // "Started" without a partner is unplayable; treat it as not started.
+        if (s.hasStarted && s.party.length === 0) s.hasStarted = false;
+
+        return s;
+    }
+
+    /** Snapshots the current save so a destructive action stays recoverable. */
+    async backupState() {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+        if (!this.gameState || !this.gameState.hasStarted) return; // nothing worth keeping
+        try {
+            await chrome.storage.local.set({
+                [this.BACKUP_KEY]: { state: this.gameState, savedAt: Date.now() },
+            });
+        } catch (err) {
+            console.warn('[Flickémon] Could not write backup:', err);
+        }
+    }
+
+    /** Most recent pre-destructive snapshot, or null. */
+    async peekBackup() {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return null;
+        const data = await chrome.storage.local.get([this.BACKUP_KEY]);
+        return (data && data[this.BACKUP_KEY]) || null;
+    }
+
+    /** Restores the snapshot and pushes it upstream. */
+    async restoreBackup() {
+        const backup = await this.peekBackup();
+        if (!backup || !backup.state) return false;
+
+        this.gameState = this.normalizeState(backup.state);
+        this.wildOpponent = null;
+        if (this.respawnTimer) clearTimeout(this.respawnTimer);
+
+        this.writeLocal();
+        this.emitState();
+        this.emitWild();
+        if (this.gameState.hasStarted) this.spawnWildOpponent();
+
+        this.cloudDirty = true;
+        await this.flushCloud();
+        return true;
+    }
+
     async init() {
         if (typeof chrome === 'undefined' || !chrome.storage) return;
 
@@ -94,7 +178,7 @@ class FlickemonEngine {
         if (chrome.storage.local) {
             const localData = await chrome.storage.local.get([this.STORAGE_KEY]);
             if (localData && localData[this.STORAGE_KEY]) {
-                this.gameState = localData[this.STORAGE_KEY];
+                this.gameState = this.normalizeState(localData[this.STORAGE_KEY]);
                 this.emitState();
             }
         }
@@ -178,6 +262,10 @@ class FlickemonEngine {
 
     /** Wipes this device's save without touching anything in the cloud. */
     discardLocalState() {
+        // Snapshot first — this wipes a student's device-local progress, and if
+        // it had not yet reached the cloud there would otherwise be no copy.
+        this.backupState();
+
         // Drop any pending push first: it carries the state we're discarding,
         // and letting it land would write the previous owner's progress into
         // the account that just signed in.
@@ -475,6 +563,7 @@ class FlickemonEngine {
     }
 
     async resetGameState() {
+        await this.backupState();
         this.gameState = this.createEmptyState();
         this.wildOpponent = null;
         if (this.respawnTimer) clearTimeout(this.respawnTimer);
