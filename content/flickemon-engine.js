@@ -646,22 +646,28 @@ class FlickemonEngine {
 
     isTeamFull() { return this.getTeam().length >= this.config.MAX_TEAM_SIZE; }
 
-    /** Returns false when the change was rejected (team full, or it's the active). */
+    /**
+     * Returns { ok, reason }. The reason matters: rejecting because a Pokémon is
+     * the active partner is a different situation from a full team, and showing
+     * "team is full" for both is actively misleading.
+     */
     async toggleTeamMember(speciesId) {
         const active = this.getActivePokemon();
-        if (active && speciesId === active.speciesId) return false; // always aboard
+        if (active && speciesId === active.speciesId) {
+            return { ok: false, reason: 'active' }; // the partner is always aboard
+        }
 
         const list = this.gameState.teamIds || (this.gameState.teamIds = []);
         const i = list.indexOf(speciesId);
         if (i >= 0) {
             list.splice(i, 1);
         } else {
-            if (this.isTeamFull()) return false;
+            if (this.isTeamFull()) return { ok: false, reason: 'full' };
             list.push(speciesId);
         }
         this.emitState();
         await this.saveGameState();
-        return true;
+        return { ok: true };
     }
     getPokedex() { return [...this.gameState.pokedex]; }
     getCaughtCount() { return this.gameState.pokedex.filter(p => p.caught).length; }

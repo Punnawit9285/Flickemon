@@ -860,3 +860,6 @@
 .row-btn:disabled { opacity: 0.35; cursor: default; }
 .fav-btn.on { color: #f59e0b; border-color: #f59e0b; background: rgba(245,158,11,0.10); }
 .team-btn.on { color: var(--flick-primary); border-color: var(--flick-primary); background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10); }
+
+/* Active-partner button in the party list */
+.partner-btn.on { color: var(--flick-primary); border-color: var(--flick-primary); background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10); }

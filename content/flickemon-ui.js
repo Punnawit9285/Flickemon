@@ -438,10 +438,6 @@ class FlickemonUI {
 
     openGameHub() {
         const modal = this.createModalOverlay('Flickémon');
-        const active = this.engine.getActivePokemon();
-        const activeSpecies = active ? this.engine.getSpeciesForPokemon(active) : null;
-        const party = this.engine.getParty();
-        const pokedex = this.engine.getPokedex();
 
         // Inject Tab Bar outside of the modal.body to keep it sticky at the top
         const tabRow = document.createElement('div');
@@ -458,6 +454,15 @@ class FlickemonUI {
         const content = modal.body;
 
         const renderTab = (tab) => {
+            // Read live every time. These were previously captured once when the
+            // hub opened, so after switching partner or editing the team the
+            // list re-rendered against stale data: the ACTIVE badge never moved
+            // (looking like partner selection was broken) and a row that was
+            // really the active partner rendered as an ordinary member.
+            const active = this.engine.getActivePokemon();
+            const activeSpecies = active ? this.engine.getSpeciesForPokemon(active) : null;
+            const party = this.engine.getParty();
+            const pokedex = this.engine.getPokedex();
             if (tab === 'partner') {
                 if (active && activeSpecies) {
                     const expProg = this.engine.getExpProgress(active);
@@ -525,6 +530,10 @@ class FlickemonUI {
                                         <span class="party-row-level">Lv. ${pk.level}</span>
                                     </div>
                                     <div class="party-row-actions">
+                                        <button class="row-btn partner-btn ${isActive ? 'on' : ''}"
+                                                data-instance="${pk.instanceId}"
+                                                ${isActive ? 'disabled' : ''}
+                                                title="${isActive ? 'This is your active partner' : `Make ${sp.name} your partner`}">⚔</button>
                                         <button class="row-btn fav-btn ${fav ? 'on' : ''}"
                                                 data-species="${pk.speciesId}"
                                                 title="${fav ? 'Remove from favourites' : 'Mark as favourite'}">${fav ? '★' : '☆'}</button>
@@ -560,13 +569,23 @@ class FlickemonUI {
                         renderTab('party');
                     });
                 });
+                content.querySelectorAll('.partner-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        if (btn.disabled) return;
+                        await this.engine.switchActivePokemon(btn.dataset.instance);
+                        renderTab('party');
+                    });
+                });
                 content.querySelectorAll('.team-btn').forEach(btn => {
                     btn.addEventListener('click', async (e) => {
                         e.stopPropagation();
                         if (btn.disabled) return;
-                        const ok = await this.engine.toggleTeamMember(Number(btn.dataset.species));
-                        if (!ok) {
-                            alert(`Your team is full (${this.config.MAX_TEAM_SIZE}). Remove someone first.`);
+                        const res = await this.engine.toggleTeamMember(Number(btn.dataset.species));
+                        if (!res.ok) {
+                            alert(res.reason === 'active'
+                                ? 'Your partner is always on the team.'
+                                : `Your team is full (${this.config.MAX_TEAM_SIZE}). Remove someone first.`);
                             return;
                         }
                         renderTab('party');
