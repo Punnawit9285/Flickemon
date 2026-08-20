@@ -845,60 +845,54 @@
 /* Keep the widget above any sticky/overlaying player chrome on the host page. */
 .flickemon-widget-card { position: relative; z-index: 2; }
 
+
 /* ────────────────────────── Battle Mode Switch (header) ────────────────────────── */
 
 .mode-switch {
-    position: relative;
     display: inline-flex;
-    align-items: center;
+    align-items: stretch;
+    gap: 2px;
     padding: 2px;
     margin-right: 6px;
     border: 1.5px solid var(--flick-border);
     border-radius: 20px;
-    background: rgba(0,0,0,0.04);
+    background: rgba(0, 0, 0, 0.04);
 }
 
-/* Sliding indicator: half the track, moved by the on-* class. */
-.mode-switch-thumb {
-    position: absolute;
-    top: 2px;
-    bottom: 2px;
-    left: 2px;
-    width: calc(50% - 2px);
-    border-radius: 18px;
-    background: var(--flick-primary);
-    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), background 0.22s;
-    pointer-events: none;
-}
-.mode-switch.on-capture .mode-switch-thumb { transform: translateX(0);    background: #d97706; }
-.mode-switch.on-exp     .mode-switch-thumb { transform: translateX(100%); background: var(--flick-primary); }
-
+/*
+ * The active segment is filled directly rather than by a sliding thumb. A thumb
+ * has to be positioned to match the segment under it, and the two labels differ
+ * in width ("Capture" vs "EXP"), so a 50% thumb overlapped the wider label.
+ */
 .mode-seg {
-    position: relative;   /* above the thumb */
-    z-index: 1;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
+    gap: 5px;
+    padding: 4px 11px;
     border: none;
+    border-radius: 18px;
     background: transparent;
     color: var(--flick-text-muted);
     font-size: 0.72rem;
     font-weight: 800;
-    line-height: 1.4;
+    line-height: 1.5;
     white-space: nowrap;
     cursor: pointer;
-    border-radius: 18px;
-    transition: color 0.22s;
+    transition: background 0.18s ease, color 0.18s ease;
 }
-.mode-seg[aria-pressed="true"] { color: #fff; }
-.mode-seg:hover[aria-pressed="false"] { color: var(--flick-text); }
+.mode-seg svg { flex-shrink: 0; display: block; }
 
+.mode-seg[aria-pressed="false"]:hover { color: var(--flick-text); background: rgba(0, 0, 0, 0.05); }
+
+.mode-seg[data-mode="capture"][aria-pressed="true"] { background: #d97706; color: #fff; }
+.mode-seg[data-mode="exp"][aria-pressed="true"]     { background: var(--flick-primary); color: #fff; }
+
+/* Header is crowded on narrow widgets — keep the icons, drop the words. */
 @media (max-width: 460px) {
     .mode-seg-label { display: none; }
-    .mode-seg { padding: 4px 8px; }
+    .mode-seg { padding: 5px 9px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .mode-switch-thumb { transition: none; }
+    .mode-seg { transition: none; }
 }
