@@ -618,6 +618,33 @@ class FlickemonEngine {
 
     getParty() { return [...this.gameState.party]; }
 
+    // ─────────────────────────── PVP ───────────────────────────
+
+    async pvpMyCode()        { return await this.sendToWorker({ type: 'PVP_MY_CODE' }); }
+    async pvpOpen(payload)   { return await this.sendToWorker({ type: 'PVP_OPEN', payload }); }
+    async pvpRead(code)      { return await this.sendToWorker({ type: 'PVP_READ', code }); }
+    async pvpJoin(code, p)   { return await this.sendToWorker({ type: 'PVP_JOIN', code, payload: p }); }
+    async pvpAction(code, a) { return await this.sendToWorker({ type: 'PVP_ACTION', code, action: a }); }
+    async pvpCommit(code, st){ return await this.sendToWorker({ type: 'PVP_COMMIT', code, state: st }); }
+    async pvpClose(code)     { return await this.sendToWorker({ type: 'PVP_CLOSE', code }); }
+
+    /**
+     * The team taken into a PVP battle, as plain battle-ready combatants.
+     * Sent over the wire so the opponent can render and simulate it without
+     * needing to look anything up.
+     */
+    buildPvpTeam() {
+        const B = window.FlickemonBattle;
+        const ids = this.getTeam();
+        const out = [];
+        for (const speciesId of ids) {
+            const member = this.gameState.party.find(p => p.speciesId === speciesId);
+            const species = this.config.getSpeciesById(speciesId);
+            if (member && species) out.push(B.toCombatant(member, species, this.config));
+        }
+        return out;
+    }
+
     // ─────────────────────── Favourites & Team ───────────────────────
 
     isFavourite(speciesId) { return (this.gameState.favouriteIds || []).includes(speciesId); }

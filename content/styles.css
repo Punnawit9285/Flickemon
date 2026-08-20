@@ -896,3 +896,179 @@
 @media (prefers-reduced-motion: reduce) {
     .mode-seg { transition: none; }
 }
+
+/* ────────────────────────── PVP: header button ────────────────────────── */
+
+.pvp-header-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 11px;
+    margin-right: 6px;
+    border: 1.5px solid #7c3aed;
+    border-radius: 20px;
+    background: rgba(124, 58, 237, 0.12);
+    color: #7c3aed;
+    font-size: 0.72rem;
+    font-weight: 800;
+    line-height: 1.5;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.18s ease, color 0.18s ease;
+}
+.pvp-header-btn:hover { background: #7c3aed; color: #fff; }
+.pvp-header-btn svg { flex-shrink: 0; display: block; }
+@media (max-width: 460px) { .pvp-header-label { display: none; } .pvp-header-btn { padding: 5px 9px; } }
+
+/* ────────────────────────── PVP: 8-bit battle ──────────────────────────
+   Pixel styling is deliberate: chunky borders, hard shadows, no anti-aliased
+   curves, and image-rendering:pixelated so sprites stay crisp when scaled. */
+
+.pvp-overlay .flickemon-modal-container { max-width: 560px; }
+
+.pvp-8bit {
+    font-family: "Courier New", monospace;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--flick-text);
+    margin: 0 0 0.5rem 0;
+    font-size: 1.15rem;
+    text-shadow: 2px 2px 0 rgba(0,0,0,0.25);
+}
+.pvp-8bit.small { font-size: 0.85rem; opacity: 0.8; }
+.pvp-8bit.blink { animation: pvp-blink 1s steps(2, start) infinite; }
+@keyframes pvp-blink { to { opacity: 0.35; } }
+
+.pvp-sub { font-size: 0.78rem; color: var(--flick-text-muted); margin: 0 0 1rem 0; }
+
+.pvp-notice, .pvp-lobby { text-align: center; padding: 1.25rem 0.5rem; }
+
+.pvp-code { display: flex; justify-content: center; gap: 6px; margin: 0.5rem 0 0.75rem; }
+.pvp-digit {
+    width: 34px; height: 46px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Courier New", monospace;
+    font-size: 1.6rem; font-weight: 800;
+    color: var(--flick-text);
+    background: var(--flick-card-bg);
+    border: 3px solid var(--flick-text);
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.35);
+}
+
+.pvp-team-strip { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin: 0.75rem 0 1rem; }
+.pvp-team-chip { display: flex; flex-direction: column; align-items: center; font-size: 0.6rem; color: var(--flick-text-muted); }
+.pvp-team-chip img { width: 34px; height: 34px; image-rendering: pixelated; }
+
+.pvp-btn {
+    display: inline-block;
+    padding: 11px 22px;
+    border: 3px solid var(--flick-text);
+    border-radius: 0;
+    background: var(--flick-primary);
+    color: #fff;
+    font-family: "Courier New", monospace;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    font-size: 0.85rem;
+    cursor: pointer;
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.35);
+    transition: transform 0.06s ease, box-shadow 0.06s ease;
+}
+.pvp-btn:hover { transform: translate(1px, 1px); box-shadow: 3px 3px 0 rgba(0,0,0,0.35); }
+.pvp-btn:active { transform: translate(4px, 4px); box-shadow: none; }
+.pvp-btn.ghost { background: transparent; color: var(--flick-text); }
+
+.pvp-divider { display: flex; align-items: center; gap: 10px; margin: 1.25rem 0; color: var(--flick-text-muted); font-size: 0.7rem; }
+.pvp-divider::before, .pvp-divider::after { content: ''; flex: 1; height: 2px; background: var(--flick-border); }
+
+.pvp-code-input {
+    width: 180px; padding: 10px;
+    font-family: "Courier New", monospace; font-size: 1.4rem; font-weight: 800;
+    text-align: center; letter-spacing: 0.35em;
+    border: 3px solid var(--flick-text); border-radius: 0;
+    background: var(--flick-card-bg); color: var(--flick-text);
+    margin-bottom: 0.75rem;
+}
+
+.pvp-error { display: none; margin-top: 0.75rem; font-size: 0.78rem; font-weight: 700; color: var(--flick-danger); }
+.pvp-error.visible { display: block; }
+
+/* Field */
+.pvp-field {
+    position: relative;
+    padding: 12px;
+    border: 3px solid var(--flick-text);
+    background: linear-gradient(180deg, rgba(125,211,252,0.18) 0%, rgba(134,239,172,0.18) 100%);
+    box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15);
+}
+.pvp-side { display: flex; align-items: center; gap: 10px; }
+.pvp-side.foe { justify-content: flex-start; }
+.pvp-side.mine { justify-content: flex-end; margin-top: 10px; }
+.pvp-side.foe .pvp-nameplate { order: 2; }
+.pvp-side.foe .pvp-sprite { order: 1; }
+
+.pvp-sprite { width: 76px; height: 76px; image-rendering: pixelated; }
+.pvp-sprite.my-sprite { width: 88px; height: 88px; }
+
+.pvp-nameplate {
+    flex: 1; max-width: 240px;
+    padding: 6px 8px;
+    background: var(--flick-card-bg);
+    border: 3px solid var(--flick-text);
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.3);
+    font-family: "Courier New", monospace;
+}
+.pvp-mon-name { font-weight: 800; font-size: 0.8rem; color: var(--flick-text); }
+.pvp-mon-lv { font-size: 0.7rem; color: var(--flick-text-muted); margin-left: 6px; }
+.pvp-status { font-size: 0.55rem; font-weight: 800; padding: 1px 4px; margin-left: 5px; color: #fff; }
+.pvp-status.burn { background: #ef4444; }
+.pvp-status.paralyze { background: #eab308; color: #000; }
+.pvp-status.poison { background: #a855f7; }
+
+.pvp-hp { height: 8px; margin-top: 5px; background: #333; border: 2px solid var(--flick-text); }
+.pvp-hp-fill { height: 100%; transition: width 0.35s steps(8); }
+.pvp-hp-fill.ok { background: #22c55e; }
+.pvp-hp-fill.warn { background: #eab308; }
+.pvp-hp-fill.low { background: #ef4444; }
+.pvp-hp-num { font-size: 0.62rem; text-align: right; color: var(--flick-text-muted); margin-top: 2px; }
+
+/* Log */
+.pvp-log {
+    margin-top: 10px; padding: 10px;
+    min-height: 74px;
+    border: 3px solid var(--flick-text);
+    background: var(--flick-card-bg);
+    font-family: "Courier New", monospace;
+    font-size: 0.74rem; line-height: 1.6; color: var(--flick-text);
+}
+
+/* Moves */
+.pvp-moves { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+.pvp-move {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 9px 10px; text-align: left; cursor: pointer;
+    border: 3px solid var(--flick-text);
+    background: var(--flick-card-bg); color: var(--flick-text);
+    font-family: "Courier New", monospace;
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.3);
+}
+.pvp-move:hover:not(:disabled) { transform: translate(1px,1px); box-shadow: 2px 2px 0 rgba(0,0,0,0.3); }
+.pvp-move:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+.pvp-move-name { font-weight: 800; font-size: 0.78rem; }
+.pvp-move-meta { font-size: 0.6rem; color: var(--flick-text-muted); }
+
+.pvp-turn {
+    margin-top: 10px; text-align: center;
+    font-family: "Courier New", monospace; font-size: 0.72rem; font-weight: 800;
+    letter-spacing: 0.1em; color: var(--flick-text-muted);
+}
+
+.pvp-result { text-align: center; padding: 1rem 0 0.25rem; }
+.pvp-result.win .pvp-8bit { color: #22c55e; }
+.pvp-result.lose .pvp-8bit { color: var(--flick-danger); }
+
+@media (prefers-reduced-motion: reduce) {
+    .pvp-8bit.blink { animation: none; }
+    .pvp-hp-fill { transition: none; }
+}

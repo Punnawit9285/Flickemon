@@ -24,8 +24,10 @@
             ],
             "js": [
                 "content/flickemon-config.js",
+                "content/flickemon-battle.js",
                 "content/flickemon-engine.js",
                 "content/flickemon-ui.js",
+                "content/flickemon-pvp.js",
                 "content/content-script.js"
             ],
             "css": [

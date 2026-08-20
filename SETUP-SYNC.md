@@ -107,6 +107,23 @@ It cannot stop a determined student editing the extension on their own machine
 to reveal the panel — but those tools only alter that person's own save, which
 they could already do by editing `chrome.storage` directly.
 
+## 4d. PVP
+
+PVP needs no extra setup beyond the rules in step 5, which now include a
+`battles` collection.
+
+Each student's 6-digit code is derived from their Firebase uid, so it never
+changes and needs no allocation or collision bookkeeping. A battle is one
+document at `battles/{code}`, keyed by the **host's** code.
+
+Neither client trusts the other's arithmetic: each submits only its chosen
+action, and both replay the turn locally through the same seeded RNG, so
+identical rolls occur on both sides without a server refereeing.
+
+Rules allow any signed-in student to *read* a battle (you must read a lobby to
+find it) but restrict *writes* to the two participants — once the guest slot is
+claimed, a third student cannot interfere.
+
 ## 5. Deploy the security rules
 
 ```sh

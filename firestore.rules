@@ -37,6 +37,29 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // PVP battles, keyed by the host's 6-digit code.
+    //
+    // Knowing the code is what grants access — it is shared deliberately, the
+    // way a lobby code is. Reads are open to any signed-in student because you
+    // must read a lobby to discover whether it is free. Writes are restricted
+    // to the two participants: an empty guest slot may be claimed, but once
+    // taken, only the host and that guest can touch the document, so a third
+    // student cannot hijack a match in progress.
+    match /battles/{code} {
+      allow read: if signedInStudent();
+
+      allow create: if signedInStudent()
+                    && request.resource.data.host == request.auth.uid;
+
+      allow update: if signedInStudent()
+                    && (resource.data.host == request.auth.uid
+                        || resource.data.guest == request.auth.uid
+                        || resource.data.guest == '');
+
+      // Only the host tears their own lobby down.
+      allow delete: if signedInStudent() && resource.data.host == request.auth.uid;
+    }
+
     // Default deny. Any collection not matched above is unreachable by clients.
     match /{document=**} {
       allow read, write: if false;

@@ -13,6 +13,7 @@
 import { isConfigured } from './firebase-config.js';
 import { signIn, signOut, getStatus, switchAccount } from './auth.js';
 import { pullState, pushState, checkAdmin } from './firestore.js';
+import { codeForUid, openLobby, readBattle, joinBattle, submitAction, commitTurn, closeLobby } from './pvp.js';
 
 /** Offline pushes park here until connectivity returns. */
 const PENDING_KEY = 'flickemon_pending_push_v1';
@@ -86,6 +87,19 @@ const handlers = {
     async AUTH_IS_ADMIN() {
         return await checkAdmin();
     },
+
+    // ── PVP ──
+    async PVP_MY_CODE() {
+        const status = await getStatus();
+        if (!status) return { signedIn: false, code: null };
+        return { signedIn: true, code: codeForUid(status.uid), uid: status.uid, email: status.email };
+    },
+    async PVP_OPEN(msg)   { return await openLobby(msg.payload); },
+    async PVP_READ(msg)   { return { battle: await readBattle(msg.code) }; },
+    async PVP_JOIN(msg)   { return await joinBattle(msg.code, msg.payload); },
+    async PVP_ACTION(msg) { return await submitAction(msg.code, msg.action); },
+    async PVP_COMMIT(msg) { return await commitTurn(msg.code, msg.state); },
+    async PVP_CLOSE(msg)  { return await closeLobby(msg.code); },
 
     async CLOUD_PULL() {
         return await pullState();

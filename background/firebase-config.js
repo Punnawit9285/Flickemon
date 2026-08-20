@@ -30,6 +30,9 @@ export const SAVES_COLLECTION = 'saves';
 // opened the extension's source.
 export const ADMINS_COLLECTION = 'admins';
 
+// One document per open/active PVP battle, keyed by the host's 6-digit code.
+export const BATTLES_COLLECTION = 'battles';
+
 // ─────────────────────── OAuth client ───────────────────────
 //
 // Auth uses chrome.identity.launchWebAuthFlow, which needs a **Web application**
