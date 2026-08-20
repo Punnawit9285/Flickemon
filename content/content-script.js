@@ -23,10 +23,13 @@
 
         // Inject widget into DOM
         function injectUI() {
-            const isHome = window.location.pathname === '/home' || window.location.pathname === '/' || window.location.pathname === '/home/';
-            
-            // Do not inject Flickémon widget on the home page
-            if (isHome) {
+            // The widget only makes sense where there is a lecture to watch, and
+            // study time is measured from a <video> element. Its presence is the
+            // signal — matching on URL shape would need updating whenever the
+            // site's routes change, and course/list pages share a path prefix.
+            const hasPlayer = !!document.querySelector('video');
+
+            if (!hasPlayer) {
                 const existingWrapper = document.querySelector('.flickemon-widgets-wrapper');
                 if (existingWrapper) existingWrapper.remove();
                 return;

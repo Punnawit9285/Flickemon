@@ -758,28 +758,6 @@
 .status-line.defeated { color: var(--flick-primary); font-weight: 700; }
 
 
-/* ────────────────────────── Battle Mode Toggle (header) ────────────────────────── */
-
-.mode-toggle-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    margin-right: 4px;
-    border-radius: 20px;
-    border: 1.5px solid var(--flick-border);
-    background: transparent;
-    color: var(--flick-text-muted);
-    font-size: 0.75rem;
-    font-weight: 800;
-    line-height: 1.4;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: border-color 0.2s, color 0.2s, background 0.2s;
-}
-.mode-toggle-btn:hover { border-color: var(--flick-primary); color: var(--flick-text); }
-.mode-toggle-btn.capture { border-color: #d97706; color: #d97706; background: rgba(217,119,6,0.08); }
-.mode-toggle-btn.exp     { border-color: var(--flick-primary); color: var(--flick-primary); background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10); }
 
 /* The header gets tight on narrow widgets — drop to just the icon. */
 @media (max-width: 420px) {
@@ -863,3 +841,64 @@
 
 /* Active-partner button in the party list */
 .partner-btn.on { color: var(--flick-primary); border-color: var(--flick-primary); background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10); }
+
+/* Keep the widget above any sticky/overlaying player chrome on the host page. */
+.flickemon-widget-card { position: relative; z-index: 2; }
+
+/* ────────────────────────── Battle Mode Switch (header) ────────────────────────── */
+
+.mode-switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    padding: 2px;
+    margin-right: 6px;
+    border: 1.5px solid var(--flick-border);
+    border-radius: 20px;
+    background: rgba(0,0,0,0.04);
+}
+
+/* Sliding indicator: half the track, moved by the on-* class. */
+.mode-switch-thumb {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    left: 2px;
+    width: calc(50% - 2px);
+    border-radius: 18px;
+    background: var(--flick-primary);
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), background 0.22s;
+    pointer-events: none;
+}
+.mode-switch.on-capture .mode-switch-thumb { transform: translateX(0);    background: #d97706; }
+.mode-switch.on-exp     .mode-switch-thumb { transform: translateX(100%); background: var(--flick-primary); }
+
+.mode-seg {
+    position: relative;   /* above the thumb */
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: none;
+    background: transparent;
+    color: var(--flick-text-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+    line-height: 1.4;
+    white-space: nowrap;
+    cursor: pointer;
+    border-radius: 18px;
+    transition: color 0.22s;
+}
+.mode-seg[aria-pressed="true"] { color: #fff; }
+.mode-seg:hover[aria-pressed="false"] { color: var(--flick-text); }
+
+@media (max-width: 460px) {
+    .mode-seg-label { display: none; }
+    .mode-seg { padding: 4px 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mode-switch-thumb { transition: none; }
+}

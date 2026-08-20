@@ -92,6 +92,22 @@ class FlickemonUI {
         const expProg = this.engine.getExpProgress(active);
         const isCaptureMode = this.engine.isCaptureMode();
 
+        // onVideoProgress fires ~4x/sec, and rebuilding innerHTML each time tore
+        // down every button mid-click and wiped the open popover — the widget
+        // was effectively unusable while a lecture played. Anything that changes
+        // continuously (HP, EXP) is patched in place instead; only a structural
+        // change rebuilds.
+        const signature = [
+            activeSpecies.id, active.level, isCaptureMode,
+            wild ? wild.wildSpecies.id : '-', wild ? wild.status : '-',
+        ].join('|');
+
+        if (card.dataset.sig === signature && card.querySelector('.widget-body')) {
+            this.patchWidgetView(card, expProg, wild);
+            return;
+        }
+        card.dataset.sig = signature;
+
         card.innerHTML = `
             <div class="flickemon-header">
                 <div class="header-left">
@@ -99,12 +115,19 @@ class FlickemonUI {
                     <span class="header-title">Flickémon</span>
                 </div>
                 <div class="header-actions">
-                    <button class="mode-toggle-btn ${isCaptureMode ? 'capture' : 'exp'}"
-                            title="${isCaptureMode
-                                ? 'Capture mode — defeated Pokémon join your party. Click to switch to EXP mode (~2x faster levelling, no captures).'
-                                : 'EXP mode — ~2x faster levelling, no captures. Click to switch to Capture mode.'}">
-                        ${isCaptureMode ? '🏆' : '⚡'}<span class="mode-toggle-label">${isCaptureMode ? 'Capture' : 'EXP'}</span>
-                    </button>
+                    <div class="mode-switch ${isCaptureMode ? 'on-capture' : 'on-exp'}" role="group" aria-label="Battle mode">
+                        <span class="mode-switch-thumb" aria-hidden="true"></span>
+                        <button class="mode-seg" data-mode="capture"
+                                aria-pressed="${isCaptureMode}"
+                                title="Capture mode — defeated Pokémon join your party and Pokédex.">
+                            🏆<span class="mode-seg-label">Capture</span>
+                        </button>
+                        <button class="mode-seg" data-mode="exp"
+                                aria-pressed="${!isCaptureMode}"
+                                title="EXP mode — no captures, but roughly 2x faster levelling.">
+                            ⚡<span class="mode-seg-label">EXP</span>
+                        </button>
+                    </div>
                     <button class="icon-btn menu-trigger-btn" title="Options">${ellipsisSvg}</button>
                     <button class="icon-btn widget-collapse-btn" title="Toggle Collapse">${chevronUpSvg}</button>
 
@@ -155,17 +178,22 @@ class FlickemonUI {
             </div>
         `;
 
-        card.querySelector('.mode-toggle-btn')?.addEventListener('click', async (e) => {
-            e.stopPropagation(); // don't let the document handler close the popover first
-            const modes = this.config.BATTLE_MODES;
-            await this.engine.setBattleMode(this.engine.isCaptureMode() ? modes.EXP : modes.CAPTURE);
-            // setBattleMode emits state, which re-renders this header.
+        // Each segment selects its own mode directly, rather than one button
+        // cycling — with two states a switch shows both options and which is on.
+        card.querySelectorAll('.mode-seg').forEach(seg => {
+            seg.addEventListener('click', async (e) => {
+                e.stopPropagation(); // the document handler would close the popover first
+                await this.engine.setBattleMode(seg.dataset.mode);
+            });
         });
 
         const menuBtn = card.querySelector('.menu-trigger-btn');
         const popover = card.querySelector('.options-popover-menu');
         const collapseBtn = card.querySelector('.widget-collapse-btn');
         const widgetBody = card.querySelector('.widget-body');
+
+        // Rebuilds always emit the popover hidden; restore whatever it was.
+        popover.style.display = this.popoverOpen ? 'block' : 'none';
 
         menuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -203,6 +231,31 @@ class FlickemonUI {
             widgetBody.style.display = this.isCollapsed ? 'none' : 'block';
             collapseBtn.innerHTML = this.isCollapsed ? chevronDownSvg : chevronUpSvg;
         });
+    }
+
+    /**
+     * Updates only the values that move every tick, leaving the DOM (and any
+     * in-flight click or open menu) intact.
+     */
+    patchWidgetView(card, expProg, wild) {
+        const expFill = card.querySelector('.exp-bar-fill');
+        if (expFill) expFill.style.width = `${expProg.percent}%`;
+        const expText = card.querySelector('.exp-text');
+        if (expText) expText.textContent = `EXP ${expProg.current}/${expProg.needed}`;
+
+        if (!wild) return;
+
+        const hpFill = card.querySelector('.hp-bar-fill');
+        if (hpFill) hpFill.style.width = `${Math.round((wild.currentHp / wild.maxHp) * 100)}%`;
+
+        const statusEl = card.querySelector('.status-line');
+        if (statusEl && wild.status === 'fighting') {
+            statusEl.textContent = `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`;
+        }
+
+        // Damage flash is a transient class, so it is toggled rather than baked in.
+        const sprite = card.querySelector('.wild-mini-sprite');
+        if (sprite) sprite.classList.toggle('damage-flash', !!this.isFlashingDamage);
     }
 
     // ────────────────────────── Sign-In Gate ──────────────────────────
