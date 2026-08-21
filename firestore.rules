@@ -60,6 +60,32 @@ service cloud.firestore {
       allow delete: if signedInStudent() && resource.data.host == request.auth.uid;
     }
 
+    // Trades, keyed by the host's 6-digit code — the same code PVP uses.
+    //
+    // Same shape as battles above, and the same reasoning: the code is shared
+    // deliberately, reads are open to any signed-in student because you must
+    // read a table to know whether it is free, and writes are limited to the
+    // two people at it.
+    //
+    // ⚠️ These rules cannot make a trade atomic. Nothing here validates that a
+    // trainer owns what they put on the table, or that both sides applied the
+    // swap — see the note at the top of background/trade.js. Trading is for
+    // people who know each other.
+    match /trades/{code} {
+      allow read: if signedInStudent();
+
+      allow create: if signedInStudent()
+                    && request.resource.data.host == request.auth.uid;
+
+      allow update: if signedInStudent()
+                    && (resource.data.host == request.auth.uid
+                        || resource.data.guest == request.auth.uid
+                        || resource.data.guest == '');
+
+      // Only the host clears their own table.
+      allow delete: if signedInStudent() && resource.data.host == request.auth.uid;
+    }
+
     // Default deny. Any collection not matched above is unreachable by clients.
     match /{document=**} {
       allow read, write: if false;

@@ -91,6 +91,12 @@
     --flick-highlight:      #fcd34d;
     --flick-spark:          rgba(255, 236, 150, 0.95);
     --flick-sheen:          rgba(255, 255, 255, 0.15);
+
+    /* Shiny. The alternate palette is on the sprite itself; this is the framing
+     * that tells you it is deliberate and not a rendering fault. */
+    --flick-shiny: var(--ion-color-warning, #f5b301);
+    --flick-trade: var(--ion-color-tertiary, #0ea5e9);
+    --flick-trade-rgb: var(--ion-color-tertiary-rgb, 14, 165, 233);
     /* Green and red read differently on the scene's dark ground than on a page,
      * so the stat-change colours have a scrim-side pair. */
     --flick-gain-scrim: #86efac;
@@ -592,6 +598,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .partner-big-sprite.is-shiny, .pvp-sprite.is-shiny { animation: none; }
     .starter-card.selected .starter-card-img { animation: none; }
     .starter-detail-inner { animation: none; }
     .starter-card:hover, .gen-tab-btn:hover, .starter-confirm-btn:hover:not(:disabled) { transform: none; }
@@ -1323,6 +1330,39 @@
 .party-row.on-team:not(.is-active) { border-color: rgba(var(--flick-primary-rgb), 0.35); }
 
 .party-row-sprite { width: 64px; height: 64px; image-rendering: pixelated; flex-shrink: 0; }
+/* Ordinal on a species you own more than one of — two rows reading
+   "Pikachu Lv.5" would otherwise be indistinguishable. */
+/* ── Shiny ──
+   A faint aura rather than a heavy effect: the sprite's own recolouring is the
+   real signal, and anything stronger fights it. */
+.is-shiny {
+    filter: drop-shadow(0 0 4px var(--flick-shiny));
+}
+@keyframes shiny-twinkle {
+    0%, 100% { filter: drop-shadow(0 0 3px var(--flick-shiny)); }
+    50%      { filter: drop-shadow(0 0 9px var(--flick-shiny)); }
+}
+.partner-big-sprite.is-shiny,
+.pvp-sprite.is-shiny { animation: shiny-twinkle 2.6s ease-in-out infinite; }
+
+.badge-shiny {
+    background: var(--flick-shiny);
+    color: var(--flick-on-type-dark);
+}
+.shiny-flag {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    color: var(--flick-shiny);
+}
+
+.party-row-copy {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--flick-text-muted);
+    margin-left: 4px;
+    font-variant-numeric: tabular-nums;
+}
 .party-row-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .party-row-name {
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -1583,4 +1623,110 @@
 @media (prefers-reduced-motion: reduce) {
     .pvp-8bit.blink { animation: none; }
     .pvp-hp-fill { transition: none; }
+}
+
+/* ────────────────────────── Trade ──────────────────────────
+   Shares the 8-bit furniture with PVP; only the table is new. */
+
+.trade-header-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 10px;
+    border: 1.5px solid var(--flick-trade);
+    border-radius: 8px;
+    background: rgba(var(--flick-trade-rgb), 0.12);
+    color: var(--flick-trade);
+    font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.trade-header-btn:hover { background: var(--flick-trade); color: var(--flick-on-primary); }
+.trade-header-btn svg { flex-shrink: 0; display: block; }
+@media (max-width: 560px) { .trade-header-btn .pvp-header-label { display: none; } }
+
+.trade-table { text-align: center; padding: 0.5rem 0.25rem; }
+
+.trade-slots {
+    display: flex; align-items: center; justify-content: center;
+    gap: 12px; margin: 0.5rem 0 1rem;
+}
+.trade-slot {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    min-width: 104px; padding: 10px 8px;
+    border: 3px solid var(--flick-text);
+    background: var(--flick-card-bg);
+    box-shadow: 3px 3px 0 var(--flick-shadow-strong);
+    font-family: "Courier New", monospace;
+}
+.trade-slot.empty { border-style: dashed; opacity: 0.6; }
+.trade-slot img { width: 72px; height: 72px; image-rendering: pixelated; }
+.trade-slot-empty { font-size: 2rem; line-height: 72px; color: var(--flick-text-muted); }
+.trade-slot-name { font-size: 0.72rem; font-weight: 800; color: var(--flick-text); }
+.trade-slot-lv { font-size: 0.64rem; color: var(--flick-text-muted); }
+.trade-slot-who {
+    margin-top: 4px; font-size: 0.56rem; font-weight: 800;
+    letter-spacing: 0.12em; color: var(--flick-text-muted);
+}
+.trade-arrows { font-size: 1.5rem; color: var(--flick-trade); font-weight: 800; }
+
+.trade-status {
+    display: flex; justify-content: center; gap: 18px;
+    font-family: "Courier New", monospace;
+    font-size: 0.68rem; font-weight: 800; letter-spacing: 0.08em;
+    color: var(--flick-text-muted);
+    margin-bottom: 1rem;
+}
+.trade-status .on { color: var(--flick-success); }
+
+.trade-picker {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
+    max-height: 168px; overflow-y: auto;
+    padding: 8px; margin: 0.5rem 0 1rem;
+    border: 2px solid var(--flick-border);
+}
+.trade-chip {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 4px 6px; cursor: pointer;
+    border: 2px solid transparent; background: transparent;
+    color: var(--flick-text-muted);
+    font-family: "Courier New", monospace; font-size: 0.58rem;
+}
+.trade-chip img { width: 44px; height: 44px; image-rendering: pixelated; }
+.trade-chip:hover { border-color: var(--flick-border); }
+.trade-chip.chosen { border-color: var(--flick-trade); color: var(--flick-trade); font-weight: 800; }
+
+.trade-actions { display: flex; justify-content: center; gap: 8px; }
+.trade-hint { margin-top: 0.75rem; font-size: 0.68rem; }
+.trade-result .trade-slots { margin-bottom: 0.75rem; }
+
+/* ────────────────────────── PVP rewards ──────────────────────────
+   One at a time, by design — see REWARD_DURATION_MS in flickemon-config.js. */
+
+.pvp-reward {
+    margin: 0.75rem auto 1rem;
+    padding: 10px 12px;
+    max-width: 320px;
+    border: 3px solid var(--flick-text);
+    background: var(--flick-card-bg);
+    box-shadow: 3px 3px 0 var(--flick-shadow-strong);
+}
+.pvp-reward.won { border-color: var(--flick-gold); }
+.pvp-reward.held { border-style: dashed; opacity: 0.85; }
+.pvp-reward .pvp-8bit { margin-bottom: 0.35rem; }
+.pvp-reward.won .pvp-8bit { color: var(--flick-gold); }
+
+.reward-banner {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; margin-bottom: 0.75rem;
+    border: 1.5px solid var(--flick-gold);
+    border-radius: 8px;
+    background: var(--flick-fill-subtle);
+    font-size: 0.75rem;
+}
+.reward-icon { font-size: 0.95rem; line-height: 1; }
+.reward-label { font-weight: 800; color: var(--flick-gold); }
+.reward-left {
+    margin-left: auto;
+    font-size: 0.68rem; font-weight: 700;
+    color: var(--flick-text-muted);
+    font-variant-numeric: tabular-nums;
 }

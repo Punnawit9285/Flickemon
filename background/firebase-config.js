@@ -33,6 +33,10 @@ export const ADMINS_COLLECTION = 'admins';
 // One document per open/active PVP battle, keyed by the host's 6-digit code.
 export const BATTLES_COLLECTION = 'battles';
 
+// One document per open trade, keyed by the same 6-digit code — a student has
+// one number to share, whether the other trainer wants to battle or to trade.
+export const TRADES_COLLECTION = 'trades';
+
 // ─────────────────────── OAuth client ───────────────────────
 //
 // Auth uses chrome.identity.launchWebAuthFlow, which needs a **Web application**

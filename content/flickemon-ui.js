@@ -95,6 +95,7 @@ class FlickemonUI {
         const menuGameControllerSvg = `<svg viewBox="0 0 512 512" width="18" height="18" fill="currentColor"><path d="M483.13 245.38C461.92 149.49 430 98.31 382.65 84.33A107.1 107.1 0 0 0 352 80c-13.71 0-25.65 3.34-38.28 6.88C298.5 91.15 281.21 96 256 96s-42.51-4.84-57.76-9.11C185.6 83.34 173.67 80 160 80a115.7 115.7 0 0 0-31.73 4.32c-47.1 13.92-79 65.08-100.52 161C4.61 348.54 16 413.71 59.69 428.83a56.6 56.6 0 0 0 18.64 3.22c29.93 0 53.93-24.93 70.33-45.34 18.53-23.1 40.22-34.82 107.34-34.82 59.95 0 84.76 8.13 106.19 34.82 13.47 16.78 26.2 28.52 38.9 35.91 16.89 9.82 33.77 12 50.16 6.37 25.82-8.81 40.62-32.1 44-69.24 2.57-28.48-1.39-65.89-12.12-114.37M208 240h-32v32a16 16 0 0 1-32 0v-32h-32a16 16 0 0 1 0-32h32v-32a16 16 0 0 1 32 0v32h32a16 16 0 0 1 0 32m84 4a20 20 0 1 1 20-20 20 20 0 0 1-20 20m44 44a20 20 0 1 1 20-19.95A20 20 0 0 1 336 288m0-88a20 20 0 1 1 20-20 20 20 0 0 1-20 20m44 44a20 20 0 1 1 20-20 20 20 0 0 1-20 20"/></svg>`;
         const pokeballSvg = `<svg viewBox="0 0 512 512" width="13" height="13" fill="none" stroke="currentColor" stroke-width="42" aria-hidden="true"><circle cx="256" cy="256" r="204"/><path d="M52 256h132M328 256h132" stroke-linecap="round"/><circle cx="256" cy="256" r="62"/></svg>`;
         const boltSvg = `<svg viewBox="0 0 512 512" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M394.23 197.56a20 20 0 0 0-17.15-9.56H272V32a20 20 0 0 0-36.65-11.09l-160 240A20 20 0 0 0 92 292h105v156a20 20 0 0 0 36.65 11.09l160-240a20 20 0 0 0 .58-21.53z"/></svg>`;
+        const tradeSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M368 112l64 64-64 64M416 176H208M144 400l-64-64 64-64M96 336h208"/></svg>`;
         const swordsSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M424 64l-56 0-208 208 56 56L424 120zM88 64l56 0 208 208-56 56L88 120z"/><path d="M136 400l40 40M376 400l-40 40"/></svg>`;
         const gearSvg = `<svg viewBox="0 0 512 512" width="18" height="18" fill="currentColor"><path d="M262.29 192.31a64 64 0 1 0 57.4 57.4 64.13 64.13 0 0 0-57.4-57.4zM416.39 256a154.34 154.34 0 0 1-1.53 20.79l45.84 35.76a16.74 16.74 0 0 1 4.33 19.69l-43.7 75.71a16.63 16.63 0 0 1-19.81 7.51l-54-21.78a156.76 156.76 0 0 1-35.93 20.73l-8.34 57.53A16.69 16.69 0 0 1 286.61 480h-87.2a16.69 16.69 0 0 1-16.59-14.36l-8.26-57.34a156 156 0 0 1-35.82-20.7l-54.05 21.77a16.73 16.73 0 0 1-19.77-7.49l-43.7-75.59a16.71 16.71 0 0 1 4.22-19.73l45.89-35.79a154.94 154.94 0 0 1-1.54-20.76c0-6.93.53-13.77 1.54-20.79l-45.89-35.76a16.74 16.74 0 0 1-4.22-19.73l43.7-75.71a16.7 16.7 0 0 1 19.7-7.51l54.06 21.79A155.65 155.65 0 0 1 174.5 125l8.26-57.46A16.69 16.69 0 0 1 199.41 32h87.2a16.69 16.69 0 0 1 16.59 14.36l8.34 57.53a156.47 156.47 0 0 1 35.93 20.73l54-21.78a16.65 16.65 0 0 1 19.81 7.51l43.7 75.71a16.72 16.72 0 0 1-4.33 19.69l-45.84 35.75a155.51 155.51 0 0 1 1.53 20.8zM256 160a96 96 0 1 0 96 96 96.11 96.11 0 0 0-96-96z"/></svg>`;
 
@@ -138,6 +139,7 @@ class FlickemonUI {
 
         const expProg = this.engine.getExpProgress(active);
         const isCaptureMode = this.engine.isCaptureMode();
+        const reward = this.engine.getActiveReward ? this.engine.getActiveReward() : null;
 
         // onVideoProgress fires ~4x/sec, and rebuilding innerHTML each time tore
         // down every button mid-click and wiped the open popover — the widget
@@ -147,6 +149,9 @@ class FlickemonUI {
         const signature = [
             activeSpecies.id, active.level, isCaptureMode,
             wild ? wild.wildSpecies.id : '-', wild ? wild.status : '-',
+            // Only the type, not the countdown: the minutes are patched in
+            // place, so a ticking clock must not force a rebuild every minute.
+            reward ? reward.type : '-',
         ].join('|');
 
         if (card.dataset.sig === signature && card.querySelector('.widget-body')) {
@@ -175,6 +180,7 @@ class FlickemonUI {
                         </button>
                     </div>
                     <button class="pvp-header-btn" title="Battle another trainer">${swordsSvg}<span class="pvp-header-label">PVP</span></button>
+                    <button class="trade-header-btn" title="Trade with another trainer">${tradeSvg}<span class="pvp-header-label">Trade</span></button>
                     <button class="icon-btn menu-trigger-btn" title="Options">${ellipsisSvg}</button>
                     <button class="icon-btn widget-collapse-btn" title="Toggle Collapse">${chevronUpSvg}</button>
 
@@ -186,10 +192,16 @@ class FlickemonUI {
                 </div>
             </div>
             <div class="widget-body">
+                ${reward ? `
+                    <div class="reward-banner reward-${reward.type}">
+                        <span class="reward-icon">${this.config.REWARD_INFO[reward.type].icon}</span>
+                        <span class="reward-label">${this.config.REWARD_INFO[reward.type].label}</span>
+                        <span class="reward-left">${Math.ceil(reward.msLeft / 60000)} min left</span>
+                    </div>` : ''}
                 <div class="hud-columns">
                     <!-- Left: Active Partner -->
                     <div class="hud-col partner-col">
-                        <img src="${this.config.getSpriteUrl(activeSpecies.id)}" alt="${activeSpecies.name}" class="partner-mini-sprite"/>
+                        <img src="${this.config.getSpriteUrl(activeSpecies.id, active.shiny)}" alt="${activeSpecies.name}" class="partner-mini-sprite${active.shiny ? ' is-shiny' : ''}"/>
                         <div class="partner-info">
                             <div class="name-line">
                                 <strong class="pk-name">${activeSpecies.name}</strong>
@@ -206,7 +218,7 @@ class FlickemonUI {
                     <div class="hud-col battle-col-box">
                         ${wild ? `
                             <span class="vs-badge">VS</span>
-                            <img src="${this.config.getSpriteUrl(wild.wildSpecies.id)}" alt="${wild.wildSpecies.name}" class="wild-mini-sprite ${wild.status} ${this.isFlashingDamage ? 'damage-flash' : ''}"/>
+                            <img src="${this.config.getSpriteUrl(wild.wildSpecies.id, wild.shiny)}" alt="${wild.wildSpecies.name}" class="wild-mini-sprite ${wild.status} ${wild.shiny ? 'is-shiny' : ''} ${this.isFlashingDamage ? 'damage-flash' : ''}"/>
                             <div class="battle-info">
                                 <div class="name-line">
                                     <strong class="pk-name">${wild.wildSpecies.name}</strong>
@@ -215,6 +227,7 @@ class FlickemonUI {
                                 <div class="hp-bar-track">
                                     <div class="hp-bar-fill" style="width: ${Math.round((wild.currentHp / wild.maxHp) * 100)}%;"></div>
                                 </div>
+                                ${wild.shiny ? '<div class="shiny-flag">✦ Shiny!</div>' : ''}
                                 <div class="status-line ${wild.status}">
                                     ${wild.status === 'captured' ? `🏆 Captured! (+${wild.expGained || 0} EXP)` : wild.status === 'defeated' ? `💥 Defeated! (+${wild.expGained || 0} EXP)` : wild.status === 'escaped' ? `💨 Escaped! (+${wild.expGained || 0} EXP)` : `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`}
                                 </div>
@@ -237,6 +250,11 @@ class FlickemonUI {
         card.querySelector('.pvp-header-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
             this.openPvp();
+        });
+
+        card.querySelector('.trade-header-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.openTrade();
         });
 
         const menuBtn = card.querySelector('.menu-trigger-btn');
@@ -290,6 +308,12 @@ class FlickemonUI {
      * in-flight click or open menu) intact.
      */
     patchWidgetView(card, expProg, wild) {
+        const left = card.querySelector('.reward-left');
+        if (left && this.engine.getActiveReward) {
+            const r = this.engine.getActiveReward();
+            if (r) left.textContent = `${Math.ceil(r.msLeft / 60000)} min left`;
+        }
+
         const expFill = card.querySelector('.exp-bar-fill');
         if (expFill) expFill.style.width = `${expProg.percent}%`;
         const expText = card.querySelector('.exp-text');
@@ -308,6 +332,12 @@ class FlickemonUI {
         // Damage flash is a transient class, so it is toggled rather than baked in.
         const sprite = card.querySelector('.wild-mini-sprite');
         if (sprite) sprite.classList.toggle('damage-flash', !!this.isFlashingDamage);
+    }
+
+    openTrade() {
+        if (!window.FlickemonTrade) return;
+        if (!this.trade) this.trade = new window.FlickemonTrade(this.engine, this);
+        this.trade.open();
     }
 
     openPvp() {
@@ -671,7 +701,7 @@ class FlickemonUI {
                     const expProg = this.engine.getExpProgress(active);
                     content.innerHTML = `
                         <div class="partner-section">
-                            <img src="${this.config.getSpriteUrl(activeSpecies.id)}" alt="${activeSpecies.name}" class="partner-big-sprite"/>
+                            <img src="${this.config.getSpriteUrl(activeSpecies.id, active.shiny)}" alt="${activeSpecies.name}" class="partner-big-sprite${active.shiny ? ' is-shiny' : ''}"/>
                             <h2 class="partner-big-name">${activeSpecies.name}</h2>
                             <div class="partner-types">${activeSpecies.types.map(t => `<span class="type-badge" data-type="${t}">${t}</span>`).join('')}</div>
                             <p class="partner-big-level">Level ${active.level}</p>
@@ -702,9 +732,23 @@ class FlickemonUI {
                 // Favourites first, then by level. Sorting a copy: the stored
                 // party order is meaningful elsewhere.
                 const ordered = [...party].sort((a, b) => {
-                    const fa = this.engine.isFavourite(a.speciesId) ? 0 : 1;
-                    const fb = this.engine.isFavourite(b.speciesId) ? 0 : 1;
+                    const fa = this.engine.isFavourite(a.instanceId) ? 0 : 1;
+                    const fb = this.engine.isFavourite(b.instanceId) ? 0 : 1;
                     return fa !== fb ? fa - fb : b.level - a.level;
+                });
+
+                // Catching a species twice gives two separate Pokémon, and two
+                // rows reading "Pikachu Lv.5" would be indistinguishable. Number
+                // them, in the party's own order so a badge doesn't move around
+                // when the list is re-sorted.
+                const copiesOf = new Map();
+                party.forEach(pk => copiesOf.set(pk.speciesId, (copiesOf.get(pk.speciesId) || 0) + 1));
+                const ordinal = new Map();
+                const nextOrdinal = new Map();
+                party.forEach(pk => {
+                    const n = (nextOrdinal.get(pk.speciesId) || 0) + 1;
+                    nextOrdinal.set(pk.speciesId, n);
+                    ordinal.set(pk.instanceId, n);
                 });
 
                 content.innerHTML = `
@@ -717,16 +761,19 @@ class FlickemonUI {
                             const sp = this.engine.getSpeciesForPokemon(pk);
                             if (!sp) return '';
                             const isActive = pk.instanceId === active?.instanceId;
-                            const fav = this.engine.isFavourite(pk.speciesId);
-                            const onTeam = this.engine.isOnTeam(pk.speciesId);
+                            const fav = this.engine.isFavourite(pk.instanceId);
+                            const onTeam = this.engine.isOnTeam(pk.instanceId);
                             const full = this.engine.isTeamFull();
+                            const dupe = copiesOf.get(pk.speciesId) > 1
+                                ? `<span class="party-row-copy">#${ordinal.get(pk.instanceId)}</span>` : '';
                             return `
                                 <div class="party-row ${isActive ? 'is-active' : ''} ${onTeam ? 'on-team' : ''}"
-                                     data-instance="${pk.instanceId}" data-species="${pk.speciesId}">
-                                    <img src="${this.config.getSpriteUrl(sp.id)}" alt="${sp.name}" class="party-row-sprite"/>
+                                     data-instance="${pk.instanceId}">
+                                    <img src="${this.config.getSpriteUrl(sp.id, pk.shiny)}" alt="${sp.name}" class="party-row-sprite${pk.shiny ? ' is-shiny' : ''}"/>
                                     <div class="party-row-info">
                                         <span class="party-row-name">
-                                            ${sp.name}
+                                            ${sp.name}${dupe}
+                                            ${pk.shiny ? '<span class="badge badge-shiny" title="Shiny">✦</span>' : ''}
                                             ${isActive ? '<span class="badge badge-active">ACTIVE</span>' : ''}
                                             ${onTeam && !isActive ? '<span class="badge badge-team">TEAM</span>' : ''}
                                         </span>
@@ -738,10 +785,10 @@ class FlickemonUI {
                                                 ${isActive ? 'disabled' : ''}
                                                 title="${isActive ? 'This is your active partner' : `Make ${sp.name} your partner`}">⚔</button>
                                         <button class="row-btn fav-btn ${fav ? 'on' : ''}"
-                                                data-species="${pk.speciesId}"
+                                                data-instance="${pk.instanceId}"
                                                 title="${fav ? 'Remove from favourites' : 'Mark as favourite'}">${fav ? '★' : '☆'}</button>
                                         <button class="row-btn team-btn ${onTeam ? 'on' : ''}"
-                                                data-species="${pk.speciesId}"
+                                                data-instance="${pk.instanceId}"
                                                 ${isActive ? 'disabled' : ''}
                                                 title="${isActive ? 'Your partner is always on the team'
                                                         : onTeam ? 'Remove from team'
@@ -768,7 +815,7 @@ class FlickemonUI {
                 content.querySelectorAll('.fav-btn').forEach(btn => {
                     btn.addEventListener('click', async (e) => {
                         e.stopPropagation();
-                        await this.engine.toggleFavourite(Number(btn.dataset.species));
+                        await this.engine.toggleFavourite(btn.dataset.instance);
                         renderTab('party');
                     });
                 });
@@ -784,7 +831,7 @@ class FlickemonUI {
                     btn.addEventListener('click', async (e) => {
                         e.stopPropagation();
                         if (btn.disabled) return;
-                        const res = await this.engine.toggleTeamMember(Number(btn.dataset.species));
+                        const res = await this.engine.toggleTeamMember(btn.dataset.instance);
                         if (!res.ok) {
                             alert(res.reason === 'active'
                                 ? 'Your partner is always on the team.'
@@ -811,7 +858,7 @@ class FlickemonUI {
                             return `
                                 <div class="pokedex-item">
                                     ${seen
-                                        ? `<img src="${this.config.getSpriteUrl(sp.id)}" alt="${sp.name}" class="pokedex-sprite${caught ? '' : ' unseen-silhouette'}"
+                                        ? `<img src="${this.config.getSpriteUrl(sp.id, entry && entry.shiny)}" alt="${sp.name}" class="pokedex-sprite${caught ? '' : ' unseen-silhouette'}${entry && entry.shiny ? ' is-shiny' : ''}"
                                                 width="64" height="64" loading="lazy" decoding="async"/>`
                                         : `<div class="pokedex-unknown">?</div>`
                                     }
@@ -1197,8 +1244,8 @@ class FlickemonUI {
                     <div class="evo-ring evo-ring-3"></div>
                     <div class="evo-burst"></div>
                     <div class="evo-morph">
-                        <img src="${this.config.getSpriteUrl(evo.from.id)}" alt="${evo.from.name}" class="old-sprite"/>
-                        <img src="${this.config.getSpriteUrl(evo.to.id)}" alt="${evo.to.name}" class="new-sprite"/>
+                        <img src="${this.config.getSpriteUrl(evo.from.id, evo.shiny)}" alt="${evo.from.name}" class="old-sprite"/>
+                        <img src="${this.config.getSpriteUrl(evo.to.id, evo.shiny)}" alt="${evo.to.name}" class="new-sprite"/>
                     </div>
                     <div class="evo-particles">${this.renderEvolutionSparks()}</div>
                 </div>

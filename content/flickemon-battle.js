@@ -182,6 +182,9 @@ function toCombatant(pokemon, species, config) {
     const maxHp = config.calculateRealMaxHp(species.baseStats.hp, pokemon.level);
     return {
         speciesId: species.id,
+        // Cosmetic only — a shiny fights exactly like any other — but it has to
+        // reach the opponent's screen or half the point of owning one is lost.
+        shiny: pokemon.shiny === true,
         name: species.name,
         types: [...species.types],
         level: pokemon.level,

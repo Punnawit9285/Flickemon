@@ -37,12 +37,84 @@ function bundledUrl(path) {
     }
 }
 
-function getSpriteUrl(pokemonId) {
-    return bundledUrl(`sprites/${pokemonId}.png`) || `${SPRITE_BASE_URL}/${pokemonId}.png`;
+function getSpriteUrl(pokemonId, shiny = false) {
+    const rel = shiny ? `sprites/shiny/${pokemonId}.png` : `sprites/${pokemonId}.png`;
+    const remote = shiny ? `${SPRITE_BASE_URL}/shiny/${pokemonId}.png`
+                         : `${SPRITE_BASE_URL}/${pokemonId}.png`;
+    return bundledUrl(rel) || remote;
 }
 
-function getBackSpriteUrl(pokemonId) {
-    return bundledUrl(`sprites/back/${pokemonId}.png`) || `${SPRITE_BASE_URL}/back/${pokemonId}.png`;
+function getBackSpriteUrl(pokemonId, shiny = false) {
+    const rel = shiny ? `sprites/back/shiny/${pokemonId}.png` : `sprites/back/${pokemonId}.png`;
+    const remote = shiny ? `${SPRITE_BASE_URL}/back/shiny/${pokemonId}.png`
+                         : `${SPRITE_BASE_URL}/back/${pokemonId}.png`;
+    return bundledUrl(rel) || remote;
+}
+
+// ─────────────────────────── Shiny encounters ───────────────────────────
+//
+// Purely cosmetic, as in the games: a shiny has identical stats and is worth
+// no extra EXP. What it is worth is that it's rare and it's yours.
+//
+// The games use 1/4096 (1/8192 before Gen 6). At roughly one encounter per
+// 2.5 minutes of lecture that would be one shiny per ~170 hours of watching —
+// past the point where any student would ever see one, which makes the whole
+// feature invisible. 1/512 puts one at around 21 hours, so it lands in the
+// same range as a full three-stage evolution (~19h) and stays a genuine event.
+// Change this one number for a stricter rate.
+const SHINY_CHANCE = 1 / 512;
+
+// ─────────────────────── PVP victory rewards ───────────────────────
+//
+// Winning a PVP battle grants one of three hour-long boosts, drawn at random.
+//
+// They deliberately do NOT stack, and a second win while one is running earns
+// nothing. That rule is the whole design: a student who can bank rewards by
+// battling back-to-back has been handed a reason to stop watching lectures,
+// which is the opposite of what this extension is for. Because the boost only
+// pays out while studying, the fastest way to use a reward is to go back to
+// the video — and the only way to earn the next one is to let this one run out.
+const REWARD_DURATION_MS = 60 * 60 * 1000;
+
+const REWARDS = {
+    EXP: 'exp',
+    LEGENDARY: 'legendary',
+    SHINY: 'shiny',
+};
+
+const REWARD_INFO = {
+    [REWARDS.EXP]: {
+        label: 'Double EXP',
+        detail: 'Every EXP gain is doubled for an hour.',
+        icon: '\u26a1',
+    },
+    [REWARDS.LEGENDARY]: {
+        label: 'Legendary Radar',
+        detail: 'Legendary encounters become far more likely for an hour.',
+        icon: '\u2726',
+    },
+    [REWARDS.SHINY]: {
+        label: 'Shiny Charm',
+        detail: 'Shiny encounters become far more likely for an hour.',
+        icon: '\u2728',
+    },
+};
+
+const REWARD_EXP_MULTIPLIER = 2;
+// Base rates are 1% for a legendary (Lv40+) and 1/512 for a shiny. At roughly
+// 24 encounters an hour these turn "probably not today" into "likely within
+// the hour", which is what makes the reward worth going back to the lecture for.
+const REWARD_LEGENDARY_MULTIPLIER = 10;
+const REWARD_SHINY_MULTIPLIER = 10;
+
+/** One of the three, uniformly. */
+function rollReward() {
+    const types = Object.values(REWARDS);
+    return types[Math.floor(Math.random() * types.length)];
+}
+
+function rollShiny() {
+    return Math.random() < SHINY_CHANCE;
 }
 
 // ─────────────────────────── EXP & Leveling ───────────────────────────
@@ -79,6 +151,12 @@ const BATTLE_MODES = { CAPTURE: 'capture', EXP: 'exp' };
 // Non-active members earn a fraction of what the partner earns, so a team is
 // a way to bring others along without out-pacing your main.
 const MAX_TEAM_SIZE = 6;
+
+// Catching a species you already own now adds a second, separate Pokémon, so
+// the party has no natural ceiling. This one is a backstop, not a balance knob:
+// a full save at this size is ~250KB against Firestore's 1MiB per-document
+// limit, and reaching it takes well over a hundred hours of captures.
+const MAX_PARTY_SIZE = 3000;
 const TEAM_EXP_SHARE = 0.25;
 
 function calculateRealMaxHp(baseHp, level) {
@@ -1738,12 +1816,22 @@ window.FlickemonConfig = {
     SPRITE_BASE_URL,
     getSpriteUrl,
     getBackSpriteUrl,
+    SHINY_CHANCE,
+    rollShiny,
+    REWARD_DURATION_MS,
+    REWARDS,
+    REWARD_INFO,
+    REWARD_EXP_MULTIPLIER,
+    REWARD_LEGENDARY_MULTIPLIER,
+    REWARD_SHINY_MULTIPLIER,
+    rollReward,
     EXP_PER_MINUTE,
     BATTLE_WIN_EXP_BONUS,
     EXP_MODE_WIN_EXP_BONUS,
     ESCAPE_EXP_MULTIPLIER,
     BATTLE_MODES,
     MAX_TEAM_SIZE,
+    MAX_PARTY_SIZE,
     TEAM_EXP_SHARE,
     calculateRealMaxHp,
     expForLevel,

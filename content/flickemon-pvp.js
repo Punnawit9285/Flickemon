@@ -48,6 +48,8 @@ class FlickemonPvp {
         this.local = null;     // { p1, p2, p1Team, p2Team } from MY perspective
         this.pendingAction = null;
         this.lastTurnRendered = -1;
+        this.rewardClaimed = false;
+        this.rewardResult = null;
 
         // A hidden tab has nobody watching the battle, so reads there are pure
         // waste. Students alt-tab constantly, which makes this a real saving.
@@ -109,7 +111,7 @@ class FlickemonPvp {
                 <div class="pvp-team-strip">
                     ${team.map(c => `
                         <div class="pvp-team-chip">
-                            <img src="${this.config.getSpriteUrl(c.speciesId)}" alt="${c.name}"/>
+                            <img src="${this.config.getSpriteUrl(c.speciesId, c.shiny)}" alt="${c.name}"/>
                             <span>Lv${c.level}</span>
                         </div>`).join('')}
                 </div>
@@ -342,6 +344,16 @@ class FlickemonPvp {
         const over = phase === 'over';
         const iWon = over && ((st.winner === 'host') === (this.role === 'host'));
 
+        // Claim the victory reward once, on the first render that shows a win.
+        // renderBattle runs on every poll, so the flag is what keeps a single
+        // win from being claimed repeatedly.
+        if (iWon && !this.rewardClaimed) {
+            this.rewardClaimed = true;
+            this.engine.grantPvpReward()
+                .then(res => { this.rewardResult = res; this.renderBattle(); })
+                .catch(() => {});
+        }
+
         this.modal.body.innerHTML = `
             <div class="pvp-battle">
                 <div class="pvp-field">
@@ -351,11 +363,11 @@ class FlickemonPvp {
                             <span class="pvp-mon-lv">Lv${foe.level}</span>${badge(foe)}
                             <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(foe))}" style="width:${hpPct(foe)}%"></div></div>
                         </div>
-                        <img class="pvp-sprite foe-sprite" src="${this.config.getSpriteUrl(foe.speciesId)}" alt="${foe.name}"/>
+                        <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}" src="${this.config.getSpriteUrl(foe.speciesId, foe.shiny)}" alt="${foe.name}"/>
                     </div>
                     <div class="pvp-side mine">
-                        <img class="pvp-sprite my-sprite" src="${this.config.getBackSpriteUrl(me.speciesId)}"
-                             onerror="this.src='${this.config.getSpriteUrl(me.speciesId)}'" alt="${me.name}"/>
+                        <img class="pvp-sprite my-sprite${me.shiny ? ' is-shiny' : ''}" src="${this.config.getBackSpriteUrl(me.speciesId, me.shiny)}"
+                             onerror="this.src='${this.config.getSpriteUrl(me.speciesId, me.shiny)}'" alt="${me.name}"/>
                         <div class="pvp-nameplate">
                             <span class="pvp-mon-name">${me.name}</span>
                             <span class="pvp-mon-lv">Lv${me.level}</span>${badge(me)}
@@ -370,6 +382,7 @@ class FlickemonPvp {
                 ${over ? `
                     <div class="pvp-result ${iWon ? 'win' : 'lose'}">
                         <p class="pvp-8bit">${iWon ? 'YOU WIN!' : 'YOU LOSE...'}</p>
+                        ${iWon ? this.renderRewardNotice() : ''}
                         <button class="pvp-btn pvp-exit-btn">BACK</button>
                     </div>
                 ` : `
@@ -403,6 +416,29 @@ class FlickemonPvp {
         });
 
         this.modal.body.querySelector('.pvp-exit-btn')?.addEventListener('click', () => this.leave());
+    }
+
+    /** The prize, or an honest explanation of why there isn't one. */
+    renderRewardNotice() {
+        const res = this.rewardResult;
+        if (!res) return '<p class="pvp-sub">Claiming your reward…</p>';
+
+        const info = this.config.REWARD_INFO[res.reward && res.reward.type];
+        if (!info) return '';
+
+        if (!res.granted) {
+            const mins = Math.ceil((res.reward.msLeft || 0) / 60000);
+            return `<div class="pvp-reward held">
+                <p class="pvp-8bit small">${info.icon} ${info.label} STILL RUNNING</p>
+                <p class="pvp-sub">${mins} min left. One boost at a time — go and spend it
+                on a lecture, and the next win can grant another.</p>
+            </div>`;
+        }
+
+        return `<div class="pvp-reward won">
+            <p class="pvp-8bit small">${info.icon} ${info.label}</p>
+            <p class="pvp-sub">${info.detail}</p>
+        </div>`;
     }
 
     onOpponentLeft() {

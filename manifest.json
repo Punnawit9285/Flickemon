@@ -28,6 +28,7 @@
                 "content/flickemon-engine.js",
                 "content/flickemon-ui.js",
                 "content/flickemon-pvp.js",
+                "content/flickemon-trade.js",
                 "content/content-script.js"
             ],
             "css": [
@@ -40,7 +41,9 @@
         {
             "resources": [
                 "sprites/*.png",
-                "sprites/back/*.png"
+                "sprites/back/*.png",
+                "sprites/shiny/*.png",
+                "sprites/back/shiny/*.png"
             ],
             "matches": [
                 "https://flick.docchula.com/*"

@@ -85,8 +85,10 @@ class FlickemonEngine {
             const toSpecies = this.config.getSpeciesById(evolution.toId);
             if (fromSpecies && toSpecies) {
                 active.speciesId = evolution.toId;
-                this.updatePokedex(evolution.toId, true);
-                this.evolutionListeners.forEach(cb => cb({ from: fromSpecies, to: toSpecies }));
+                this.updatePokedex(evolution.toId, true, active.shiny === true);
+                this.evolutionListeners.forEach(cb => cb({
+                    from: fromSpecies, to: toSpecies, shiny: active.shiny === true,
+                }));
             }
         }
 
@@ -98,18 +100,35 @@ class FlickemonEngine {
         return {
             // Bumped only when the shape changes in a way normalizeState()
             // cannot infer. Present so future migrations have something to key off.
-            schemaVersion: 1,
+            // 1 = team/favourites keyed by speciesId, one party slot per species.
+            // 2 = keyed by instanceId, duplicates allowed. mergeCloudState reads
+            //     this to know which reconciliation rule a remote save wants.
+            schemaVersion: 2,
             hasStarted: false,
             // 'capture' (defeated Pokémon join the party) or 'exp' (no capture,
             // higher EXP). See BATTLE_MODES in flickemon-config.js.
             battleMode: 'capture',
-            // speciesId lists. Deliberately not instanceIds: those are generated
-            // per device, so they would not survive a cross-device merge.
+            // instanceId lists. These were speciesId lists while one party slot
+            // per species was guaranteed; now that catching a duplicate makes a
+            // second, separate Pokémon, only the instanceId identifies which one
+            // you starred or put on the team. instanceIds travel with the save,
+            // so they still line up across devices — see mergeCloudState.
             favouriteIds: [],
             teamIds: [],
             isHidden: false,
             activeInstanceId: null,
             party: [],
+            // instanceIds this account has traded away. mergeCloudState only
+            // ever adds party members, so without a tombstone a device that had
+            // not synced since the trade would hand the Pokémon straight back —
+            // and the student would end up with both halves of the trade.
+            releasedIds: [],
+            // tradeIds already applied on this account, so a replayed trade
+            // cannot run twice. Bounded — only the recent ones can still replay.
+            appliedTrades: [],
+            // { type, expiresAt } from a PVP win. One at a time, by design —
+            // see REWARD_DURATION_MS in flickemon-config.js.
+            activeReward: null,
             pokedex: [],
             totalMinutesWatched: 0,
             lastSyncedAt: 0,
@@ -137,6 +156,20 @@ class FlickemonEngine {
 
         s.party = Array.isArray(s.party) ? s.party : [];
         s.pokedex = Array.isArray(s.pokedex) ? s.pokedex : [];
+        s.releasedIds = Array.isArray(s.releasedIds)
+            ? [...new Set(s.releasedIds.filter(id => typeof id === 'string'))]
+            : [];
+        // A reward that expired while the tab was closed is simply over.
+        if (!s.activeReward || typeof s.activeReward !== 'object'
+            || !Number.isFinite(s.activeReward.expiresAt)
+            || s.activeReward.expiresAt <= Date.now()
+            || !Object.values(this.config.REWARDS).includes(s.activeReward.type)) {
+            s.activeReward = null;
+        }
+
+        s.appliedTrades = Array.isArray(s.appliedTrades)
+            ? [...new Set(s.appliedTrades.filter(id => typeof id === 'string'))].slice(-50)
+            : [];
 
         // Drop entries that would break lookups later.
         s.party = s.party.filter(p => p && p.instanceId && Number.isFinite(p.speciesId));
@@ -145,16 +178,52 @@ class FlickemonEngine {
         s.party.forEach(p => {
             if (!Number.isFinite(p.level)) p.level = 1;
             if (!Number.isFinite(p.totalExp)) p.totalExp = this.config.expForLevel(p.level);
+            // Saves from before shinies existed have no flag; absent means no.
+            p.shiny = p.shiny === true;
         });
 
         if (s.battleMode !== this.config.BATTLE_MODES.EXP) s.battleMode = this.config.BATTLE_MODES.CAPTURE;
 
-        const ownedSpecies = new Set(s.party.map(p => p.speciesId));
-        const cleanIds = list => Array.isArray(list)
-            ? [...new Set(list.filter(id => Number.isFinite(id) && ownedSpecies.has(id)))]
-            : [];
-        s.favouriteIds = cleanIds(s.favouriteIds);
-        s.teamIds = cleanIds(s.teamIds).slice(0, this.config.MAX_TEAM_SIZE);
+        // Anything traded away is gone, whichever list it turns up in.
+        const released = new Set(s.releasedIds);
+        s.party = s.party.filter(p => !released.has(p.instanceId));
+
+        // Two party entries sharing an instanceId is corruption, not a duplicate
+        // catch — a real duplicate gets its own id.
+        const owned = new Set();
+        s.party = s.party.filter(p => {
+            if (owned.has(p.instanceId)) return false;
+            owned.add(p.instanceId);
+            return true;
+        });
+        s.party = s.party.slice(0, this.config.MAX_PARTY_SIZE);
+
+        // A number in either list is a save from schema 1, when these held
+        // speciesIds. Resolve each to a party member of that species, taking a
+        // different one per entry so a v1 team of six stays a team of six.
+        const migrateIds = (list) => {
+            if (!Array.isArray(list)) return [];
+            const out = [];
+            const seenSpecies = new Set();
+            for (const id of list) {
+                if (typeof id === 'string') {
+                    if (owned.has(id) && !out.includes(id)) out.push(id);
+                    continue;
+                }
+                if (!Number.isFinite(id)) continue;
+                // v1 guaranteed one party slot per species and deduped these
+                // lists, so the same speciesId appearing twice was redundancy in
+                // the list — not a claim to two Pokémon.
+                if (seenSpecies.has(id)) continue;
+                seenSpecies.add(id);
+                const match = s.party.find(p => p.speciesId === id);
+                if (match && !out.includes(match.instanceId)) out.push(match.instanceId);
+            }
+            return out;
+        };
+        s.favouriteIds = migrateIds(s.favouriteIds);
+        s.teamIds = migrateIds(s.teamIds).slice(0, this.config.MAX_TEAM_SIZE);
+        s.schemaVersion = 2;
         if (!Number.isFinite(s.totalMinutesWatched) || s.totalMinutesWatched < 0) s.totalMinutesWatched = 0;
         if (!Number.isFinite(s.lastSyncedAt)) s.lastSyncedAt = 0;
 
@@ -414,7 +483,12 @@ class FlickemonEngine {
 
     buildCloudPayload() {
         return {
+            // Tells the receiving device how to read party/teamIds/favouriteIds.
+            schemaVersion: this.gameState.schemaVersion || 2,
             hasStarted: this.gameState.hasStarted,
+            releasedIds: this.gameState.releasedIds || [],
+            appliedTrades: this.gameState.appliedTrades || [],
+            activeReward: this.gameState.activeReward || null,
             activeInstanceId: this.gameState.activeInstanceId,
             party: this.gameState.party,
             pokedex: this.gameState.pokedex,
@@ -443,30 +517,90 @@ class FlickemonEngine {
 
         // Pokédex: union. Caught outranks merely seen.
         for (const entry of cloud.pokedex || []) {
-            this.updatePokedex(entry.speciesId, Boolean(entry.caught));
+            this.updatePokedex(entry.speciesId, Boolean(entry.caught), Boolean(entry.shiny));
         }
 
-        // Party: one instance per species (the game already enforces this),
-        // so reconcile by species and keep whichever is further along.
-        for (const remote of cloud.party || []) {
-            const local = this.gameState.party.find(p => p.speciesId === remote.speciesId);
-            if (!local) {
-                this.gameState.party.push({ ...remote });
-            } else if ((remote.totalExp || 0) > (local.totalExp || 0)) {
-                local.level = remote.level;
-                local.totalExp = remote.totalExp;
+        // Party reconciliation depends on which schema wrote the remote save.
+        //
+        // Schema 2 identifies a Pokémon by instanceId. That id is generated once
+        // and then travels with the save, so the same catch arriving from
+        // another device lands on the same entry, while two genuinely separate
+        // catches of one species stay two party members.
+        //
+        // Schema 1 saves were written while one party slot per species was
+        // guaranteed, and their instanceIds were minted per device — the same
+        // Pikachu carries a different id on each. Merging those by instanceId
+        // would duplicate a student's entire party the first time their second
+        // device synced, so a v1 remote is still reconciled by species. One push
+        // later the cloud is v2 and this path stops being reachable.
+        const remoteSchema = Number(cloud.schemaVersion) || 1;
+
+        // Tombstones are monotonic and merge as a union: once either side has
+        // seen a Pokémon leave, it stays gone everywhere.
+        const released = new Set([...(this.gameState.releasedIds || []),
+                                  ...(Array.isArray(cloud.releasedIds) ? cloud.releasedIds : [])]);
+        this.gameState.releasedIds = [...released];
+        this.gameState.appliedTrades = [...new Set([
+            ...(this.gameState.appliedTrades || []),
+            ...(Array.isArray(cloud.appliedTrades) ? cloud.appliedTrades : []),
+        ])].slice(-50);
+        if (this.gameState.party.some(p => released.has(p.instanceId))) {
+            this.gameState.party = this.gameState.party.filter(p => !released.has(p.instanceId));
+        }
+
+        if (remoteSchema >= 2) {
+            const byInstance = new Map(this.gameState.party.map(p => [p.instanceId, p]));
+            for (const remote of cloud.party || []) {
+                if (!remote || !remote.instanceId) continue;
+                if (released.has(remote.instanceId)) continue;   // traded away
+                const local = byInstance.get(remote.instanceId);
+                if (!local) {
+                    if (this.gameState.party.length >= this.config.MAX_PARTY_SIZE) break;
+                    const copy = { ...remote };
+                    this.gameState.party.push(copy);
+                    byInstance.set(copy.instanceId, copy);
+                } else if ((remote.totalExp || 0) > (local.totalExp || 0)) {
+                    local.level = remote.level;
+                    local.totalExp = remote.totalExp;
+                    // Evolution is a species change on a stable instance, so the
+                    // further-along copy also carries the newer form.
+                    if (Number.isFinite(remote.speciesId)) local.speciesId = remote.speciesId;
+                }
+            }
+        } else {
+            for (const remote of cloud.party || []) {
+                const local = this.gameState.party.find(p => p.speciesId === remote.speciesId);
+                if (!local) {
+                    this.gameState.party.push({ ...remote });
+                } else if ((remote.totalExp || 0) > (local.totalExp || 0)) {
+                    local.level = remote.level;
+                    local.totalExp = remote.totalExp;
+                }
             }
         }
 
-        // Active partner: follow the cloud's choice, matched by species since
-        // instanceIds are generated per-device and won't line up.
+        // Active partner: instanceIds line up under schema 2. A v1 remote needs
+        // the species fallback, for the same reason its party does.
         const remoteActive = (cloud.party || []).find(p => p.instanceId === cloud.activeInstanceId);
         if (remoteActive) {
-            const localMatch = this.gameState.party.find(p => p.speciesId === remoteActive.speciesId);
+            const localMatch = remoteSchema >= 2
+                ? this.gameState.party.find(p => p.instanceId === remoteActive.instanceId)
+                : this.gameState.party.find(p => p.speciesId === remoteActive.speciesId);
             if (localMatch) this.gameState.activeInstanceId = localMatch.instanceId;
         }
         if (!this.getActivePokemon() && this.gameState.party.length > 0) {
             this.gameState.activeInstanceId = this.gameState.party[0].instanceId;
+        }
+
+        // A running reward follows the student to whichever device they open
+        // next. The later expiry wins: a device that has been closed all hour
+        // must not cut short a boost earned somewhere else.
+        const localReward = this.gameState.activeReward;
+        const cloudReward = cloud.activeReward;
+        if (cloudReward && Number.isFinite(cloudReward.expiresAt)
+            && cloudReward.expiresAt > Date.now()
+            && (!localReward || cloudReward.expiresAt > localReward.expiresAt)) {
+            this.gameState.activeReward = { ...cloudReward };
         }
 
         // Battle mode is a preference, so the newer write wins. Everything else
@@ -478,8 +612,25 @@ class FlickemonEngine {
                     ? this.config.BATTLE_MODES.EXP
                     : this.config.BATTLE_MODES.CAPTURE;
             }
-            if (Array.isArray(cloud.favouriteIds)) this.gameState.favouriteIds = [...cloud.favouriteIds];
-            if (Array.isArray(cloud.teamIds)) this.gameState.teamIds = [...cloud.teamIds];
+            // These lists speak the remote's schema: v2 sends instanceIds, v1
+            // sent speciesIds. Either way, only ids naming a Pokémon this device
+            // actually has are adopted.
+            const adopt = (list) => {
+                if (!Array.isArray(list)) return null;
+                const out = [];
+                for (const id of list) {
+                    // A v1 remote names species, and named each at most once.
+                    const match = remoteSchema >= 2
+                        ? this.gameState.party.find(p => p.instanceId === id)
+                        : this.gameState.party.find(p => p.speciesId === id);
+                    if (match && !out.includes(match.instanceId)) out.push(match.instanceId);
+                }
+                return out;
+            };
+            const fav = adopt(cloud.favouriteIds);
+            if (fav) this.gameState.favouriteIds = fav;
+            const team = adopt(cloud.teamIds);
+            if (team) this.gameState.teamIds = team.slice(0, this.config.MAX_TEAM_SIZE);
         }
 
         this.gameState.lastSyncedAt = Math.max(this.gameState.lastSyncedAt || 0, cloud.lastSyncedAt || 0);
@@ -633,6 +784,9 @@ class FlickemonEngine {
         const starterInstance = {
             instanceId: this.generateId(),
             speciesId,
+            // The games roll for the starter as well, and a shiny one is the
+            // kind of thing a student tells people about.
+            shiny: this.config.rollShiny(),
             level: 5,
             totalExp: this.config.expForLevel(5),
         };
@@ -640,7 +794,7 @@ class FlickemonEngine {
         this.gameState.hasStarted = true;
         this.gameState.party = [starterInstance];
         this.gameState.activeInstanceId = starterInstance.instanceId;
-        this.updatePokedex(speciesId, true);
+        this.updatePokedex(speciesId, true, starterInstance.shiny);
 
         await this.saveGameState({ immediate: true });
         this.spawnWildOpponent();
@@ -675,6 +829,15 @@ class FlickemonEngine {
     async pvpCommit(code, st){ return await this.sendToWorker({ type: 'PVP_COMMIT', code, state: st }); }
     async pvpClose(code)     { return await this.sendToWorker({ type: 'PVP_CLOSE', code }); }
 
+    // ── Trading bridge (see background/trade.js) ──
+    async tradeOpen(payload)        { return await this.sendToWorker({ type: 'TRADE_OPEN', payload }); }
+    async tradeRead(code)           { return await this.sendToWorker({ type: 'TRADE_READ', code }); }
+    async tradeJoin(code, payload)  { return await this.sendToWorker({ type: 'TRADE_JOIN', code, payload }); }
+    async tradeOffer(code, offer)   { return await this.sendToWorker({ type: 'TRADE_OFFER', code, offer }); }
+    async tradeConfirm(code, c)     { return await this.sendToWorker({ type: 'TRADE_CONFIRM', code, confirmed: c }); }
+    async tradeAck(code)            { return await this.sendToWorker({ type: 'TRADE_ACK', code }); }
+    async tradeClose(code)          { return await this.sendToWorker({ type: 'TRADE_CLOSE', code }); }
+
     /**
      * The team taken into a PVP battle, as plain battle-ready combatants.
      * Sent over the wire so the opponent can render and simulate it without
@@ -682,24 +845,137 @@ class FlickemonEngine {
      */
     buildPvpTeam() {
         const B = window.FlickemonBattle;
-        const ids = this.getTeam();
         const out = [];
-        for (const speciesId of ids) {
-            const member = this.gameState.party.find(p => p.speciesId === speciesId);
-            const species = this.config.getSpeciesById(speciesId);
-            if (member && species) out.push(B.toCombatant(member, species, this.config));
+        for (const instanceId of this.getTeam()) {
+            const member = this.gameState.party.find(p => p.instanceId === instanceId);
+            if (!member) continue;
+            const species = this.config.getSpeciesById(member.speciesId);
+            // Two of the same species are two distinct combatants, each built
+            // from its own level and moveset.
+            if (species) out.push(B.toCombatant(member, species, this.config));
         }
         return out;
     }
 
+    // ─────────────────────── PVP victory rewards ───────────────────────
+
+    /** The running boost, or null. Expiry is checked on read, never on a timer. */
+    getActiveReward() {
+        const r = this.gameState.activeReward;
+        if (!r) return null;
+        if (r.expiresAt <= Date.now()) {
+            this.gameState.activeReward = null;
+            return null;
+        }
+        return { ...r, msLeft: r.expiresAt - Date.now() };
+    }
+
+    /**
+     * Grants a random boost for winning a PVP battle.
+     *
+     * Refuses while one is already running, and that refusal is the feature: it
+     * caps what battling can be worth per hour, so the way to benefit from a
+     * reward is to spend the hour watching lectures rather than queueing for
+     * another match.
+     */
+    async grantPvpReward() {
+        const running = this.getActiveReward();
+        if (running) return { granted: false, reason: 'active', reward: running };
+
+        const type = this.config.rollReward();
+        this.gameState.activeReward = { type, expiresAt: Date.now() + this.config.REWARD_DURATION_MS };
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+        return { granted: true, reward: this.getActiveReward() };
+    }
+
+    /** Multiplier applied to every EXP gain while the EXP boost is running. */
+    rewardExpMultiplier() {
+        const r = this.getActiveReward();
+        return r && r.type === this.config.REWARDS.EXP ? this.config.REWARD_EXP_MULTIPLIER : 1;
+    }
+
+    rewardLegendaryMultiplier() {
+        const r = this.getActiveReward();
+        return r && r.type === this.config.REWARDS.LEGENDARY
+            ? this.config.REWARD_LEGENDARY_MULTIPLIER : 1;
+    }
+
+    rewardShinyMultiplier() {
+        const r = this.getActiveReward();
+        return r && r.type === this.config.REWARDS.SHINY
+            ? this.config.REWARD_SHINY_MULTIPLIER : 1;
+    }
+
+    // ─────────────────────────── Trading ───────────────────────────
+
+    /** Party members this account may put up for trade. */
+    tradableParty() {
+        // Trading away your last Pokémon would leave nothing to play with, so
+        // the final one is never on offer — the same rule the games use.
+        if (this.gameState.party.length <= 1) return [];
+        return [...this.gameState.party];
+    }
+
+    /**
+     * Applies one completed trade: `givenId` leaves, `received` arrives.
+     *
+     * Idempotent on tradeId. Each side applies the trade from its own copy of
+     * the shared document, and a client that reconnects mid-trade replays it —
+     * without the guard, that would run twice and cost the student a Pokémon.
+     */
+    async applyTrade(tradeId, givenId, received) {
+        if (!tradeId || !givenId || !received || !received.speciesId) {
+            return { ok: false, reason: 'malformed' };
+        }
+        this.gameState.appliedTrades = this.gameState.appliedTrades || [];
+        if (this.gameState.appliedTrades.includes(tradeId)) {
+            return { ok: true, alreadyApplied: true };
+        }
+
+        const given = this.gameState.party.find(p => p.instanceId === givenId);
+        if (!given) return { ok: false, reason: 'missing' };
+
+        const wasActive = this.gameState.activeInstanceId === givenId;
+
+        // The arriving Pokémon gets a fresh instanceId. The sender's id is now
+        // tombstoned on their account, and reusing it here would collide with
+        // that tombstone the moment either save reached a shared device.
+        const arrival = {
+            instanceId: this.generateId(),
+            speciesId: received.speciesId,
+            level: Math.max(1, Math.min(this.config.MAX_LEVEL, Number(received.level) || 1)),
+            totalExp: Number.isFinite(received.totalExp)
+                ? received.totalExp
+                : this.config.expForLevel(Number(received.level) || 1),
+            shiny: received.shiny === true,
+        };
+
+        this.gameState.party = this.gameState.party.filter(p => p.instanceId !== givenId);
+        this.gameState.releasedIds = [...new Set([...(this.gameState.releasedIds || []), givenId])];
+        this.gameState.party.push(arrival);
+
+        // The departed Pokémon cannot stay on the team or in the favourites.
+        this.gameState.teamIds = (this.gameState.teamIds || []).filter(id => id !== givenId);
+        this.gameState.favouriteIds = (this.gameState.favouriteIds || []).filter(id => id !== givenId);
+        if (wasActive) this.gameState.activeInstanceId = arrival.instanceId;
+
+        this.updatePokedex(arrival.speciesId, true, arrival.shiny);
+        this.gameState.appliedTrades = [...this.gameState.appliedTrades, tradeId].slice(-50);
+
+        this.emitState();
+        await this.saveGameState({ immediate: true });   // never risk losing a trade
+        return { ok: true, received: arrival };
+    }
+
     // ─────────────────────── Favourites & Team ───────────────────────
 
-    isFavourite(speciesId) { return (this.gameState.favouriteIds || []).includes(speciesId); }
+    isFavourite(instanceId) { return (this.gameState.favouriteIds || []).includes(instanceId); }
 
-    async toggleFavourite(speciesId) {
+    async toggleFavourite(instanceId) {
         const list = this.gameState.favouriteIds || (this.gameState.favouriteIds = []);
-        const i = list.indexOf(speciesId);
-        if (i >= 0) list.splice(i, 1); else list.push(speciesId);
+        const i = list.indexOf(instanceId);
+        if (i >= 0) list.splice(i, 1); else list.push(instanceId);
         this.emitState();
         await this.saveGameState();
     }
@@ -709,14 +985,16 @@ class FlickemonEngine {
      * implicit rather than stored, so switching partners can never leave the
      * team in a state where the Pokémon actually battling is excluded.
      */
+    /** The team as instanceIds, partner first. Computed, never stored. */
     getTeam() {
         const active = this.getActivePokemon();
-        const stored = (this.gameState.teamIds || []).filter(id => !active || id !== active.speciesId);
-        const team = active ? [active.speciesId, ...stored] : stored;
+        const stored = (this.gameState.teamIds || [])
+            .filter(id => !active || id !== active.instanceId);
+        const team = active ? [active.instanceId, ...stored] : stored;
         return team.slice(0, this.config.MAX_TEAM_SIZE);
     }
 
-    isOnTeam(speciesId) { return this.getTeam().includes(speciesId); }
+    isOnTeam(instanceId) { return this.getTeam().includes(instanceId); }
 
     isTeamFull() { return this.getTeam().length >= this.config.MAX_TEAM_SIZE; }
 
@@ -725,19 +1003,19 @@ class FlickemonEngine {
      * the active partner is a different situation from a full team, and showing
      * "team is full" for both is actively misleading.
      */
-    async toggleTeamMember(speciesId) {
+    async toggleTeamMember(instanceId) {
         const active = this.getActivePokemon();
-        if (active && speciesId === active.speciesId) {
+        if (active && instanceId === active.instanceId) {
             return { ok: false, reason: 'active' }; // the partner is always aboard
         }
 
         const list = this.gameState.teamIds || (this.gameState.teamIds = []);
-        const i = list.indexOf(speciesId);
+        const i = list.indexOf(instanceId);
         if (i >= 0) {
             list.splice(i, 1);
         } else {
             if (this.isTeamFull()) return { ok: false, reason: 'full' };
-            list.push(speciesId);
+            list.push(instanceId);
         }
         this.emitState();
         await this.saveGameState();
@@ -820,15 +1098,30 @@ class FlickemonEngine {
                 this.wildOpponent.expGained = winExp;
 
                 if (captured) {
-                    if (!this.gameState.party.some(p => p.speciesId === this.wildOpponent.wildSpecies.id)) {
+                    // Catching a species you already own gives you a second,
+                    // separate Pokémon with its own level — both show in the
+                    // party and either can go on a PVP team. Previously the
+                    // duplicate was dropped on the floor while the widget still
+                    // announced a capture, so beating a Lv.40 of something you
+                    // held at Lv.5 was worth nothing but the EXP.
+                    const atCapacity = this.gameState.party.length >= this.config.MAX_PARTY_SIZE;
+                    const isNewSpecies = !this.gameState.party
+                        .some(p => p.speciesId === this.wildOpponent.wildSpecies.id);
+
+                    // At the backstop, a species you have never owned still gets
+                    // in — losing a Pokédex entry matters, losing a duplicate
+                    // does not.
+                    if (!atCapacity || isNewSpecies) {
                         this.gameState.party.push({
                             instanceId: this.generateId(),
                             speciesId: this.wildOpponent.wildSpecies.id,
                             level: this.wildOpponent.wildLevel,
                             totalExp: this.config.expForLevel(this.wildOpponent.wildLevel),
+                            shiny: this.wildOpponent.shiny === true,
                         });
                     }
-                    this.updatePokedex(this.wildOpponent.wildSpecies.id, true);
+                    this.updatePokedex(this.wildOpponent.wildSpecies.id, true,
+                                       this.wildOpponent.shiny === true);
                 } else {
                     // EXP mode: the encounter still counts as SEEN — the student
                     // did meet it — but it is not added to the party or marked caught.
@@ -875,6 +1168,10 @@ class FlickemonEngine {
             currentHp: maxHp,
             status: 'fighting',
             fightDurationSeconds: 0,
+            // Decided at encounter, not at capture, so the widget shows the
+            // alternate colouring for the whole fight — the tell that makes a
+            // student look up from their notes.
+            shiny: Math.random() < this.config.SHINY_CHANCE * this.rewardShinyMultiplier(),
         };
 
         this.gameState.wildOpponent = this.wildOpponent;
@@ -887,8 +1184,9 @@ class FlickemonEngine {
         const active = this.getActivePokemon();
         const activeLevel = active ? active.level : 5;
 
-        // Legendary check (Lv40+, 1% rate)
-        if (activeLevel >= 40 && Math.random() <= 0.01) {
+        // Legendary check (Lv40+, 1% base, multiplied while the radar is running)
+        const legendaryChance = Math.min(0.5, 0.01 * this.rewardLegendaryMultiplier());
+        if (activeLevel >= 40 && Math.random() <= legendaryChance) {
             const legendaries = this.config.POKEMON_REGISTRY.filter(s => s.isLegendary);
             if (legendaries.length > 0) {
                 return legendaries[Math.floor(Math.random() * legendaries.length)];
@@ -929,9 +1227,14 @@ class FlickemonEngine {
         return Math.floor(Math.random() * (maxLevel - minLevel + 1)) + minLevel;
     }
 
-    addExpToActive(exp) {
+    addExpToActive(rawExp) {
         const active = this.getActivePokemon();
         if (!active || active.level >= this.config.MAX_LEVEL) return null;
+
+        // Every EXP gain in the game funnels through here — battle wins, escape
+        // consolation, and by extension the team's share — so the PVP boost is
+        // applied once, at the source.
+        const exp = Math.round(rawExp * this.rewardExpMultiplier());
 
         active.totalExp += exp;
         const newLevel = Math.min(this.config.MAX_LEVEL, this.config.levelFromExp(active.totalExp));
@@ -940,20 +1243,21 @@ class FlickemonEngine {
         }
 
         // Everyone else on the team trains alongside, at a reduced rate.
-        this.shareExpWithTeam(exp, active.speciesId);
+        this.shareExpWithTeam(exp, active.instanceId);
 
         const evolution = this.config.canEvolveAt(active.speciesId, active.level);
         if (evolution) {
             const fromSpecies = this.config.getSpeciesById(active.speciesId);
             const toSpecies = this.config.getSpeciesById(evolution.toId);
             if (fromSpecies && toSpecies) {
-                const tIdx = (this.gameState.teamIds || []).indexOf(active.speciesId);
-                const fIdx = (this.gameState.favouriteIds || []).indexOf(active.speciesId);
+                // Team and favourites hold instanceIds, and an evolution keeps
+                // the instance — so, unlike the speciesId lists this replaced,
+                // there is nothing to rewrite here.
                 active.speciesId = evolution.toId;
-                if (tIdx >= 0) this.gameState.teamIds[tIdx] = evolution.toId;
-                if (fIdx >= 0) this.gameState.favouriteIds[fIdx] = evolution.toId;
-                this.updatePokedex(evolution.toId, true);
-                this.evolutionListeners.forEach(cb => cb({ from: fromSpecies, to: toSpecies }));
+                this.updatePokedex(evolution.toId, true, active.shiny === true);
+                this.evolutionListeners.forEach(cb => cb({
+                    from: fromSpecies, to: toSpecies, shiny: active.shiny === true,
+                }));
                 this.emitState();
                 return toSpecies;
             }
@@ -972,14 +1276,16 @@ class FlickemonEngine {
      * on the same battle would stack them. The Pokédex is still updated, so the
      * change is visible in the party list and dex.
      */
-    shareExpWithTeam(exp, activeSpeciesId) {
+    shareExpWithTeam(exp, activeInstanceId) {
         const shared = Math.round(exp * this.config.TEAM_EXP_SHARE);
         if (shared <= 0) return;
 
-        for (const speciesId of this.getTeam()) {
-            if (speciesId === activeSpeciesId) continue;
+        for (const instanceId of this.getTeam()) {
+            if (instanceId === activeInstanceId) continue;
 
-            const member = this.gameState.party.find(p => p.speciesId === speciesId);
+            // By instanceId, so one of your two Pikachu can be on the team and
+            // train while the other sits in the party untouched.
+            const member = this.gameState.party.find(p => p.instanceId === instanceId);
             if (!member || member.level >= this.config.MAX_LEVEL) continue;
 
             member.totalExp += shared;
@@ -992,25 +1298,27 @@ class FlickemonEngine {
             if (evo) {
                 const to = this.config.getSpeciesById(evo.toId);
                 if (to) {
-                    // Keep teamIds pointing at the species that now exists.
-                    const idx = (this.gameState.teamIds || []).indexOf(member.speciesId);
-                    const favIdx = (this.gameState.favouriteIds || []).indexOf(member.speciesId);
+                    // The instance keeps its id through an evolution, so the
+                    // team and favourite lists still point at it.
                     member.speciesId = evo.toId;
-                    if (idx >= 0) this.gameState.teamIds[idx] = evo.toId;
-                    if (favIdx >= 0) this.gameState.favouriteIds[favIdx] = evo.toId;
-                    this.updatePokedex(evo.toId, true);
+                    this.updatePokedex(evo.toId, true, member.shiny === true);
                 }
             }
         }
     }
 
-    updatePokedex(speciesId, caught) {
+    updatePokedex(speciesId, caught, shiny = false) {
         const existing = this.gameState.pokedex.find(e => e.speciesId === speciesId);
         if (existing) {
             if (caught) existing.caught = true;
+            // Monotonic: once a shiny of this species has been caught, the dex
+            // keeps saying so even when ordinary ones are caught afterwards.
+            if (shiny && caught) existing.shiny = true;
             existing.seen = true;
         } else {
-            this.gameState.pokedex.push({ speciesId, caught, seen: true });
+            this.gameState.pokedex.push({
+                speciesId, caught, seen: true, shiny: Boolean(shiny && caught),
+            });
         }
     }
 

@@ -26,6 +26,7 @@ cp content/flickemon-config.js \
    content/flickemon-battle.js \
    content/flickemon-engine.js \
    content/flickemon-pvp.js \
+   content/flickemon-trade.js \
    content/flickemon-ui.js \
    content/content-script.js \
    content/styles.css        "$OUT/content/"
@@ -33,16 +34,20 @@ cp background/firebase-config.js \
    background/auth.js \
    background/firestore.js \
    background/pvp.js \
+   background/trade.js \
    background/service-worker.js "$OUT/background/"
 cp icons/flickemon-48.png icons/flickemon-128.png "$OUT/icons/"
 cp popup/popup.html "$OUT/popup/"
 
-# 2,050 sprite PNGs (1,025 front + back), ~1.9MB. Bundled so the extension
-# never reaches out to a third-party host to draw a Pokémon. PNGs only —
-# PROVENANCE.md documents the set for this repo, not for the shipped package.
-mkdir -p "$OUT/sprites/back"
-cp sprites/*.png      "$OUT/sprites/"
-cp sprites/back/*.png "$OUT/sprites/back/"
+# 4,100 sprite PNGs — 1,025 species x {front, back} x {normal, shiny}, ~3.9MB.
+# Bundled so the extension never reaches out to a third-party host to draw a
+# Pokémon. PNGs only: PROVENANCE.md documents the set for this repo, not for
+# the shipped package.
+mkdir -p "$OUT/sprites/back/shiny" "$OUT/sprites/shiny"
+cp sprites/*.png            "$OUT/sprites/"
+cp sprites/back/*.png       "$OUT/sprites/back/"
+cp sprites/shiny/*.png      "$OUT/sprites/shiny/"
+cp sprites/back/shiny/*.png "$OUT/sprites/back/shiny/"
 
 echo "Built $OUT/ — $(du -sh "$OUT" | cut -f1)"
 

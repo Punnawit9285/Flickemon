@@ -82,30 +82,58 @@
             return false;
         }
 
-        // Hook Video progress
-        let lastVideoTime = 0;
+        // ── Study time ────────────────────────────────────────────────────
+        //
+        // Progress is measured in real seconds spent watching, not in seconds of
+        // video crossed. Those are the same thing at 1x and nothing like it
+        // anywhere else: reading video.currentTime paid 2x speed double and 10x
+        // speed tenfold, so the fastest way to level up was to stop listening.
+        // Wall-clock time also makes seeking worthless by construction — dragging
+        // the scrubber moves currentTime but no time passes — instead of relying
+        // on a delta threshold to guess which jumps were scrubs.
+        //
+        // The clamp covers gaps this loop can't account for: a backgrounded tab
+        // gets its timers throttled, and a laptop closed mid-lecture may not fire
+        // anything for hours. Neither is time spent watching.
+        const MAX_TICK_SECONDS = 2;
+        let lastTickAt = null;
+
+        function stopCounting() { lastTickAt = null; }
+
+        function countWatchedTime(video) {
+            const watching = !video.paused && !video.seeking && !video.ended
+                             && video.readyState >= 2;
+            if (!watching) return stopCounting();
+
+            const now = Date.now();
+            if (lastTickAt === null) {      // first tick since play resumed
+                lastTickAt = now;
+                return;
+            }
+
+            const seconds = Math.min((now - lastTickAt) / 1000, MAX_TICK_SECONDS);
+            lastTickAt = now;
+            if (seconds <= 0) return;
+
+            // If main website's Pomodoro timer is on break, pause battle damage!
+            if (isMainWebsitePomodoroOnBreak()) return;
+            if (window.flickemonEngine) window.flickemonEngine.onVideoProgress(seconds);
+        }
+
         function hookVideoPlayer() {
             const video = document.querySelector('video');
             if (!video || video.dataset.flickemonHooked) return;
             video.dataset.flickemonHooked = 'true';
 
-            video.addEventListener('timeupdate', () => {
-                if (video.paused || video.seeking) {
-                    lastVideoTime = video.currentTime;
-                    return;
-                }
+            // timeupdate fires on a wall-clock cadence (~4Hz in Chrome) rather
+            // than per frame of media, so it stays a good heartbeat at any rate.
+            video.addEventListener('timeupdate', () => countWatchedTime(video));
 
-                const delta = video.currentTime - lastVideoTime;
-                if (delta > 0 && delta < 10) {
-                    // If main website's Pomodoro timer is on break, pause battle damage!
-                    const isOnBreak = isMainWebsitePomodoroOnBreak();
-
-                    if (!isOnBreak && window.flickemonEngine) {
-                        window.flickemonEngine.onVideoProgress(delta);
-                    }
-                }
-                lastVideoTime = video.currentTime;
-            });
+            // Anything that interrupts playback also breaks the accounting: the
+            // next tick must start a fresh interval rather than bill the pause.
+            for (const evt of ['pause', 'seeking', 'ended', 'waiting', 'stalled']) {
+                video.addEventListener(evt, stopCounting);
+            }
         }
 
         // Cheap by design: one querySelector, and the dataset flag makes every

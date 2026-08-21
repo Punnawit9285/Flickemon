@@ -14,6 +14,7 @@ import { isConfigured } from './firebase-config.js';
 import { signIn, signOut, getStatus, switchAccount } from './auth.js';
 import { pullState, pushState, checkAdmin } from './firestore.js';
 import { codeForUid, openLobby, readBattle, joinBattle, submitAction, commitTurn, closeLobby } from './pvp.js';
+import { openTrade, readTrade, joinTrade, offerPokemon, confirmTrade, acknowledgeTrade, closeTrade } from './trade.js';
 
 /** Offline pushes park here until connectivity returns. */
 const PENDING_KEY = 'flickemon_pending_push_v1';
@@ -100,6 +101,14 @@ const handlers = {
     async PVP_ACTION(msg) { return await submitAction(msg.code, msg.action); },
     async PVP_COMMIT(msg) { return await commitTurn(msg.code, msg.state); },
     async PVP_CLOSE(msg)  { return await closeLobby(msg.code); },
+
+    async TRADE_OPEN(msg)    { return await openTrade(msg.payload || {}); },
+    async TRADE_READ(msg)    { return { trade: await readTrade(msg.code) }; },
+    async TRADE_JOIN(msg)    { return await joinTrade(msg.code, msg.payload || {}); },
+    async TRADE_OFFER(msg)   { return await offerPokemon(msg.code, msg.offer); },
+    async TRADE_CONFIRM(msg) { return await confirmTrade(msg.code, msg.confirmed); },
+    async TRADE_ACK(msg)     { return await acknowledgeTrade(msg.code); },
+    async TRADE_CLOSE(msg)   { return await closeTrade(msg.code); },
 
     async CLOUD_PULL() {
         return await pullState();
