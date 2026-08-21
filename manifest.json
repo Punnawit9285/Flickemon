@@ -36,6 +36,17 @@
             "run_at": "document_idle"
         }
     ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "sprites/*.png",
+                "sprites/back/*.png"
+            ],
+            "matches": [
+                "https://flick.docchula.com/*"
+            ]
+        }
+    ],
     "icons": {
         "48": "icons/flickemon-48.png",
         "128": "icons/flickemon-128.png"

@@ -7,14 +7,42 @@
 
 // ─────────────────────────── Sprite Configuration ───────────────────────────
 
+// Sprites ship inside the extension rather than being fetched per render.
+// Opening the Pokédex asks for up to 1,025 images at once, and
+// raw.githubusercontent.com is a source host, not a CDN — if it ever throttles
+// or the student is behind a firewall that blocks it, every sprite in the game
+// goes blank together. Bundled, the extension makes no third-party request at
+// all, which is also one less thing for the university to have an opinion on.
+//
+// The remote URL stays as the fallback for the two contexts that run this file
+// without an extension around it: the test harness, and the standalone review
+// page.
 const SPRITE_BASE_URL = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon';
 
+/**
+ * Path to a bundled file, or null when there is no extension runtime to ask.
+ *
+ * getURL throws once the extension context is invalidated — which happens to
+ * every open tab the moment the extension updates — so a failure here means
+ * "fall back to the network", not "render a broken image".
+ */
+function bundledUrl(path) {
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.getURL) {
+        return null;
+    }
+    try {
+        return chrome.runtime.getURL(path);
+    } catch {
+        return null;
+    }
+}
+
 function getSpriteUrl(pokemonId) {
-    return `${SPRITE_BASE_URL}/${pokemonId}.png`;
+    return bundledUrl(`sprites/${pokemonId}.png`) || `${SPRITE_BASE_URL}/${pokemonId}.png`;
 }
 
 function getBackSpriteUrl(pokemonId) {
-    return `${SPRITE_BASE_URL}/back/${pokemonId}.png`;
+    return bundledUrl(`sprites/back/${pokemonId}.png`) || `${SPRITE_BASE_URL}/back/${pokemonId}.png`;
 }
 
 // ─────────────────────────── EXP & Leveling ───────────────────────────

@@ -37,19 +37,35 @@ cp background/firebase-config.js \
 cp icons/flickemon-48.png icons/flickemon-128.png "$OUT/icons/"
 cp popup/popup.html "$OUT/popup/"
 
+# 2,050 sprite PNGs (1,025 front + back), ~1.9MB. Bundled so the extension
+# never reaches out to a third-party host to draw a Pokémon. PNGs only —
+# PROVENANCE.md documents the set for this repo, not for the shipped package.
+mkdir -p "$OUT/sprites/back"
+cp sprites/*.png      "$OUT/sprites/"
+cp sprites/back/*.png "$OUT/sprites/back/"
+
 echo "Built $OUT/ — $(du -sh "$OUT" | cut -f1)"
 
 if [[ "${1:-}" == "--zip" ]]; then
     # The Web Store assigns its own extension ID from your developer account,
-    # so the local "key" (used to pin the ID during development) is stripped.
+    # so the local "key" (which pins the ID during development, and with it the
+    # OAuth redirect URI) is stripped from the uploaded copy only. dist/ keeps
+    # its key, so it stays loadable unpacked straight after packaging.
     python3 - <<'PY'
 import json
 m = json.load(open('dist/manifest.json'))
 m.pop('key', None)
-json.dump(m, open('dist/manifest.json','w'), indent=4, ensure_ascii=False)
-print('  stripped "key" from dist/manifest.json (Web Store assigns its own ID)')
+json.dump(m, open('dist/manifest.store.json', 'w'), indent=4, ensure_ascii=False)
 PY
     rm -f flickemon.zip
-    (cd "$OUT" && zip -qr ../flickemon.zip .)
-    echo "Packaged flickemon.zip — $(du -h flickemon.zip | cut -f1)"
+    (
+        cd "$OUT"
+        mv manifest.json manifest.dev.json
+        mv manifest.store.json manifest.json
+        zip -qr ../flickemon.zip . -x 'manifest.dev.json'
+        mv manifest.json manifest.store.json
+        mv manifest.dev.json manifest.json
+    )
+    rm -f "$OUT/manifest.store.json"
+    echo "Packaged flickemon.zip — $(du -h flickemon.zip | cut -f1) (key stripped in the zip only)"
 fi

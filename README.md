@@ -9,7 +9,8 @@ Flickémon runs entirely client-side as a content script. It doesn't talk to Fli
 | File | Role |
 |---|---|
 | `manifest.json` | Manifest V3 config — permissions, content script matches (`*.docchula.com`, `localhost`) |
-| `content/flickemon-config.js` | Game data: Pokémon stats, EXP curves, sprite URLs. Single source of truth for balance changes. |
+| `content/flickemon-config.js` | Game data: Pokémon stats, EXP curves, sprite paths. Single source of truth for balance changes. |
+| `sprites/` | 2,050 bundled sprite PNGs (1–1025, front and back). See [PROVENANCE](sprites/PROVENANCE.md). |
 | `content/flickemon-engine.js` | Game state machine: party, Pokédex, battles, leveling, persistence to `chrome.storage.local` |
 | `content/flickemon-ui.js` | Renders the on-page widget and battle UI |
 | `content/content-script.js` | Entry point — boots the engine, injects the UI into the course page DOM, hooks video playback |
