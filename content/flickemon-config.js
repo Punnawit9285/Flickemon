@@ -1668,6 +1668,43 @@ function canEvolveAt(fromId, level) {
     return null;
 }
 
+/**
+ * The chain a species will actually walk, in order, starting from `startId`.
+ * Follows getEvolution (the same `find` the game uses), so a branching line
+ * like Eevee's reports the single path the player will really get, with
+ * `branches` recording how many alternatives exist at that step.
+ *
+ * Returns [{ species, evolvesAt, branches }]; `evolvesAt` is null on the final
+ * form. The visited set guards against a malformed chain looping forever.
+ */
+function getEvolutionLine(startId) {
+    const line = [];
+    const visited = new Set();
+    let currentId = startId;
+
+    while (currentId && !visited.has(currentId)) {
+        visited.add(currentId);
+        const species = getSpeciesById(currentId);
+        if (!species) break;
+
+        const next = getEvolution(currentId);
+        line.push({
+            species,
+            evolvesAt: next ? next.level : null,
+            branches: getAllEvolutions(currentId).length,
+        });
+        currentId = next ? next.toId : null;
+    }
+
+    return line;
+}
+
+/** Sum of a species' base stats — a single number for comparing starters. */
+function totalBaseStats(species) {
+    const s = species && species.baseStats;
+    return s ? s.hp + s.attack + s.defense + s.speed : 0;
+}
+
 // Expose globally for other extension scripts
 window.FlickemonConfig = {
     SPRITE_BASE_URL,
@@ -1694,4 +1731,6 @@ window.FlickemonConfig = {
     getEvolution,
     getAllEvolutions,
     canEvolveAt,
+    getEvolutionLine,
+    totalBaseStats,
 };

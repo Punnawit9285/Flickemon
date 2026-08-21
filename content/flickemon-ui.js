@@ -5,9 +5,36 @@
  * flickemon-starter.component.ts, and flickemon-settings-modal.component.ts.
  */
 
-// Long enough for the 2.7s morph plus the name to land and be read. The CSS
-// animation timings in styles.css are keyed to this.
-const EVOLUTION_OVERLAY_MS = 5000;
+// The staged sequence runs 4.75s; the remainder holds the new form on screen
+// long enough to read. The animation delays in styles.css are keyed to this.
+const EVOLUTION_OVERLAY_MS = 6000;
+
+// Sparks thrown by the burst. Twelve reads as a full ring without the DOM
+// churn of a real particle system.
+const EVOLUTION_SPARK_COUNT = 12;
+
+// Starter base stats span 31-90, so bars are drawn against a fixed 100 rather
+// than the trio's own maximum: that keeps a Gen 1 bar comparable to a Gen 9 one.
+const STARTER_STAT_SCALE = 100;
+
+// Tabs for the starter chooser. Gen 0 is the odd one out: Pikachu and Eevee are
+// Kanto species but were never part of the starter trio, so they get their own
+// tab instead of crowding Bulbasaur's.
+const STARTER_REGIONS = [
+    { gen: 1, region: 'Kanto',   games: 'Red & Blue' },
+    { gen: 2, region: 'Johto',   games: 'Gold & Silver' },
+    { gen: 3, region: 'Hoenn',   games: 'Ruby & Sapphire' },
+    { gen: 4, region: 'Sinnoh',  games: 'Diamond & Pearl' },
+    { gen: 5, region: 'Unova',   games: 'Black & White' },
+    { gen: 6, region: 'Kalos',   games: 'X & Y' },
+    { gen: 7, region: 'Alola',   games: 'Sun & Moon' },
+    { gen: 8, region: 'Galar',   games: 'Sword & Shield' },
+    { gen: 9, region: 'Paldea',  games: 'Scarlet & Violet' },
+    { gen: 0, region: 'Special', games: "Yellow & Let's Go" },
+];
+
+// Kanto species offered on the Special tab rather than with the Kanto trio.
+const SPECIAL_STARTER_IDS = [25, 133];
 
 class FlickemonUI {
     constructor(engine) {
@@ -403,121 +430,213 @@ class FlickemonUI {
     // ────────────────────────── Starter Selection Modal ──────────────────────────
 
     openStarterModal() {
-        const modal = this.createModalOverlay('Select Your Starter Pokémon');
+        const modal = this.createModalOverlay('Choose Your Partner');
+        modal.overlay.classList.add('starter-overlay');
         const options = this.engine.getStarterOptions();
-
-        let activeTab = 1;
-        const genTabs = [
-            { gen: 1, label: 'Gen 1', region: 'Kanto', games: 'Red & Blue' },
-            { gen: 2, label: 'Gen 2', region: 'Johto', games: 'Gold, Silver, Crystal' },
-            { gen: 3, label: 'Gen 3', region: 'Hoenn', games: 'Ruby, Sapphire, Emerald' },
-            { gen: 4, label: 'Gen 4', region: 'Sinnoh', games: 'Diamond, Pearl, Platinum' },
-            { gen: 5, label: 'Gen 5', region: 'Unova', games: 'Black & White' },
-            { gen: 6, label: 'Gen 6', region: 'Kalos', games: 'X & Y' },
-            { gen: 7, label: 'Gen 7', region: 'Alola', games: 'Sun & Moon' },
-            { gen: 8, label: 'Gen 8', region: 'Galar', games: 'Sword & Shield' },
-            { gen: 9, label: 'Gen 9', region: 'Paldea', games: 'Scarlet & Violet' },
-            { gen: 0, label: 'Special', region: 'Special Starters', games: 'Yellow & Let\'s Go' },
-        ];
 
         modal.body.innerHTML = `
             <div class="starter-modal-content">
-                <div class="starter-modal-header-text">
-                    <h1 class="starter-hero-title">Choose Your Partner!</h1>
-                    <p class="starter-hero-subtitle">Select a Pokémon to begin your Flickémon journey</p>
-                </div>
-                <div class="gen-tabs">
-                    ${genTabs.map(t => `
-                        <button class="gen-tab-btn ${t.gen === 1 ? 'active' : ''}" data-gen="${t.gen}">
-                            <strong>${t.gen === 0 ? t.label : `${t.region} (GEN ${t.gen})`}</strong><br/>
-                            <small>${t.games}</small>
+                <header class="starter-hero">
+                    <p class="starter-hero-eyebrow">New Trainer</p>
+                    <h1 class="starter-hero-title">Choose Your Partner</h1>
+                    <p class="starter-hero-subtitle">
+                        They gain EXP for every minute of lecture you watch, and evolve as you go.
+                    </p>
+                </header>
+
+                <div class="gen-tabs" role="tablist" aria-label="Region">
+                    ${STARTER_REGIONS.map(r => `
+                        <button class="gen-tab-btn ${r.gen === 1 ? 'active' : ''}"
+                                role="tab" aria-selected="${r.gen === 1}" data-gen="${r.gen}">
+                            <strong>${r.region}</strong>
+                            <small>${r.games}</small>
                         </button>
                     `).join('')}
                 </div>
-                <div class="starters-grid"></div>
-                <div class="starter-confirm-container" style="display: none; margin-top: 1.5rem; text-align: center;">
-                    <button class="starter-confirm-btn" style="background: var(--flick-primary); color: #fff; border: none; padding: 16px 24px; border-radius: 32px; font-size: 1.2rem; font-weight: 800; width: 100%; cursor: pointer; transition: all 0.2s;">I CHOOSE YOU!</button>
-                </div>
+
+                <div class="starters-grid" role="radiogroup" aria-label="Starter Pokémon"></div>
+                <section class="starter-detail" aria-live="polite"></section>
             </div>
+
+            <footer class="starter-confirm-bar">
+                <button class="starter-confirm-btn" disabled>Select a Pokémon</button>
+            </footer>
         `;
 
-        let currentSelectedId = null;
+        const grid    = modal.body.querySelector('.starters-grid');
+        const detail  = modal.body.querySelector('.starter-detail');
+        const confirm = modal.body.querySelector('.starter-confirm-btn');
+
+        let selected = null;
+
+        const select = (species) => {
+            selected = species;
+
+            grid.querySelectorAll('.starter-card').forEach(card => {
+                const isIt = Number(card.dataset.id) === species.id;
+                card.classList.toggle('selected', isIt);
+                card.setAttribute('aria-checked', String(isIt));
+                card.tabIndex = isIt ? 0 : -1;
+            });
+
+            detail.innerHTML = this.renderStarterDetail(species);
+            confirm.disabled = false;
+            confirm.textContent = `I choose you, ${species.name}!`;
+        };
 
         const renderGrid = (gen) => {
-            const grid = modal.body.querySelector('.starters-grid');
-            const confirmContainer = modal.body.querySelector('.starter-confirm-container');
-            const confirmBtn = modal.body.querySelector('.starter-confirm-btn');
-
-            confirmContainer.style.display = 'none';
-            currentSelectedId = null;
-
-            let starters;
-            if (gen === 0) {
-                starters = options.filter(s => s.id === 25 || s.id === 133);
-            } else if (gen === 1) {
-                starters = options.filter(s => s.generation === 1 && s.id !== 25 && s.id !== 133);
-            } else {
-                starters = options.filter(s => s.generation === gen);
-            }
+            const starters = this.startersForRegion(options, gen);
 
             grid.innerHTML = starters.map(s => `
-                <div class="starter-card" data-id="${s.id}">
-                    <img class="starter-card-img" src="${this.config.getSpriteUrl(s.id)}" alt="${s.name}"/>
+                <div class="starter-card" role="radio" aria-checked="false" tabindex="-1" data-id="${s.id}">
+                    <div class="starter-card-orb">
+                        <img class="starter-card-img" src="${this.config.getSpriteUrl(s.id)}" alt="${s.name}"/>
+                    </div>
                     <h4 class="starter-card-name">${s.name}</h4>
                     <div class="types-row">
                         ${s.types.map(t => `<span class="type-pill ${t}">${t}</span>`).join('')}
                     </div>
-                    <div class="starter-card-stats">
-                        <div class="stat-col">
-                            <span>HP ${s.baseStats.hp}</span>
-                            <span>DEF ${s.baseStats.defense}</span>
-                        </div>
-                        <div class="stat-col">
-                            <span>ATK ${s.baseStats.attack}</span>
-                            <span>SPD ${s.baseStats.speed}</span>
-                        </div>
-                    </div>
                 </div>
             `).join('');
 
-            grid.querySelectorAll('.starter-card').forEach(card => {
-                card.addEventListener('click', () => {
-                    grid.querySelectorAll('.starter-card').forEach(c => c.classList.remove('selected'));
-                    card.classList.add('selected');
-                    const speciesId = parseInt(card.getAttribute('data-id'), 10);
-                    currentSelectedId = speciesId;
-                    const nameEl = card.querySelector('.starter-card-name');
-                    const name = nameEl ? nameEl.textContent : '';
-                    const activeBtn = modal.body.querySelector('.starter-confirm-btn');
-                    if (activeBtn) {
-                        activeBtn.textContent = `I CHOOSE YOU! (${name.toUpperCase()})`;
-                    }
-                    if (confirmContainer) {
-                        confirmContainer.style.display = 'block';
+            const cards = [...grid.querySelectorAll('.starter-card')];
+            cards.forEach((card, i) => {
+                const species = starters[i];
+                card.addEventListener('click', () => select(species));
+                card.addEventListener('keydown', (e) => {
+                    // Arrow keys walk the trio; Enter takes the one in focus.
+                    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+                    if (step) {
+                        e.preventDefault();
+                        const next = (i + step + cards.length) % cards.length;
+                        select(starters[next]);
+                        cards[next].focus();
+                    } else if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        select(species);
                     }
                 });
             });
+
+            // Never show an empty detail panel — the first of the trio stands in
+            // until the trainer picks. Confirming still takes a deliberate click.
+            if (starters.length) select(starters[0]);
         };
 
-        const globalConfirmBtn = modal.body.querySelector('.starter-confirm-btn');
-        globalConfirmBtn?.addEventListener('click', async () => {
-            if (currentSelectedId) {
-                await this.engine.chooseStarter(currentSelectedId);
+        confirm.addEventListener('click', async () => {
+            if (!selected || confirm.disabled) return;
+            confirm.disabled = true;                  // chooseStarter is async; no double-taps
+            try {
+                await this.engine.chooseStarter(selected.id);
                 this.closeModal(modal.overlay);
+            } catch (err) {
+                // A failed save must not strand the trainer on a dead button.
+                console.error('[Flickémon] Could not set starter:', err);
+                confirm.disabled = false;
+                confirm.textContent = 'Try again';
             }
         });
 
-        renderGrid(1);
-
         modal.body.querySelectorAll('.gen-tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                modal.body.querySelectorAll('.gen-tab-btn').forEach(b => b.classList.remove('active'));
+                modal.body.querySelectorAll('.gen-tab-btn').forEach(b => {
+                    b.classList.remove('active');
+                    b.setAttribute('aria-selected', 'false');
+                });
                 btn.classList.add('active');
-                renderGrid(parseInt(btn.getAttribute('data-gen'), 10));
+                btn.setAttribute('aria-selected', 'true');
+                renderGrid(Number(btn.dataset.gen));
             });
         });
+
+        renderGrid(1);
     }
 
+    /** The starters shown on one region tab. Every option belongs to exactly one. */
+    startersForRegion(options, gen) {
+        const isSpecial = s => SPECIAL_STARTER_IDS.includes(s.id);
+        if (gen === 0) return options.filter(isSpecial);
+        if (gen === 1) return options.filter(s => s.generation === 1 && !isSpecial(s));
+        return options.filter(s => s.generation === gen);
+    }
+
+    /**
+     * The panel under the trio: who they are, how they compare, and — the part
+     * that actually decides the choice — what they become and when.
+     */
+    renderStarterDetail(species) {
+        const line  = this.config.getEvolutionLine(species.id);
+        const total = this.config.totalBaseStats(species);
+        const final = line[line.length - 1].species;
+        const branches = line[0].branches;
+
+        return `
+            <div class="starter-detail-inner accent-${species.types[0]}">
+                <div class="starter-detail-head">
+                    <div class="starter-detail-portrait">
+                        <img src="${this.config.getSpriteUrl(species.id)}" alt="${species.name}"/>
+                    </div>
+                    <div class="starter-detail-id">
+                        <span class="starter-dex-no">No. ${String(species.id).padStart(3, '0')}</span>
+                        <h3 class="starter-detail-name">${species.name}</h3>
+                        <div class="types-row">
+                            ${species.types.map(t => `<span class="type-pill ${t}">${t}</span>`).join('')}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="starter-stats">
+                    <div class="starter-stats-head">
+                        <span>Base stats</span>
+                        <span class="starter-stat-total">${total} total</span>
+                    </div>
+                    ${this.renderStatBars(species)}
+                </div>
+
+                <div class="starter-evo">
+                    <div class="starter-evo-head">Evolution line</div>
+                    <div class="starter-evo-chain">
+                        ${line.map((step, i) => `
+                            ${i ? `<span class="starter-evo-arrow">
+                                       <span class="starter-evo-lvl">Lv.${line[i - 1].evolvesAt}</span>
+                                       <span class="starter-evo-tick">→</span>
+                                   </span>` : ''}
+                            <figure class="starter-evo-step">
+                                <img src="${this.config.getSpriteUrl(step.species.id)}" alt="${step.species.name}"/>
+                                <figcaption>${step.species.name}</figcaption>
+                            </figure>
+                        `).join('')}
+                    </div>
+                    <p class="starter-evo-note">
+                        ${line.length > 1
+                            ? `Becomes ${final.name} at Lv.${line[line.length - 2].evolvesAt}.`
+                            : `${species.name} does not evolve.`}
+                        ${branches > 1 ? ` ${species.name} has ${branches} known evolutions; Flickémon takes this one.` : ''}
+                    </p>
+                </div>
+            </div>
+        `;
+    }
+
+    /** Base stats as bars, scaled to a fixed maximum so trios compare across tabs. */
+    renderStatBars(species) {
+        const rows = [
+            ['HP',  species.baseStats.hp],
+            ['ATK', species.baseStats.attack],
+            ['DEF', species.baseStats.defense],
+            ['SPD', species.baseStats.speed],
+        ];
+
+        return rows.map(([label, value]) => `
+            <div class="starter-stat-row">
+                <span class="starter-stat-label">${label}</span>
+                <span class="starter-stat-track">
+                    <span class="starter-stat-fill" style="width: ${Math.min(100, Math.round((value / STARTER_STAT_SCALE) * 100))}%;"></span>
+                </span>
+                <span class="starter-stat-value">${value}</span>
+            </div>
+        `).join('');
+    }
     // ────────────────────────── Game Hub Modal ──────────────────────────
 
     openGameHub() {
@@ -1045,24 +1164,43 @@ class FlickemonUI {
      * Renders one evolution; calls `done` when it is dismissed or times out.
      * Returns an abort function that tears the overlay down *without* advancing
      * the queue, for when fullscreen resumes.
+     *
+     * The sequence is driven entirely by CSS animation-delays (see the timeline
+     * in styles.css) so there is only one timer here: the one that ends it.
      */
     playEvolutionOverlay(evo, done) {
         const overlay = document.createElement('div');
         overlay.className = 'evolution-overlay-screen';
 
         const queued = this.pendingEvolutions.length;
+        // The listener is handed bare {id, name}; the registry has the rest.
+        const toSpecies = this.config.getSpeciesById(evo.to.id) || evo.to;
+        const fromSpecies = this.config.getSpeciesById(evo.from.id) || evo.from;
+
         overlay.innerHTML = `
+            <div class="evo-flash"></div>
             <div class="evo-box">
                 ${evo.deferred ? '<p class="evo-deferred">While you were watching…</p>' : ''}
-                <h2 class="evo-title">Evolution!</h2>
+                <p class="evo-lead">What? <b>${evo.from.name}</b> is evolving!</p>
                 <div class="evo-stage">
+                    <div class="evo-rays"></div>
+                    <div class="evo-ring evo-ring-1"></div>
+                    <div class="evo-ring evo-ring-2"></div>
+                    <div class="evo-ring evo-ring-3"></div>
                     <div class="evo-burst"></div>
                     <div class="evo-morph">
                         <img src="${this.config.getSpriteUrl(evo.from.id)}" alt="${evo.from.name}" class="old-sprite"/>
                         <img src="${this.config.getSpriteUrl(evo.to.id)}" alt="${evo.to.name}" class="new-sprite"/>
                     </div>
+                    <div class="evo-particles">${this.renderEvolutionSparks()}</div>
                 </div>
-                <p class="evo-desc">${evo.from.name} evolved into ${evo.to.name}!</p>
+                <div class="evo-outcome">
+                    <p class="evo-desc">${evo.from.name} evolved into <b>${evo.to.name}</b>!</p>
+                    ${toSpecies.types
+                        ? `<div class="types-row">${toSpecies.types.map(t => `<span class="type-pill ${t}">${t}</span>`).join('')}</div>`
+                        : ''}
+                    ${this.renderEvolutionGains(fromSpecies, toSpecies)}
+                </div>
                 ${queued ? `<p class="evo-queue">+${queued} more</p>` : ''}
                 <p class="evo-skip">Click anywhere to skip</p>
             </div>
@@ -1083,6 +1221,42 @@ class FlickemonUI {
 
         document.body.appendChild(overlay);
         return () => settle(false);
+    }
+
+    /** Sparks thrown outward by the burst, evenly spread with a scattered delay. */
+    renderEvolutionSparks() {
+        return Array.from({ length: EVOLUTION_SPARK_COUNT }, (_, i) => {
+            const angle = Math.round((360 / EVOLUTION_SPARK_COUNT) * i);
+            // Alternating reach and a staggered start keep it from reading as a
+            // clock face expanding in lockstep.
+            const reach = i % 2 ? 150 : 195;
+            const delay = ((i % 4) * 0.045).toFixed(3);
+            return `<i style="--angle: ${angle}deg; --reach: ${reach}px; --delay: ${delay}s"></i>`;
+        }).join('');
+    }
+
+    /**
+     * Base-stat deltas across the evolution. Losses are shown as well as gains:
+     * not every evolution is a straight upgrade here. Metapod trades attack and
+     * speed for defence, and Shedinja drops 30 HP — in the real games those are
+     * offset by special stats, which this four-stat model doesn't carry. Hiding
+     * the minuses would promise an improvement the player doesn't get.
+     *
+     * Unchanged stats are omitted; a row of "+0"s is noise.
+     */
+    renderEvolutionGains(fromSpecies, toSpecies) {
+        const before = fromSpecies && fromSpecies.baseStats;
+        const after = toSpecies && toSpecies.baseStats;
+        if (!before || !after) return '';
+
+        const deltas = [['HP', 'hp'], ['ATK', 'attack'], ['DEF', 'defense'], ['SPD', 'speed']]
+            .map(([label, key]) => [label, after[key] - before[key]])
+            .filter(([, delta]) => delta !== 0)
+            .map(([label, delta]) => delta > 0
+                ? `<span>${label} <b>+${delta}</b></span>`
+                : `<span>${label} <b class="down">${delta}</b></span>`);
+
+        return deltas.length ? `<div class="evo-gains">${deltas.join('')}</div>` : '';
     }
 
     createModalOverlay(title) {
