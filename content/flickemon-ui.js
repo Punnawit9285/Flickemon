@@ -795,16 +795,24 @@ class FlickemonUI {
                     });
                 });
             } else if (tab === 'pokedex') {
+                // 1,025 entries, so both of these matter here and nowhere else:
+                //   - a Map instead of pokedex.find() per row, which was a
+                //     linear scan inside a 1,025-iteration loop;
+                //   - loading="lazy", so the browser fetches the ~30 sprites on
+                //     screen instead of firing 1,025 requests at the sprite host
+                //     every time the tab is opened.
+                const dex = new Map(pokedex.map(e => [e.speciesId, e]));
                 content.innerHTML = `
                     <div class="flickemon-pokedex-grid">
                         ${this.config.POKEMON_REGISTRY.map(sp => {
-                            const entry = pokedex.find(p => p.speciesId === sp.id);
+                            const entry = dex.get(sp.id);
                             const caught = entry && entry.caught;
                             const seen = entry && entry.seen;
                             return `
                                 <div class="pokedex-item">
-                                    ${seen 
-                                        ? `<img src="${this.config.getSpriteUrl(sp.id)}" alt="${sp.name}" class="pokedex-sprite" ${!caught ? 'style="filter: brightness(0); opacity: 0.4;"' : ''}/>` 
+                                    ${seen
+                                        ? `<img src="${this.config.getSpriteUrl(sp.id)}" alt="${sp.name}" class="pokedex-sprite${caught ? '' : ' unseen-silhouette'}"
+                                                width="64" height="64" loading="lazy" decoding="async"/>`
                                         : `<div class="pokedex-unknown">?</div>`
                                     }
                                     <span class="pokedex-num">#${sp.id}</span>

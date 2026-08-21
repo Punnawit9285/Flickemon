@@ -11,6 +11,27 @@
  *      occur on both sides. Whoever notices first writes the result back.
  */
 
+// ─────────────────────────── Read cadence ───────────────────────────
+//
+// Firestore's free tier allows 50,000 document reads a day across every user,
+// and a flat 1.5s loop spends 2,400 of them per player-hour — three trainers
+// battling for an hour would burn a seventh of the whole day's budget between
+// them. So the loop only runs fast in the one window where the delay is
+// actually visible: after I have moved and am waiting on my opponent.
+//
+// Nothing else can change quickly. A lobby needs a human to read out six
+// digits and type them; on my own turn the battle cannot advance at all until
+// I act, so a poll there does nothing but notice an opponent walking away.
+//
+// 2s rather than 1.5s for the fast case: this is a turn-based battle, and the
+// move animation in the games it is imitating takes longer than the gap.
+const POLL_AWAITING_MS  = 2000;     // they could answer any moment
+const POLL_MY_TURN_MS   = 12000;    // only catches them leaving
+const POLL_LOBBY_MS     = 2500;     // backs off from here
+const POLL_LOBBY_MAX_MS = 15000;
+const LOBBY_BACKOFF     = 1.6;
+const LOBBY_GIVE_UP_MS  = 300000;   // 5 minutes unanswered, then close the lobby
+
 class FlickemonPvp {
     constructor(engine, ui) {
         this.engine = engine;
@@ -18,13 +39,25 @@ class FlickemonPvp {
         this.config = window.FlickemonConfig;
         this.B = window.FlickemonBattle;
 
-        this.POLL_MS = 1500;
         this.pollTimer = null;
+        this.pollPaused = false;
+        this.pollingSince = 0;
+        this.lobbyPolls = 0;
         this.code = null;
         this.role = null;      // 'host' | 'guest'
         this.local = null;     // { p1, p2, p1Team, p2Team } from MY perspective
         this.pendingAction = null;
         this.lastTurnRendered = -1;
+
+        // A hidden tab has nobody watching the battle, so reads there are pure
+        // waste. Students alt-tab constantly, which makes this a real saving.
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', () => {
+                this.pollPaused = document.visibilityState === 'hidden';
+                if (this.pollPaused) this.stopPolling();
+                else if (this.code) this.poll();
+            });
+        }
     }
 
     // ─────────────────────────── Entry ───────────────────────────
@@ -133,14 +166,71 @@ class FlickemonPvp {
     // ─────────────────────────── Sync loop ───────────────────────────
 
     startPolling() {
-        this.stopPolling();
-        this.pollTimer = setInterval(() => this.tick().catch(() => {}), this.POLL_MS);
-        this.tick().catch(() => {});
+        this.pollingSince = Date.now();
+        this.lobbyPolls = 0;
+        this.poll();
     }
 
     stopPolling() {
-        if (this.pollTimer) clearInterval(this.pollTimer);
+        if (this.pollTimer) clearTimeout(this.pollTimer);
         this.pollTimer = null;
+    }
+
+    /**
+     * One read, then schedule the next at whatever cadence the current phase
+     * deserves. Self-scheduling rather than setInterval so the gap can change
+     * between reads, and so a slow response can never stack up requests.
+     */
+    async poll() {
+        this.stopPolling();          // only ever one chain in flight
+        if (!this.code || this.pollPaused) return;
+
+        try {
+            await this.tick();
+        } catch {
+            // Transient — the next scheduled read retries.
+        }
+
+        if (!this.code) return;      // tick may have ended the battle
+        const delay = this.nextPollDelay();
+        if (delay === null) return;
+        this.pollTimer = setTimeout(() => this.poll(), delay);
+    }
+
+    /** How long to wait before the next read, or null to stop reading. */
+    nextPollDelay() {
+        const phase = this.remote && this.remote.state && this.remote.state.phase;
+
+        if (phase === 'over') return null;            // nothing left to watch
+        if (phase === 'battling') {
+            return this.pendingAction ? POLL_AWAITING_MS : POLL_MY_TURN_MS;
+        }
+
+        // Still in the lobby, waiting for someone to type the code.
+        if (Date.now() - this.pollingSince > LOBBY_GIVE_UP_MS) {
+            this.onLobbyTimeout();
+            return null;
+        }
+        const delay = POLL_LOBBY_MS * Math.pow(LOBBY_BACKOFF, this.lobbyPolls++);
+        return Math.min(POLL_LOBBY_MAX_MS, Math.round(delay));
+    }
+
+    /** Nobody came. Closing the lobby also keeps the document out of storage. */
+    onLobbyTimeout() {
+        this.stopPolling();
+        const code = this.code;
+        this.code = null;
+        if (this.role === 'host' && code) {
+            this.engine.pvpClose(code).catch(() => {});
+        }
+        if (!this.modal) return;
+        this.modal.body.innerHTML = `<div class="pvp-notice">
+            <p class="pvp-8bit">NO CHALLENGER</p>
+            <p class="pvp-sub">Nobody joined in five minutes, so the lobby closed.</p>
+            <button class="pvp-btn pvp-retry-btn">TRY AGAIN</button>
+        </div>`;
+        this.modal.body.querySelector('.pvp-retry-btn')
+            .addEventListener('click', () => this.open());
     }
 
     async tick() {
@@ -302,6 +392,9 @@ class FlickemonPvp {
                 this.renderBattle();
                 try {
                     await this.engine.pvpAction(this.code, this.pendingAction);
+                    // They may already be waiting on me — check now rather than
+                    // sitting out the 12s my-turn gap that was just in effect.
+                    this.poll();
                 } catch {
                     this.pendingAction = null;
                     this.renderBattle();

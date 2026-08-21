@@ -6,19 +6,108 @@
  */
 
 :root, body {
+    /* ───────────────────────── Theme tokens ─────────────────────────
+     *
+     * Every colour in this file resolves through one of these. No rule below
+     * declares a literal, so the widget wears whatever the main site is
+     * wearing — including a theme that doesn't exist yet, and including a dark
+     * one — with no change needed here.
+     *
+     * Each token reads the host's Ionic variable first and falls back only
+     * where the site defines none. To restyle the widget specifically rather
+     * than site-wide, override any --flick-* on :root.
+     */
+
+    /* Surfaces and text, straight from the host. */
     --flick-bg: var(--ion-background-color, #f4f5f8);
     --flick-card-bg: var(--ion-card-background, var(--ion-item-background, var(--ion-background-color, #ffffff)));
     --flick-text: var(--ion-text-color, #1f2937);
     --flick-text-muted: var(--ion-color-medium, #6b7280);
     --flick-border: var(--ion-border-color, #e5e7eb);
+
+    /* Brand. --flick-on-primary is whatever stays legible ON the primary
+     * colour; hardcoding it is how a site that themes primary dark loses every
+     * button label at once. */
     --flick-primary: var(--ion-color-primary, #3b82f6);
     --flick-primary-hover: var(--ion-color-primary-tint, #2563eb);
+    --flick-primary-rgb: var(--ion-color-primary-rgb, 59, 130, 246);
+    --flick-on-primary: var(--ion-color-primary-contrast, #ffffff);
+
+    /* Semantic. */
     --flick-danger: var(--ion-color-danger, #ef4444);
     --flick-success: var(--ion-color-success, #10b981);
     --flick-warning: var(--ion-color-warning, #f59e0b);
+    --flick-on-semantic: var(--ion-color-danger-contrast, #ffffff);
 
-    /* Pokémon type colours. Single source of truth for the type pills and
-       for --accent, which tints whichever species is on screen. */
+    /* Neutral fills. Ionic derives its step scale between the background and
+     * text colours, so these follow a dark theme on their own — where a fixed
+     * rgba(0,0,0,0.05) fill would vanish into a dark surface. The translucent
+     * fallbacks are grey rather than black so they stay visible either way on
+     * a site with no step scale. */
+    --flick-fill-subtle: var(--ion-color-step-50,  rgba(128,128,128,0.06));
+    --flick-fill:        var(--ion-color-step-100, rgba(128,128,128,0.10));
+    --flick-fill-strong: var(--ion-color-step-150, rgba(128,128,128,0.16));
+    --flick-track:       var(--ion-color-step-200, rgba(128,128,128,0.22));
+
+    /* Depth. Kept dark in both themes — a shadow is an absence of light. */
+    --flick-shadow-soft:   rgba(0, 0, 0, 0.06);
+    --flick-shadow:        rgba(0, 0, 0, 0.15);
+    --flick-shadow-strong: rgba(0, 0, 0, 0.30);
+
+    /* Game semantics, routed through Ionic's status colours so a re-theme
+     * moves them too, while keeping the conventions the games taught: HP
+     * drains green to amber to red, favourites are gold. */
+    --flick-hp-ok:   var(--ion-color-success, #22c55e);
+    --flick-hp-warn: var(--ion-color-warning, #eab308);
+    --flick-hp-low:  var(--ion-color-danger, #ef4444);
+    --flick-gold:    var(--ion-color-warning, #f59e0b);
+    --flick-gain:    var(--ion-color-success, #16a34a);
+    --flick-loss:    var(--ion-color-danger, #dc2626);
+    --flick-capture: var(--ion-color-warning, #d97706);
+    --flick-pvp:     var(--ion-color-secondary, #7c3aed);
+    --flick-pvp-rgb: var(--ion-color-secondary-rgb, 124, 58, 237);
+
+    /* Foreground on a fixed type or status colour. Those backgrounds don't move
+     * with the theme, so their text shouldn't either. */
+    --flick-on-type: #ffffff;
+    --flick-on-type-dark: #000000;
+    --flick-hp-empty: var(--ion-color-step-800, #333333);
+    --flick-tint-neutral: rgba(128, 128, 128, 0.12);
+
+    /* Status ailments keep the series' own colour language. */
+    --flick-burn: var(--ion-color-danger, #ef4444);
+    --flick-para: var(--ion-color-warning, #eab308);
+    --flick-pois: var(--type-poison);
+
+    /* The full-screen scenes lay down their own ground, so these are
+     * deliberately independent of the host surface: the evolution scene reads
+     * the same whatever the site is wearing. */
+    --flick-scrim:          rgba(0, 0, 0, 0.6);
+    --flick-scrim-deep:     rgba(0, 0, 0, 0.93);
+    --flick-scrim-tint:     rgba(30, 20, 60, 0.86);
+    --flick-on-scrim:       #ffffff;
+    --flick-on-scrim-dim:   rgba(255, 255, 255, 0.75);
+    --flick-on-scrim-faint: rgba(255, 255, 255, 0.45);
+    --flick-highlight:      #fcd34d;
+    --flick-spark:          rgba(255, 236, 150, 0.95);
+    --flick-sheen:          rgba(255, 255, 255, 0.15);
+    /* Green and red read differently on the scene's dark ground than on a page,
+     * so the stat-change colours have a scrim-side pair. */
+    --flick-gain-scrim: #86efac;
+    --flick-loss-scrim: #fca5a5;
+    --flick-damage: #ff0000;              /* hit-flash glow */
+    --flick-ray:   rgba(255, 255, 255, 0.55);
+    --flick-burst: radial-gradient(circle,
+                       rgba(255,255,255,0.95) 0%,
+                       rgba(255,240,150,0.6) 38%,
+                       rgba(255,255,255,0) 68%);
+    --flick-field:          linear-gradient(180deg, rgba(125,211,252,0.18) 0%, rgba(134,239,172,0.18) 100%);
+
+    /* Pokémon type identity — the one deliberate exception. A Fire type is
+     * orange in every game ever shipped, so these are constants rather than
+     * theme-derived, but they are still tokens and a site theme can override
+     * them like anything else. One source of truth for the type pills, the
+     * type badges, and the --accent tint on the starter panel. */
     --type-normal: #a8a878;
     --type-fire: #ee8130;
     --type-water: #6390f0;
@@ -49,7 +138,7 @@
     color: var(--flick-text);
     border: 1px solid var(--flick-border);
     border-radius: 14px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    box-shadow: 0 4px 12px var(--flick-shadow-soft);
     margin: 1rem 0;
     padding: 1rem;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -81,7 +170,7 @@
     padding: 4px 8px;
     border-radius: 6px;
 }
-.icon-btn:hover { background: rgba(0,0,0,0.05); color: var(--flick-text); }
+.icon-btn:hover { background: var(--flick-fill); color: var(--flick-text); }
 
 /* ────────────────────────── Flickemon Widget HUD ────────────────────────── */
 
@@ -97,7 +186,7 @@
     padding: 0.5rem 0.75rem;
     border: 1.5px solid var(--flick-primary);
     border-radius: 10px;
-    background: rgba(0, 0, 0, 0.02);
+    background: var(--flick-fill);
 }
 
 .partner-mini-sprite, .wild-mini-sprite {
@@ -110,9 +199,9 @@
 
 @keyframes damage-flash {
     0% { filter: brightness(1) drop-shadow(0 0 0px transparent); transform: scale(1); opacity: 1; }
-    25% { filter: brightness(2.5) sepia(1) hue-rotate(-50deg) saturate(5) drop-shadow(0 0 10px #ff0000); transform: scale(0.9) rotate(-4deg); opacity: 0.5; }
-    50% { filter: brightness(3) drop-shadow(0 0 14px #ff0000); transform: scale(1.15) rotate(4deg); opacity: 1; }
-    75% { filter: brightness(2) drop-shadow(0 0 8px #ff0000); transform: scale(0.95); opacity: 0.6; }
+    25% { filter: brightness(2.5) sepia(1) hue-rotate(-50deg) saturate(5) drop-shadow(0 0 10px var(--flick-damage)); transform: scale(0.9) rotate(-4deg); opacity: 0.5; }
+    50% { filter: brightness(3) drop-shadow(0 0 14px var(--flick-damage)); transform: scale(1.15) rotate(4deg); opacity: 1; }
+    75% { filter: brightness(2) drop-shadow(0 0 8px var(--flick-damage)); transform: scale(0.95); opacity: 0.6; }
     100% { filter: brightness(1) drop-shadow(0 0 0px transparent); transform: scale(1); opacity: 1; }
 }
 
@@ -128,9 +217,10 @@
 .vs-badge {
     font-size: 0.75rem;
     font-weight: 800;
-    color: #d97706;
-    background: #fef3c7;
-    border: 1px solid #fde68a;
+    color: var(--flick-capture);
+    background: var(--flick-tint-neutral);
+    background: color-mix(in srgb, var(--flick-capture) 16%, transparent);
+    border: 1px solid var(--flick-capture);
     padding: 2px 6px;
     border-radius: 6px;
     flex-shrink: 0;
@@ -145,7 +235,7 @@
     margin: 3px 0;
 }
 .exp-bar-fill { height: 100%; background: var(--flick-primary); transition: width 0.3s ease; }
-.hp-bar-fill { height: 100%; background: #dc2626; transition: width 0.3s ease; }
+.hp-bar-fill { height: 100%; background: var(--flick-danger); transition: width 0.3s ease; }
 
 .exp-text { font-size: 0.7rem; color: var(--flick-text-muted); text-align: left; }
 .flickemon-card .header-actions { display: flex; align-items: center; gap: 0.25rem; position: relative; }
@@ -159,7 +249,7 @@
     padding: 4px 8px;
     border-radius: 6px;
 }
-.flickemon-card .icon-btn:hover { background: rgba(0,0,0,0.05); color: var(--flick-text); }
+.flickemon-card .icon-btn:hover { background: var(--flick-fill); color: var(--flick-text); }
 
 /* Popover Options Menu */
 .options-popover-menu {
@@ -169,7 +259,7 @@
     background: var(--flick-card-bg);
     border: 1px solid var(--flick-border);
     border-radius: 8px;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+    box-shadow: 0 10px 25px var(--flick-shadow);
     z-index: 9999;
     min-width: 140px;
     overflow: hidden;
@@ -177,12 +267,12 @@
 }
 .popover-item { padding: 10px 14px; font-weight: 600; font-size: 0.9rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; color: var(--flick-text); }
 .popover-icon { display: flex; align-items: center; color: var(--flick-primary); }
-.popover-item:hover { background: rgba(0,0,0,0.05); }
+.popover-item:hover { background: var(--flick-fill); }
 
 /* Start Badge Button */
 .start-game-badge-btn {
     background: var(--flick-primary);
-    color: #fff;
+    color: var(--flick-on-primary);
     border: none;
     padding: 6px 14px;
     border-radius: 20px;
@@ -199,9 +289,9 @@
 
 .controls-row { display: flex; justify-content: center; gap: 0.5rem; margin-top: 0.75rem; }
 .pomo-btn { padding: 6px 16px; border-radius: 6px; font-weight: 700; cursor: pointer; border: none; font-size: 0.85rem; }
-.primary-btn { background: var(--flick-primary); color: #fff; }
+.primary-btn { background: var(--flick-primary); color: var(--flick-on-primary); }
 .secondary-btn { background: var(--flick-border); color: var(--flick-text); }
-.danger-btn { background: var(--flick-danger); color: #fff; }
+.danger-btn { background: var(--flick-danger); color: var(--flick-on-semantic); }
 .tertiary-btn { background: transparent; color: var(--flick-text-muted); }
 
 .settings-panel { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--flick-border); text-align: left; }
@@ -214,7 +304,7 @@
 .flickemon-modal-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.5);
+    background: var(--flick-scrim);
     backdrop-filter: blur(4px);
     z-index: 10000;
     display: flex;
@@ -222,23 +312,6 @@
     justify-content: center;
     padding: 1rem;
 }
-.flickemon-modal-card {
-    background: var(--flick-card-bg);
-    color: var(--flick-text);
-    border: 1px solid var(--flick-border);
-    border-radius: 16px;
-    width: 100%;
-    max-width: 680px;
-    max-height: 85vh;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.25);
-    overflow: hidden;
-}
-.modal-header { padding: 1rem; border-bottom: 1px solid var(--flick-border); display: flex; justify-content: space-between; align-items: center; }
-.modal-header h2 { margin: 0; font-size: 1.2rem; font-weight: 800; }
-.modal-close-btn { background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: var(--flick-text-muted); }
-.modal-body { padding: 1rem; overflow-y: auto; flex: 1; }
 
 /* ────────────────────────── Starter Selection ──────────────────────────
    The single most consequential choice in the game, so it gets room: a wider
@@ -300,7 +373,7 @@
 .gen-tab-btn strong { font-size: 0.82rem; font-weight: 800; letter-spacing: 0.02em; }
 .gen-tab-btn small { font-size: 0.6rem; font-weight: 600; opacity: 0.75; white-space: nowrap; }
 .gen-tab-btn.active {
-    color: #fff;
+    color: var(--flick-on-primary);
     background: var(--flick-primary);
     border-color: var(--flick-primary);
 }
@@ -326,11 +399,11 @@
     cursor: pointer;
     transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
 }
-.starter-card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(0,0,0,0.10); }
+.starter-card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px var(--flick-shadow); }
 .starter-card:focus-visible { outline: 3px solid var(--flick-primary); outline-offset: 2px; }
 .starter-card.selected {
     border-color: var(--flick-primary);
-    box-shadow: 0 0 0 3px rgba(var(--ion-color-primary-rgb, 233,30,99), 0.22), 0 10px 24px rgba(0,0,0,0.10);
+    box-shadow: 0 0 0 3px rgba(var(--flick-primary-rgb), 0.22), 0 10px 24px var(--flick-shadow);
 }
 
 /* A poké-ball-ish disc behind the sprite so the trio reads as three objects
@@ -341,8 +414,8 @@
     display: flex; align-items: center; justify-content: center;
     border-radius: 50%;
     background: radial-gradient(circle at 50% 42%,
-        rgba(var(--ion-color-primary-rgb, 233,30,99), 0.16) 0%,
-        rgba(var(--ion-color-primary-rgb, 233,30,99), 0.04) 60%,
+        rgba(var(--flick-primary-rgb), 0.16) 0%,
+        rgba(var(--flick-primary-rgb), 0.04) 60%,
         transparent 72%);
 }
 .starter-card-img {
@@ -390,8 +463,8 @@
     flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     border-radius: 14px;
-    background: rgba(128, 128, 128, 0.12);   /* fallback if color-mix is unavailable */
-    background: color-mix(in srgb, var(--accent, #888) 16%, transparent);
+    background: var(--flick-tint-neutral);   /* fallback if color-mix is unavailable */
+    background: color-mix(in srgb, var(--accent, var(--flick-text-muted)) 16%, transparent);
 }
 .starter-detail-portrait img { width: 80px; height: 80px; object-fit: contain; image-rendering: pixelated; }
 .starter-detail-id { min-width: 0; }
@@ -482,7 +555,7 @@
     padding: 12px 16px;
     background: var(--flick-bg);
     border-top: 1px solid var(--flick-border);
-    box-shadow: 0 -6px 16px rgba(0,0,0,0.06);
+    box-shadow: 0 -6px 16px var(--flick-shadow-soft);
 }
 .starter-confirm-btn {
     width: 100%;
@@ -490,15 +563,15 @@
     border: none;
     border-radius: 30px;
     background: var(--flick-primary);
-    color: #fff;
+    color: var(--flick-on-primary);
     font-size: 1.02rem;
     font-weight: 800;
     letter-spacing: 0.02em;
     cursor: pointer;
     transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
-    box-shadow: 0 6px 18px rgba(var(--ion-color-primary-rgb, 233,30,99), 0.35);
+    box-shadow: 0 6px 18px rgba(var(--flick-primary-rgb), 0.35);
 }
-.starter-confirm-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(var(--ion-color-primary-rgb, 233,30,99), 0.42); }
+.starter-confirm-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(var(--flick-primary-rgb), 0.42); }
 .starter-confirm-btn:active:not(:disabled) { transform: translateY(0); }
 .starter-confirm-btn:disabled {
     background: var(--flick-border);
@@ -530,24 +603,24 @@
 .dex-num { font-size: 0.7rem; color: var(--flick-text-muted); display: block; }
 
 /* Type Badges */
-.type-pill { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; color: #fff; margin: 1px; }
+.type-pill { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; color: var(--flick-on-type); margin: 1px; }
 .type-pill.normal { background: var(--type-normal); }
 .type-pill.fire { background: var(--type-fire); }
 .type-pill.water { background: var(--type-water); }
 .type-pill.grass { background: var(--type-grass); }
-.type-pill.electric { background: var(--type-electric); color: #000; }
+.type-pill.electric { background: var(--type-electric); color: var(--flick-on-type-dark); }
 .type-pill.poison { background: var(--type-poison); }
 .type-pill.flying { background: var(--type-flying); }
 .type-pill.bug { background: var(--type-bug); }
-.type-pill.ground { background: var(--type-ground); color: #000; }
+.type-pill.ground { background: var(--type-ground); color: var(--flick-on-type-dark); }
 .type-pill.psychic { background: var(--type-psychic); }
 .type-pill.rock { background: var(--type-rock); }
 .type-pill.ghost { background: var(--type-ghost); }
 .type-pill.dragon { background: var(--type-dragon); }
 .type-pill.dark { background: var(--type-dark); }
-.type-pill.steel { background: var(--type-steel); color: #000; }
+.type-pill.steel { background: var(--type-steel); color: var(--flick-on-type-dark); }
 .type-pill.fairy { background: var(--type-fairy); }
-.type-pill.ice { background: var(--type-ice); color: #000; }
+.type-pill.ice { background: var(--type-ice); color: var(--flick-on-type-dark); }
 .type-pill.fighting { background: var(--type-fighting); }
 /* Applied to a panel to tint it with the species' primary type. */
 .accent-normal { --accent: var(--type-normal); }
@@ -585,13 +658,13 @@
 .evolution-overlay-screen {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: radial-gradient(circle at 50% 45%, rgba(30,20,60,0.86) 0%, rgba(0,0,0,0.93) 70%);
+    background: radial-gradient(circle at 50% 45%, var(--flick-scrim-tint) 0%, var(--flick-scrim-deep) 70%);
     backdrop-filter: blur(6px);
     z-index: 20000;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #ffffff;
+    color: var(--flick-on-scrim);
     text-align: center;
     font-family: inherit;
     cursor: pointer;                 /* click anywhere to skip */
@@ -604,7 +677,7 @@
 .evo-flash {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: #fff;
+    background: var(--flick-on-scrim);
     opacity: 0;
     pointer-events: none;
     animation: evo-flash 0.55s ease-out 3.78s both;
@@ -627,12 +700,12 @@
 .evo-lead {
     font-size: 1.05rem;
     font-weight: 700;
-    color: rgba(255,255,255,0.92);
+    color: var(--flick-on-scrim-dim);
     margin: 0;
     letter-spacing: 0.02em;
     animation: evo-lead 3.4s ease both 0.35s;
 }
-.evo-lead b { color: #fcd34d; }
+.evo-lead b { color: var(--flick-highlight); }
 @keyframes evo-lead {
     0%   { opacity: 0; transform: translateY(6px); }
     12%  { opacity: 1; transform: translateY(0); }
@@ -656,7 +729,7 @@
     pointer-events: none;
     opacity: 0;
     background: repeating-conic-gradient(from 0deg,
-        rgba(255,255,255,0.55) 0deg 5deg,
+        var(--flick-ray) 0deg 5deg,
         transparent 5deg 19deg);
     -webkit-mask-image: radial-gradient(circle, transparent 14%, #000 32%, #000 52%, transparent 74%);
             mask-image: radial-gradient(circle, transparent 14%, #000 32%, #000 52%, transparent 74%);
@@ -675,14 +748,14 @@
     top: 50%; left: 50%;
     width: 240px; height: 240px;
     margin: -120px 0 0 -120px;
-    border: 3px solid rgba(255,255,255,0.75);
+    border: 3px solid var(--flick-on-scrim-dim);
     border-radius: 50%;
     opacity: 0;
     pointer-events: none;
     animation: evo-ring 0.95s ease-in both;
 }
 .evo-ring-1 { animation-delay: 1.10s; }
-.evo-ring-2 { animation-delay: 1.30s; border-color: rgba(252,211,77,0.75); }
+.evo-ring-2 { animation-delay: 1.30s; border-color: color-mix(in srgb, var(--flick-highlight) 75%, transparent); }
 .evo-ring-3 { animation-delay: 1.50s; }
 @keyframes evo-ring {
     0%   { opacity: 0;   transform: scale(2.4); }
@@ -747,7 +820,13 @@
 
 /* Identity filters are written out rather than `none` so every function has a
    counterpart to interpolate against. The pre-squash at 4% is the sprite
-   gathering itself before it goes. */
+   gathering itself before it goes.
+
+   The whites here are the one place in this file that stays literal, and
+   deliberately: invert(1) turns the sprite into a white silhouette, so the glow
+   around it has to be that same white or the two come apart. A theme colour
+   would not be an improvement — it would be a bug. (The #000 in the .evo-rays
+   mask is not paint either: in a mask, black means opaque.) */
 @keyframes evo-glow {
     0%   { filter: brightness(1) invert(0) drop-shadow(0 0 0 rgba(255,255,255,0)); transform: scale(1) translateY(0); }
     4%   { filter: brightness(1) invert(0) drop-shadow(0 0 6px rgba(255,255,255,0.4)); transform: scale(0.92) translateY(4px); }
@@ -763,7 +842,7 @@
     top: 0; left: 0;
     width: 240px; height: 240px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, rgba(255,240,150,0.6) 38%, rgba(255,255,255,0) 68%);
+    background: var(--flick-burst);
     opacity: 0;
     pointer-events: none;
     animation: evo-burst 0.95s ease-out 3.72s both;
@@ -782,8 +861,8 @@
     width: 7px; height: 7px;
     margin: -3px 0 0 -3px;
     border-radius: 50%;
-    background: #fff;
-    box-shadow: 0 0 10px 2px rgba(255,236,150,0.95);
+    background: var(--flick-on-scrim);
+    box-shadow: 0 0 10px 2px var(--flick-spark);
     opacity: 0;
     animation: evo-spark 1.1s ease-out both;
     animation-delay: calc(3.74s + var(--delay, 0s));
@@ -809,12 +888,12 @@
 .evo-desc {
     font-size: 1.2rem;
     font-weight: 700;
-    color: rgba(255, 255, 255, 0.95);
+    color: var(--flick-on-scrim);
     margin: 0;
     opacity: 0;
     animation: evo-text-in 0.45s ease 4.3s both;
 }
-.evo-desc b { color: #fcd34d; }
+.evo-desc b { color: var(--flick-highlight); }
 
 /* Base-stat deltas: the concrete reason evolving matters. */
 .evo-gains {
@@ -825,24 +904,24 @@
     font-size: 0.72rem;
     font-weight: 800;
     letter-spacing: 0.06em;
-    color: rgba(255,255,255,0.75);
+    color: var(--flick-on-scrim-dim);
 }
 .evo-gains span { white-space: nowrap; }
-.evo-gains b { color: #86efac; font-weight: 800; }
-.evo-gains b.down { color: #fca5a5; }   /* not every evolution is a pure upgrade */
+.evo-gains b { color: var(--flick-gain-scrim); font-weight: 800; }
+.evo-gains b.down { color: var(--flick-loss-scrim); }   /* not every evolution is a pure upgrade */
 
 .evo-queue {
     font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.55);
+    color: var(--flick-on-scrim-faint);
     margin: 0.25rem 0 0;
 }
 .evo-skip {
     font-size: 0.68rem;
     letter-spacing: 0.06em;
-    color: rgba(255,255,255,0.4);
+    color: var(--flick-on-scrim-faint);
     margin: 0.15rem 0 0;
 }
 
@@ -852,7 +931,7 @@
     font-weight: 800;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #fcd34d;
+    color: var(--flick-highlight);
     margin: 0;
 }
 
@@ -888,7 +967,7 @@
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--flick-scrim);
     z-index: 100000;
     display: flex;
     align-items: center;
@@ -901,24 +980,24 @@
     max-width: 500px;
     height: 80vh;
     max-height: 600px;
-    background: var(--flick-bg, #fff0f5);
+    background: var(--flick-bg);
     border-radius: 12px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 10px 30px var(--flick-shadow-strong);
     position: relative;
 }
 
 /* Modal Header */
 .flickemon-modal-header {
-    background: var(--flick-primary, #f48fb1);
-    color: #fff;
+    background: var(--flick-primary);
+    color: var(--flick-on-primary);
     padding: 16px 20px;
     display: flex;
     flex-direction: column;
     position: relative;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 4px var(--flick-shadow);
     z-index: 2;
 }
 
@@ -927,7 +1006,7 @@
     font-weight: 700;
     margin: 0;
     line-height: 1;
-    color: #4a148c; /* Dark text for contrast on pink header */
+    color: var(--flick-on-primary);
 }
 
 .flickemon-modal-close {
@@ -936,7 +1015,7 @@
     right: 14px;
     background: none;
     border: none;
-    color: #4a148c;
+    color: var(--flick-on-primary);
     font-size: 1.5rem;
     cursor: pointer;
     line-height: 1;
@@ -954,7 +1033,7 @@
 .flickemon-tab-btn {
     background: none;
     border: none;
-    color: var(--flick-text-muted, rgba(74, 20, 140, 0.6));
+    color: var(--flick-text-muted);
     font-weight: 600;
     font-size: 0.85rem;
     padding: 8px 12px;
@@ -965,19 +1044,19 @@
 }
 
 .flickemon-tab-btn:hover {
-    color: var(--flick-text, rgba(74, 20, 140, 0.9));
+    color: var(--flick-text);
 }
 
 .flickemon-tab-btn.active {
-    color: var(--flick-primary, #e91e63);
-    border-bottom: 2px solid var(--flick-primary, #e91e63);
+    color: var(--flick-primary);
+    border-bottom: 2px solid var(--flick-primary);
 }
 
 /* Modal Content Area */
 .flickemon-modal-content {
     flex: 1;
     overflow-y: auto;
-    background: var(--flick-bg, #fff5f8); /* very light pink fallback */
+    background: var(--flick-bg); /* very light pink fallback */
     position: relative;
     padding: 16px;
 }
@@ -987,57 +1066,57 @@
     font-size: 0.7rem;
     padding: 0.15rem 0.5rem;
     border-radius: 0.75rem;
-    color: #fff;
+    color: var(--flick-on-type);
     font-weight: 600;
     text-transform: capitalize;
     display: inline-block;
     margin: 0 4px;
 }
-.type-badge[data-type="fire"] { background: #F08030; }
-.type-badge[data-type="water"] { background: #6890F0; }
-.type-badge[data-type="grass"] { background: #78C850; }
-.type-badge[data-type="electric"] { background: #F8D030; color: #333; }
-.type-badge[data-type="poison"] { background: #A040A0; }
-.type-badge[data-type="flying"] { background: #A890F0; }
-.type-badge[data-type="bug"] { background: #A8B820; }
-.type-badge[data-type="normal"] { background: #A8A878; }
-.type-badge[data-type="psychic"] { background: #F85888; }
-.type-badge[data-type="fighting"] { background: #C03028; }
-.type-badge[data-type="rock"] { background: #B8A038; }
-.type-badge[data-type="ground"] { background: #E0C068; color: #333; }
-.type-badge[data-type="ghost"] { background: #705898; }
-.type-badge[data-type="dragon"] { background: #7038F8; }
-.type-badge[data-type="ice"] { background: #98D8D8; color: #333; }
-.type-badge[data-type="dark"] { background: #705848; }
-.type-badge[data-type="steel"] { background: #B8B8D0; color: #333; }
-.type-badge[data-type="fairy"] { background: #EE99AC; }
+.type-badge[data-type="normal"] { background: var(--type-normal); }
+.type-badge[data-type="fire"] { background: var(--type-fire); }
+.type-badge[data-type="water"] { background: var(--type-water); }
+.type-badge[data-type="grass"] { background: var(--type-grass); }
+.type-badge[data-type="electric"] { background: var(--type-electric); color: var(--flick-on-type-dark); }
+.type-badge[data-type="poison"] { background: var(--type-poison); }
+.type-badge[data-type="flying"] { background: var(--type-flying); }
+.type-badge[data-type="bug"] { background: var(--type-bug); }
+.type-badge[data-type="ground"] { background: var(--type-ground); color: var(--flick-on-type-dark); }
+.type-badge[data-type="psychic"] { background: var(--type-psychic); }
+.type-badge[data-type="rock"] { background: var(--type-rock); }
+.type-badge[data-type="ghost"] { background: var(--type-ghost); }
+.type-badge[data-type="dragon"] { background: var(--type-dragon); }
+.type-badge[data-type="dark"] { background: var(--type-dark); }
+.type-badge[data-type="steel"] { background: var(--type-steel); color: var(--flick-on-type-dark); }
+.type-badge[data-type="fairy"] { background: var(--type-fairy); }
+.type-badge[data-type="ice"] { background: var(--type-ice); color: var(--flick-on-type-dark); }
+.type-badge[data-type="fighting"] { background: var(--type-fighting); }
 
 /* Settings / Stats rows */
 .flickemon-list-card {
-    background: var(--flick-card-bg, #fce4ec); /* slightly darker pink fallback */
+    background: var(--flick-card-bg); /* slightly darker pink fallback */
     border-radius: 8px;
     overflow: hidden;
     margin-bottom: 16px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    box-shadow: 0 2px 5px var(--flick-shadow-soft);
 }
 
 .flickemon-list-item {
     display: flex;
     flex-direction: column;
     padding: 12px 16px;
-    border-bottom: 1px solid var(--flick-border, rgba(0,0,0,0.05));
-    color: var(--flick-text, #4a148c);
+    border-bottom: 1px solid var(--flick-border, var(--flick-shadow-soft));
+    color: var(--flick-text);
 }
 .flickemon-list-item:last-child { border-bottom: none; }
 
 .flickemon-list-item-title {
     font-size: 0.9rem;
-    color: var(--flick-text, #4a148c);
+    color: var(--flick-text);
 }
 
 .flickemon-list-item-sub {
     font-size: 0.85rem;
-    color: var(--flick-text-muted, #c2185b);
+    color: var(--flick-text-muted);
 }
 
 /* Reset Button */
@@ -1045,8 +1124,8 @@
     width: 100%;
     padding: 12px;
     background: transparent;
-    border: 2px solid #e91e63;
-    color: #e91e63;
+    border: 2px solid var(--flick-primary);
+    color: var(--flick-primary);
     font-weight: 700;
     border-radius: 4px;
     cursor: pointer;
@@ -1054,28 +1133,11 @@
     font-size: 0.85rem;
 }
 .flickemon-danger-btn:hover {
-    background: rgba(233, 30, 99, 0.1);
+    background: rgba(var(--flick-primary-rgb), 0.1);
 }
 
 /* Party List */
-.flickemon-party-row {
-    display: flex;
-    align-items: center;
-    padding: 8px 16px;
-    background: #e91e63; /* Pink background for active */
-    color: white;
-    border-bottom: 1px solid rgba(0,0,0,0.05);
-}
-.flickemon-party-row.inactive {
-    background: var(--flick-card-bg, #fce4ec);
-    color: var(--flick-text, #4a148c);
-}
 
-.party-sprite { width: 48px; height: 48px; image-rendering: pixelated; margin-right: 12px; }
-.party-info { flex: 1; display: flex; flex-direction: column; }
-.party-name { font-size: 0.9rem; font-weight: 600; }
-.party-level { font-size: 0.8rem; opacity: 0.9; }
-.party-star { color: #ffd700; font-size: 1.2rem; }
 
 /* Pokédex Grid */
 .flickemon-pokedex-grid {
@@ -1094,25 +1156,28 @@
     padding: 8px 0;
 }
 .pokedex-sprite { width: 64px; height: 64px; image-rendering: pixelated; }
+/* Seen but not caught: shown as a silhouette. Was an inline style, which meant
+   re-emitting it on all 1,025 rows. */
+.pokedex-sprite.unseen-silhouette { filter: brightness(0); opacity: 0.4; }
 .pokedex-unknown {
     width: 64px; height: 64px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 2rem; color: #ccc; font-weight: bold;
+    font-size: 2rem; color: var(--flick-track); font-weight: bold;
 }
-.pokedex-num { font-size: 0.7rem; color: #999; margin-top: 4px; }
-.pokedex-name { font-size: 0.7rem; font-weight: 600; color: var(--flick-text, #4a148c); }
+.pokedex-num { font-size: 0.7rem; color: var(--flick-text-muted); margin-top: 4px; }
+.pokedex-name { font-size: 0.7rem; font-weight: 600; color: var(--flick-text); }
 
 /* My Partner Stats Grid */
-.partner-section { text-align: center; padding: 16px 0; color: var(--flick-text, #4a148c); }
+.partner-section { text-align: center; padding: 16px 0; color: var(--flick-text); }
 .partner-big-sprite { width: 192px; height: 192px; image-rendering: pixelated; }
 .partner-big-name { font-size: 1.5rem; font-weight: 800; margin: 8px 0 4px; }
 .partner-types { margin-bottom: 8px; }
-.partner-big-level { font-size: 1.1rem; font-weight: 600; color: var(--flick-text-muted, #c2185b); margin-bottom: 8px; }
+.partner-big-level { font-size: 1.1rem; font-weight: 600; color: var(--flick-text-muted); margin-bottom: 8px; }
 
 .partner-exp-wrap { max-width: 300px; margin: 8px auto; }
-.partner-exp-bar-bg { height: 6px; background: rgba(0,0,0,0.1); border-radius: 3px; overflow: hidden; }
-.partner-exp-bar-fill { height: 100%; background: #e91e63; transition: width 0.3s; }
-.partner-exp-text { font-size: 0.8rem; color: var(--flick-text-muted, #c2185b); margin-top: 4px; }
+.partner-exp-bar-bg { height: 6px; background: var(--flick-track); border-radius: 3px; overflow: hidden; }
+.partner-exp-bar-fill { height: 100%; background: var(--flick-primary); transition: width 0.3s; }
+.partner-exp-text { font-size: 0.8rem; color: var(--flick-text-muted); margin-top: 4px; }
 
 .partner-stats-grid {
     display: grid;
@@ -1121,8 +1186,8 @@
     max-width: 280px;
     margin: 16px auto;
 }
-.stat-box { display: flex; justify-content: space-between; padding: 8px 12px; background: var(--flick-card-bg, #fff); border-radius: 8px; }
-.stat-box-label { font-size: 0.8rem; color: var(--flick-text-muted, #c2185b); }
+.stat-box { display: flex; justify-content: space-between; padding: 8px 12px; background: var(--flick-card-bg); border-radius: 8px; }
+.stat-box-label { font-size: 0.8rem; color: var(--flick-text-muted); }
 .stat-box-value { font-size: 0.85rem; font-weight: 700; }
 
 /* ────────────────────────── Sign-In Gate ────────────────────────── */
@@ -1152,7 +1217,7 @@
 }
 .signin-gate-btn {
     background: var(--flick-primary);
-    color: #fff;
+    color: var(--flick-on-primary);
     border: none;
     padding: 14px 24px;
     border-radius: 32px;
@@ -1221,7 +1286,7 @@
     padding: 10px 14px;
     margin-bottom: 10px;
     border-radius: 8px;
-    background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.08);
+    background: rgba(var(--flick-primary-rgb), 0.08);
     border: 1px solid var(--flick-border);
 }
 .party-team-summary strong { font-size: 0.9rem; color: var(--flick-primary); }
@@ -1249,13 +1314,13 @@
 /* Active partner: the strongest signal in the list. */
 .party-row.is-active {
     border-color: var(--flick-primary);
-    background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10);
+    background: rgba(var(--flick-primary-rgb), 0.10);
     cursor: default;
 }
 .party-row.is-active:hover { transform: none; }
 
 /* On the team but not the partner: present, but clearly secondary. */
-.party-row.on-team:not(.is-active) { border-color: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.35); }
+.party-row.on-team:not(.is-active) { border-color: rgba(var(--flick-primary-rgb), 0.35); }
 
 .party-row-sprite { width: 64px; height: 64px; image-rendering: pixelated; flex-shrink: 0; }
 .party-row-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -1269,7 +1334,7 @@
     font-size: 0.6rem; font-weight: 800; letter-spacing: 0.04em;
     padding: 1px 6px; border-radius: 10px; text-transform: uppercase;
 }
-.badge-active { background: var(--flick-primary); color: #fff; }
+.badge-active { background: var(--flick-primary); color: var(--flick-on-primary); }
 .badge-team { background: transparent; color: var(--flick-primary); border: 1px solid var(--flick-primary); }
 
 .party-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
@@ -1283,11 +1348,11 @@
 }
 .row-btn:hover:not(:disabled) { border-color: var(--flick-primary); color: var(--flick-primary); }
 .row-btn:disabled { opacity: 0.35; cursor: default; }
-.fav-btn.on { color: #f59e0b; border-color: #f59e0b; background: rgba(245,158,11,0.10); }
-.team-btn.on { color: var(--flick-primary); border-color: var(--flick-primary); background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10); }
+.fav-btn.on { color: var(--flick-gold); border-color: var(--flick-gold); background: color-mix(in srgb, var(--flick-gold) 12%, transparent); }
+.team-btn.on { color: var(--flick-primary); border-color: var(--flick-primary); background: rgba(var(--flick-primary-rgb), 0.10); }
 
 /* Active-partner button in the party list */
-.partner-btn.on { color: var(--flick-primary); border-color: var(--flick-primary); background: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.10); }
+.partner-btn.on { color: var(--flick-primary); border-color: var(--flick-primary); background: rgba(var(--flick-primary-rgb), 0.10); }
 
 /* Keep the widget above any sticky/overlaying player chrome on the host page. */
 .flickemon-widget-card { position: relative; z-index: 2; }
@@ -1303,7 +1368,7 @@
     margin-right: 6px;
     border: 1.5px solid var(--flick-border);
     border-radius: 20px;
-    background: rgba(0, 0, 0, 0.04);
+    background: var(--flick-fill);
 }
 
 /*
@@ -1329,10 +1394,10 @@
 }
 .mode-seg svg { flex-shrink: 0; display: block; }
 
-.mode-seg[aria-pressed="false"]:hover { color: var(--flick-text); background: rgba(0, 0, 0, 0.05); }
+.mode-seg[aria-pressed="false"]:hover { color: var(--flick-text); background: var(--flick-fill); }
 
-.mode-seg[data-mode="capture"][aria-pressed="true"] { background: #d97706; color: #fff; }
-.mode-seg[data-mode="exp"][aria-pressed="true"]     { background: var(--flick-primary); color: #fff; }
+.mode-seg[data-mode="capture"][aria-pressed="true"] { background: var(--flick-capture); color: var(--flick-on-primary); }
+.mode-seg[data-mode="exp"][aria-pressed="true"]     { background: var(--flick-primary); color: var(--flick-on-primary); }
 
 /* Header is crowded on narrow widgets — keep the icons, drop the words. */
 @media (max-width: 460px) {
@@ -1352,10 +1417,10 @@
     gap: 5px;
     padding: 4px 11px;
     margin-right: 6px;
-    border: 1.5px solid #7c3aed;
+    border: 1.5px solid var(--flick-pvp);
     border-radius: 20px;
-    background: rgba(124, 58, 237, 0.12);
-    color: #7c3aed;
+    background: rgba(var(--flick-pvp-rgb), 0.12);
+    color: var(--flick-pvp);
     font-size: 0.72rem;
     font-weight: 800;
     line-height: 1.5;
@@ -1363,7 +1428,7 @@
     cursor: pointer;
     transition: background 0.18s ease, color 0.18s ease;
 }
-.pvp-header-btn:hover { background: #7c3aed; color: #fff; }
+.pvp-header-btn:hover { background: var(--flick-pvp); color: var(--flick-on-primary); }
 .pvp-header-btn svg { flex-shrink: 0; display: block; }
 @media (max-width: 460px) { .pvp-header-label { display: none; } .pvp-header-btn { padding: 5px 9px; } }
 
@@ -1381,7 +1446,7 @@
     color: var(--flick-text);
     margin: 0 0 0.5rem 0;
     font-size: 1.15rem;
-    text-shadow: 2px 2px 0 rgba(0,0,0,0.25);
+    text-shadow: 2px 2px 0 var(--flick-shadow-strong);
 }
 .pvp-8bit.small { font-size: 0.85rem; opacity: 0.8; }
 .pvp-8bit.blink { animation: pvp-blink 1s steps(2, start) infinite; }
@@ -1400,7 +1465,7 @@
     color: var(--flick-text);
     background: var(--flick-card-bg);
     border: 3px solid var(--flick-text);
-    box-shadow: 3px 3px 0 rgba(0,0,0,0.35);
+    box-shadow: 3px 3px 0 var(--flick-shadow-strong);
 }
 
 .pvp-team-strip { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin: 0.75rem 0 1rem; }
@@ -1413,16 +1478,16 @@
     border: 3px solid var(--flick-text);
     border-radius: 0;
     background: var(--flick-primary);
-    color: #fff;
+    color: var(--flick-on-primary);
     font-family: "Courier New", monospace;
     font-weight: 800;
     letter-spacing: 0.08em;
     font-size: 0.85rem;
     cursor: pointer;
-    box-shadow: 4px 4px 0 rgba(0,0,0,0.35);
+    box-shadow: 4px 4px 0 var(--flick-shadow-strong);
     transition: transform 0.06s ease, box-shadow 0.06s ease;
 }
-.pvp-btn:hover { transform: translate(1px, 1px); box-shadow: 3px 3px 0 rgba(0,0,0,0.35); }
+.pvp-btn:hover { transform: translate(1px, 1px); box-shadow: 3px 3px 0 var(--flick-shadow-strong); }
 .pvp-btn:active { transform: translate(4px, 4px); box-shadow: none; }
 .pvp-btn.ghost { background: transparent; color: var(--flick-text); }
 
@@ -1446,8 +1511,8 @@
     position: relative;
     padding: 12px;
     border: 3px solid var(--flick-text);
-    background: linear-gradient(180deg, rgba(125,211,252,0.18) 0%, rgba(134,239,172,0.18) 100%);
-    box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15);
+    background: var(--flick-field);
+    box-shadow: inset 0 0 0 3px var(--flick-sheen);
 }
 .pvp-side { display: flex; align-items: center; gap: 10px; }
 .pvp-side.foe { justify-content: flex-start; }
@@ -1463,21 +1528,21 @@
     padding: 6px 8px;
     background: var(--flick-card-bg);
     border: 3px solid var(--flick-text);
-    box-shadow: 3px 3px 0 rgba(0,0,0,0.3);
+    box-shadow: 3px 3px 0 var(--flick-shadow-strong);
     font-family: "Courier New", monospace;
 }
 .pvp-mon-name { font-weight: 800; font-size: 0.8rem; color: var(--flick-text); }
 .pvp-mon-lv { font-size: 0.7rem; color: var(--flick-text-muted); margin-left: 6px; }
-.pvp-status { font-size: 0.55rem; font-weight: 800; padding: 1px 4px; margin-left: 5px; color: #fff; }
-.pvp-status.burn { background: #ef4444; }
-.pvp-status.paralyze { background: #eab308; color: #000; }
-.pvp-status.poison { background: #a855f7; }
+.pvp-status { font-size: 0.55rem; font-weight: 800; padding: 1px 4px; margin-left: 5px; color: var(--flick-on-type); }
+.pvp-status.burn { background: var(--flick-burn); }
+.pvp-status.paralyze { background: var(--flick-para); color: var(--flick-on-type-dark); }
+.pvp-status.poison { background: var(--flick-pois); }
 
-.pvp-hp { height: 8px; margin-top: 5px; background: #333; border: 2px solid var(--flick-text); }
+.pvp-hp { height: 8px; margin-top: 5px; background: var(--flick-hp-empty); border: 2px solid var(--flick-text); }
 .pvp-hp-fill { height: 100%; transition: width 0.35s steps(8); }
-.pvp-hp-fill.ok { background: #22c55e; }
-.pvp-hp-fill.warn { background: #eab308; }
-.pvp-hp-fill.low { background: #ef4444; }
+.pvp-hp-fill.ok { background: var(--flick-hp-ok); }
+.pvp-hp-fill.warn { background: var(--flick-hp-warn); }
+.pvp-hp-fill.low { background: var(--flick-hp-low); }
 .pvp-hp-num { font-size: 0.62rem; text-align: right; color: var(--flick-text-muted); margin-top: 2px; }
 
 /* Log */
@@ -1498,9 +1563,9 @@
     border: 3px solid var(--flick-text);
     background: var(--flick-card-bg); color: var(--flick-text);
     font-family: "Courier New", monospace;
-    box-shadow: 3px 3px 0 rgba(0,0,0,0.3);
+    box-shadow: 3px 3px 0 var(--flick-shadow-strong);
 }
-.pvp-move:hover:not(:disabled) { transform: translate(1px,1px); box-shadow: 2px 2px 0 rgba(0,0,0,0.3); }
+.pvp-move:hover:not(:disabled) { transform: translate(1px,1px); box-shadow: 2px 2px 0 var(--flick-shadow-strong); }
 .pvp-move:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
 .pvp-move-name { font-weight: 800; font-size: 0.78rem; }
 .pvp-move-meta { font-size: 0.6rem; color: var(--flick-text-muted); }
@@ -1512,7 +1577,7 @@
 }
 
 .pvp-result { text-align: center; padding: 1rem 0 0.25rem; }
-.pvp-result.win .pvp-8bit { color: #22c55e; }
+.pvp-result.win .pvp-8bit { color: var(--flick-success); }
 .pvp-result.lose .pvp-8bit { color: var(--flick-danger); }
 
 @media (prefers-reduced-motion: reduce) {

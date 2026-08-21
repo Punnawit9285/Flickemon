@@ -51,7 +51,21 @@
         }
 
         injectUI();
-        const observer = new MutationObserver(() => injectUI());
+
+        // The player mutates its DOM constantly during playback (progress bar,
+        // captions, buffering indicators), and injectUI queries the document on
+        // every call. Running it per mutation put a steady query load on the
+        // main thread for the entire lecture. Coalesce instead: bursts collapse
+        // into one check, and the page still settles within a frame or two.
+        let injectQueued = false;
+        const observer = new MutationObserver(() => {
+            if (injectQueued) return;
+            injectQueued = true;
+            requestAnimationFrame(() => {
+                injectQueued = false;
+                injectUI();
+            });
+        });
         observer.observe(document.body, { childList: true, subtree: true });
 
         /** Check if main website's Pomodoro timer is currently on a break */
@@ -94,6 +108,9 @@
             });
         }
 
+        // Cheap by design: one querySelector, and the dataset flag makes every
+        // call after the first a no-op. The player is created asynchronously by
+        // the site's router, so polling is the only reliable hook point.
         setInterval(hookVideoPlayer, 1000);
         console.log('[Flickémon Extension] Fully initialized and hooked to page.');
     }

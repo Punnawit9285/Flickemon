@@ -8,11 +8,29 @@
 // This file is loaded as a classic content script (see manifest.json), so it
 // can't `import` background/firebase-config.js the way the service worker
 // does — these mirror the same tuning intent for the content-script side.
-// Sized so 100 concurrent students stay under Firestore's free-tier write
-// quota (20k/day) even on a heavy exam-cram day (~5h active watching each):
-// 100 users x 5h x (3600/120s) = 15,000 writes/day, 75% of budget.
-const CLOUD_PUSH_DEBOUNCE_MS = 120000;
-const CLOUD_POLL_INTERVAL_MS = 90000;
+//
+// ─────────────────────── Firestore free-tier budget ───────────────────────
+//
+// Spark plan allows 50,000 document reads and 20,000 writes per day across
+// every user combined. Sized for 100 students on a heavy exam-cram day —
+// 8 hours with the tab open, 5 hours of it actually watching:
+//
+//   reads   100 x 8h x (3600/300s)          =  9,600   19% of 50,000
+//   writes  100 x 5h x (3600/180s)          = 10,000   50% of 20,000
+//
+// leaving roughly 4x headroom on reads and 2x on writes before anything
+// throttles, with PVP (budgeted separately in flickemon-pvp.js) on top.
+//
+// Two things keep the real numbers below even these:
+//   - polling only runs while the tab is VISIBLE, so a tab left open in the
+//     background costs nothing;
+//   - a push whose payload is byte-identical to the last one is dropped, so
+//     an idle tab with a paused video writes nothing at all.
+//
+// Local saves are unaffected by any of this: chrome.storage.local is free and
+// unmetered, and it runs at 1s so a crash can never cost more than a second.
+const CLOUD_PUSH_DEBOUNCE_MS = 180000;
+const CLOUD_POLL_INTERVAL_MS = 300000;
 const LOCAL_SAVE_DEBOUNCE_MS = 1000;
 
 class FlickemonEngine {
@@ -24,6 +42,9 @@ class FlickemonEngine {
 
         this.gameState = this.createEmptyState();
         this.isLoaded = false;
+        // Contents of the last document actually written, so an unchanged save
+        // can be dropped instead of spending a write. See flushCloud.
+        this.lastPushedFingerprint = null;
         this.wildOpponent = null;
         this.wildHpAcc = 0;
         this.respawnTimer = null;
@@ -301,6 +322,9 @@ class FlickemonEngine {
             clearTimeout(this.cloudPushTimer);
             this.cloudPushTimer = null;
         }
+        // The fingerprint describes the outgoing account's save. Leaving it set
+        // could suppress the next account's first write.
+        this.lastPushedFingerprint = null;
 
         this.gameState = this.createEmptyState();
         this.wildOpponent = null;
@@ -379,6 +403,15 @@ class FlickemonEngine {
     }
 
     /** State shared across devices. Battle state is deliberately device-local. */
+    /**
+     * Identity of a payload's *contents*, for skipping pointless writes.
+     * lastSyncedAt is stamped on every save and would defeat the comparison.
+     */
+    cloudFingerprint(payload) {
+        const { lastSyncedAt, ...content } = payload;
+        return JSON.stringify(content);
+    }
+
     buildCloudPayload() {
         return {
             hasStarted: this.gameState.hasStarted,
@@ -468,12 +501,26 @@ class FlickemonEngine {
             return;
         }
 
+        const payload = this.buildCloudPayload();
+
+        // saveGameState runs on every video tick, so the dirty flag says only
+        // that *something* called it — not that anything actually changed. A
+        // paused video, an open menu or a idle tab would otherwise write an
+        // identical document every few minutes, for nothing. lastSyncedAt is
+        // excluded because it moves on every call by definition.
+        const fingerprint = this.cloudFingerprint(payload);
+        if (fingerprint === this.lastPushedFingerprint) {
+            this.cloudDirty = false;
+            return;
+        }
+
         this.cloudDirty = false;
         this.cloudInFlight = true;
         try {
-            const res = await this.sendToWorker({ type: 'CLOUD_PUSH', state: this.buildCloudPayload() });
+            const res = await this.sendToWorker({ type: 'CLOUD_PUSH', state: payload });
             if (res && res.ok) {
                 this.lastCloudSyncAt = res.syncedAt;
+                this.lastPushedFingerprint = fingerprint;
             } else if (res && res.reason === 'offline') {
                 this.cloudDirty = true; // worker parked it; keep our own flag set too
             }
