@@ -6,9 +6,12 @@ Flickémon runs entirely client-side as a content script. It doesn't talk to Fli
 
 ## How to download & Beta-testing !! (very important -- infact you only need this)
 1.<img width="2637" height="1590" alt="image" src="https://github.com/user-attachments/assets/40134d36-941f-4791-97f5-7cee820470f7" />
+
 2. extract zip file --> Go to `chrome://extensions`, enable **Developer mode** (top right) --> Click **Load unpacked** and select the repo folder
 หรือทำตามคลิปนี้ : https://youtu.be/xiT8c8M1OIw?si=o59vWJUzexEsaT3W
+
 3. เข้าไปเล่นใน Flick (https://flick.docchula.com/) ได้เลยย (ถ้ายังไม่ขึ้นให้รีเฟรข)
+   
 *4. ถ้าอยากได้สิทธิ์ admin(เร่งสปีด เซ็ตเลเวล) ทักหาข้าวปั้น + ส่ง email docchula ให้ในไลน์
 
 
