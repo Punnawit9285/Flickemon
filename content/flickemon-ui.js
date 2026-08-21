@@ -5,6 +5,10 @@
  * flickemon-starter.component.ts, and flickemon-settings-modal.component.ts.
  */
 
+// Long enough for the 2.7s morph plus the name to land and be read. The CSS
+// animation timings in styles.css are keyed to this.
+const EVOLUTION_OVERLAY_MS = 5000;
+
 class FlickemonUI {
     constructor(engine) {
         this.engine = engine;
@@ -13,6 +17,13 @@ class FlickemonUI {
         this.widgetCard = null;
         this.activeModal = null;
         this.popoverOpen = false;
+
+        // Evolutions that happened while the video was fullscreen, waiting to be
+        // replayed on exit. See showEvolutionOverlay.
+        this.pendingEvolutions = [];
+        this.evolutionPlaying = false;
+        this.currentEvolution = null;
+        this.watchFullscreen();
 
         document.addEventListener('click', () => {
             this.popoverOpen = false;
@@ -24,20 +35,26 @@ class FlickemonUI {
     }
 
     renderWidget() {
+        // Navigating course -> list -> course removes and re-injects the widget,
+        // and every call registers engine listeners. Without dropping the old
+        // ones they accumulate, so a single evolution would queue one overlay
+        // per past injection and the detached cards would still be updated.
+        (this.engineSubscriptions || []).forEach(unsubscribe => unsubscribe());
+
         const card = document.createElement('div');
         card.className = 'flickemon-card flickemon-widget-card';
 
-        this.engine.onStateChange((state) => {
-            this.updateWidgetView(card, state, this.engine.wildOpponent);
-        });
-
-        this.engine.onWildChange((wild) => {
-            this.updateWidgetView(card, this.engine.getGameState(), wild);
-        });
-
-        this.engine.onEvolution((evo) => {
-            this.showEvolutionOverlay(evo);
-        });
+        this.engineSubscriptions = [
+            this.engine.onStateChange((state) => {
+                this.updateWidgetView(card, state, this.engine.wildOpponent);
+            }),
+            this.engine.onWildChange((wild) => {
+                this.updateWidgetView(card, this.engine.getGameState(), wild);
+            }),
+            this.engine.onEvolution((evo) => {
+                this.showEvolutionOverlay(evo);
+            }),
+        ];
 
         this.widgetCard = card;
         return card;
@@ -959,23 +976,113 @@ class FlickemonUI {
 
     // ────────────────────────── Evolution Overlay ──────────────────────────
 
+    /**
+     * True while the page is in real fullscreen (the video player's expand
+     * button). The webkit-prefixed property is checked too: some players still
+     * request fullscreen through the old API, and Chrome only mirrors the state
+     * onto the property that was used.
+     */
+    isFullscreen() {
+        return !!(document.fullscreenElement || document.webkitFullscreenElement);
+    }
+
+    /**
+     * The Fullscreen API paints only the fullscreen element's own subtree, so an
+     * overlay appended to <body> during playback is composited *behind* the
+     * video and never seen — the evolution would silently pass by. Rather than
+     * inject into the player (whose DOM is not ours and gets rebuilt), hold the
+     * evolution and replay it the moment fullscreen ends.
+     */
+    watchFullscreen() {
+        const onChange = () => {
+            if (this.isFullscreen()) this.suspendEvolutionOverlay();
+            else this.drainEvolutionQueue();
+        };
+        document.addEventListener('fullscreenchange', onChange);
+        document.addEventListener('webkitfullscreenchange', onChange);
+    }
+
+    /**
+     * Going (back) into fullscreen mid-animation would hide the rest of it, so
+     * the evolution goes back to the front of the queue and replays in full on
+     * exit. Only re-queues — it never starts anything — so toggling fullscreen
+     * repeatedly can't loop.
+     */
+    suspendEvolutionOverlay() {
+        if (!this.currentEvolution) return;
+        const { evo, cancel } = this.currentEvolution;
+        cancel();
+        this.currentEvolution = null;
+        this.evolutionPlaying = false;
+        this.pendingEvolutions.unshift({ ...evo, deferred: true });
+    }
+
     showEvolutionOverlay(evo) {
+        this.pendingEvolutions.push({ ...evo, deferred: this.isFullscreen() });
+        if (this.isFullscreen()) return;   // watchFullscreen replays it on exit
+        this.drainEvolutionQueue();
+    }
+
+    /**
+     * Plays queued evolutions one at a time. A long fullscreen session can bank
+     * several, and overlapping five-second takeovers would be unreadable.
+     */
+    drainEvolutionQueue() {
+        if (this.evolutionPlaying || this.isFullscreen()) return;
+        const evo = this.pendingEvolutions.shift();
+        if (!evo) return;
+
+        this.evolutionPlaying = true;
+        const cancel = this.playEvolutionOverlay(evo, () => {
+            this.currentEvolution = null;
+            this.evolutionPlaying = false;
+            this.drainEvolutionQueue();
+        });
+        this.currentEvolution = { evo, cancel };
+    }
+
+    /**
+     * Renders one evolution; calls `done` when it is dismissed or times out.
+     * Returns an abort function that tears the overlay down *without* advancing
+     * the queue, for when fullscreen resumes.
+     */
+    playEvolutionOverlay(evo, done) {
         const overlay = document.createElement('div');
         overlay.className = 'evolution-overlay-screen';
+
+        const queued = this.pendingEvolutions.length;
         overlay.innerHTML = `
             <div class="evo-box">
-                <div class="evo-sparkles">✨</div>
-                <h2>Evolution!</h2>
-                <div class="evo-sprites">
-                    <img src="${this.config.getSpriteUrl(evo.from.id)}" class="old-sprite"/>
-                    <span class="arrow">➡️</span>
-                    <img src="${this.config.getSpriteUrl(evo.to.id)}" class="new-sprite"/>
+                ${evo.deferred ? '<p class="evo-deferred">While you were watching…</p>' : ''}
+                <h2 class="evo-title">Evolution!</h2>
+                <div class="evo-stage">
+                    <div class="evo-burst"></div>
+                    <div class="evo-morph">
+                        <img src="${this.config.getSpriteUrl(evo.from.id)}" alt="${evo.from.name}" class="old-sprite"/>
+                        <img src="${this.config.getSpriteUrl(evo.to.id)}" alt="${evo.to.name}" class="new-sprite"/>
+                    </div>
                 </div>
                 <p class="evo-desc">${evo.from.name} evolved into ${evo.to.name}!</p>
+                ${queued ? `<p class="evo-queue">+${queued} more</p>` : ''}
+                <p class="evo-skip">Click anywhere to skip</p>
             </div>
         `;
+
+        // The timeout, a click and an abort can all race; whichever lands first
+        // wins and the rest become inert.
+        let settled = false;
+        const settle = (advance) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            overlay.remove();
+            if (advance) done();
+        };
+        const timer = setTimeout(() => settle(true), EVOLUTION_OVERLAY_MS);
+        overlay.addEventListener('click', () => settle(true));
+
         document.body.appendChild(overlay);
-        setTimeout(() => overlay.remove(), 5000);
+        return () => settle(false);
     }
 
     createModalOverlay(title) {

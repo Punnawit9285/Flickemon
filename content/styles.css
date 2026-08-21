@@ -80,8 +80,8 @@
 }
 
 .partner-mini-sprite, .wild-mini-sprite {
-    width: 36px;
-    height: 36px;
+    width: 48px;
+    height: 48px;
     object-fit: contain;
     image-rendering: pixelated;
     flex-shrink: 0;
@@ -309,8 +309,8 @@
     box-shadow: 0 0 0 2px var(--flick-primary);
 }
 .starter-card-img {
-    width: 72px;
-    height: 72px;
+    width: 96px;
+    height: 96px;
     object-fit: contain;
     image-rendering: pixelated;
     margin-bottom: 0.5rem;
@@ -368,11 +368,16 @@
 .type-pill.ice { background: #96d9d6; color: #000; }
 .type-pill.fighting { background: #c22e28; }
 
-/* Evolution Overlay */
+/* ────────────────────────── Evolution Overlay ──────────────────────────
+   The classic games' morph: the old sprite washes to a white silhouette and
+   flickers against the new one at an accelerating rate, then bursts. Both
+   sprites are stacked in .evo-stage so one filter animation whites out
+   whichever is currently visible. */
+
 .evolution-overlay-screen {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.75);
+    background: rgba(0,0,0,0.82);
     backdrop-filter: blur(6px);
     z-index: 20000;
     display: flex;
@@ -381,53 +386,159 @@
     color: #ffffff;
     text-align: center;
     font-family: inherit;
+    cursor: pointer;                 /* click anywhere to skip */
+    animation: evo-overlay-in 0.3s ease both;
 }
+@keyframes evo-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+
 .evo-box {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 0.75rem;
 }
-.evo-sparkles {
-    font-size: 2.5rem;
-    line-height: 1;
-    margin-bottom: -0.25rem;
-}
-.evo-box h2 {
+.evo-title {
     font-size: 2rem;
     font-weight: 800;
     color: #ffffff;
-    margin: 0 0 1rem 0;
-    letter-spacing: -0.5px;
+    margin: 0 0 0.5rem 0;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-shadow: 0 0 18px rgba(255,255,255,0.45);
 }
-.evo-sprites {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 1.5rem;
-    margin-bottom: 1rem;
+
+.evo-stage {
+    position: relative;
+    width: 208px;
+    height: 208px;
 }
-.evo-sprites .old-sprite {
-    width: 64px;
-    height: 64px;
+/* The glow filter lives on this inner wrapper, not on .evo-stage: a parent
+   filter applies to every descendant, and invert(1) would turn the white
+   .evo-burst black. */
+.evo-morph {
+    position: absolute;
+    top: 8px; left: 8px;
+    width: 192px;
+    height: 192px;
+    animation: evo-glow 2.7s ease-in-out 0.35s both;
+}
+.evo-morph img {
+    position: absolute;
+    top: 0; left: 0;
+    width: 192px;
+    height: 192px;
     object-fit: contain;
     image-rendering: pixelated;
 }
-.evo-sprites .arrow {
-    font-size: 1.25rem;
-    color: #ffd700;
+.evo-morph .old-sprite { animation: evo-flicker-out 2.7s steps(1, end) 0.35s both; }
+.evo-morph .new-sprite { animation: evo-flicker-in  2.7s steps(1, end) 0.35s both; }
+
+/* Accelerating swap: long holds early, rapid ones as it resolves. */
+@keyframes evo-flicker-out {
+    0%,   9% { opacity: 1; }
+    10%, 17% { opacity: 0; }
+    18%, 26% { opacity: 1; }
+    27%, 34% { opacity: 0; }
+    35%, 42% { opacity: 1; }
+    43%, 49% { opacity: 0; }
+    50%, 56% { opacity: 1; }
+    57%, 62% { opacity: 0; }
+    63%, 67% { opacity: 1; }
+    68%, 72% { opacity: 0; }
+    73%, 76% { opacity: 1; }
+    77%, 80% { opacity: 0; }
+    81%, 83% { opacity: 1; }
+    84%,100% { opacity: 0; }
 }
-.evo-sprites .new-sprite {
-    width: 96px;
-    height: 96px;
-    object-fit: contain;
-    image-rendering: pixelated;
+@keyframes evo-flicker-in {
+    0%,   9% { opacity: 0; }
+    10%, 17% { opacity: 1; }
+    18%, 26% { opacity: 0; }
+    27%, 34% { opacity: 1; }
+    35%, 42% { opacity: 0; }
+    43%, 49% { opacity: 1; }
+    50%, 56% { opacity: 0; }
+    57%, 62% { opacity: 1; }
+    63%, 67% { opacity: 0; }
+    68%, 72% { opacity: 1; }
+    73%, 76% { opacity: 0; }
+    77%, 80% { opacity: 1; }
+    81%, 83% { opacity: 0; }
+    84%,100% { opacity: 1; }
 }
+
+/* Identity filters are written out rather than `none` so every function has a
+   counterpart to interpolate against. */
+@keyframes evo-glow {
+    0%   { filter: brightness(1) invert(0) drop-shadow(0 0 0 rgba(255,255,255,0)); transform: scale(1); }
+    8%   { filter: brightness(1.6) invert(1) drop-shadow(0 0 12px rgba(255,255,255,0.9)); transform: scale(1.04); }
+    80%  { filter: brightness(1.6) invert(1) drop-shadow(0 0 30px rgba(255,255,255,0.95)); transform: scale(1.14); }
+    88%  { filter: brightness(2) invert(1) drop-shadow(0 0 52px rgba(255,255,255,1)); transform: scale(1.26); }
+    96%  { filter: brightness(1) invert(0) drop-shadow(0 0 10px rgba(255,255,255,0.5)); transform: scale(1.06); }
+    100% { filter: brightness(1) invert(0) drop-shadow(0 0 0 rgba(255,255,255,0)); transform: scale(1); }
+}
+
+.evo-burst {
+    position: absolute;
+    top: 0; left: 0;
+    width: 208px; height: 208px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, rgba(255,240,150,0.55) 40%, rgba(255,255,255,0) 70%);
+    opacity: 0;
+    pointer-events: none;
+    animation: evo-burst 0.85s ease-out 2.55s both;
+}
+@keyframes evo-burst {
+    0%   { opacity: 0; transform: scale(0.2); }
+    35%  { opacity: 1; }
+    100% { opacity: 0; transform: scale(2.8); }
+}
+
 .evo-desc {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.95);
     margin: 0;
+    opacity: 0;
+    animation: evo-text-in 0.45s ease 3.1s both;
+}
+@keyframes evo-text-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.evo-queue {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.6);
+    margin: 0;
+}
+.evo-skip {
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    color: rgba(255,255,255,0.45);
+    margin: 0.5rem 0 0 0;
+}
+
+/* Deferred from fullscreen — say so, or the replay looks like a glitch. */
+.evo-deferred {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #fcd34d;
+    margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .evolution-overlay-screen { animation: none; }
+    .evo-morph { animation: none; }
+    .evo-morph .old-sprite { display: none; }
+    .evo-morph .new-sprite { animation: none; opacity: 1; }
+    .evo-burst { display: none; }
+    .evo-desc { animation: none; opacity: 1; }
 }
 
 /* ====================================================
@@ -623,7 +734,7 @@
     color: var(--flick-text, #4a148c);
 }
 
-.party-sprite { width: 40px; height: 40px; image-rendering: pixelated; margin-right: 12px; }
+.party-sprite { width: 48px; height: 48px; image-rendering: pixelated; margin-right: 12px; }
 .party-info { flex: 1; display: flex; flex-direction: column; }
 .party-name { font-size: 0.9rem; font-weight: 600; }
 .party-level { font-size: 0.8rem; opacity: 0.9; }
@@ -632,12 +743,11 @@
 /* Pokédex Grid */
 .flickemon-pokedex-grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    /* Sized from the sprite rather than a fixed column count, so larger
+       sprites reflow instead of overflowing a narrow modal. */
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
     gap: 8px;
     text-align: center;
-}
-@media (max-width: 400px) {
-    .flickemon-pokedex-grid { grid-template-columns: repeat(4, 1fr); }
 }
 
 .pokedex-item {
@@ -646,18 +756,18 @@
     align-items: center;
     padding: 8px 0;
 }
-.pokedex-sprite { width: 48px; height: 48px; image-rendering: pixelated; }
+.pokedex-sprite { width: 64px; height: 64px; image-rendering: pixelated; }
 .pokedex-unknown {
-    width: 48px; height: 48px;
+    width: 64px; height: 64px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 1.5rem; color: #ccc; font-weight: bold;
+    font-size: 2rem; color: #ccc; font-weight: bold;
 }
 .pokedex-num { font-size: 0.7rem; color: #999; margin-top: 4px; }
 .pokedex-name { font-size: 0.7rem; font-weight: 600; color: var(--flick-text, #4a148c); }
 
 /* My Partner Stats Grid */
 .partner-section { text-align: center; padding: 16px 0; color: var(--flick-text, #4a148c); }
-.partner-big-sprite { width: 128px; height: 128px; image-rendering: pixelated; }
+.partner-big-sprite { width: 192px; height: 192px; image-rendering: pixelated; }
 .partner-big-name { font-size: 1.5rem; font-weight: 800; margin: 8px 0 4px; }
 .partner-types { margin-bottom: 8px; }
 .partner-big-level { font-size: 1.1rem; font-weight: 600; color: var(--flick-text-muted, #c2185b); margin-bottom: 8px; }
@@ -810,7 +920,7 @@
 /* On the team but not the partner: present, but clearly secondary. */
 .party-row.on-team:not(.is-active) { border-color: rgba(var(--ion-color-primary-rgb, 233,30,99), 0.35); }
 
-.party-row-sprite { width: 44px; height: 44px; image-rendering: pixelated; flex-shrink: 0; }
+.party-row-sprite { width: 64px; height: 64px; image-rendering: pixelated; flex-shrink: 0; }
 .party-row-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .party-row-name {
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -958,7 +1068,7 @@
 
 .pvp-team-strip { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin: 0.75rem 0 1rem; }
 .pvp-team-chip { display: flex; flex-direction: column; align-items: center; font-size: 0.6rem; color: var(--flick-text-muted); }
-.pvp-team-chip img { width: 34px; height: 34px; image-rendering: pixelated; }
+.pvp-team-chip img { width: 48px; height: 48px; image-rendering: pixelated; }
 
 .pvp-btn {
     display: inline-block;
@@ -1008,8 +1118,8 @@
 .pvp-side.foe .pvp-nameplate { order: 2; }
 .pvp-side.foe .pvp-sprite { order: 1; }
 
-.pvp-sprite { width: 76px; height: 76px; image-rendering: pixelated; }
-.pvp-sprite.my-sprite { width: 88px; height: 88px; }
+.pvp-sprite { width: 96px; height: 96px; image-rendering: pixelated; }
+.pvp-sprite.my-sprite { width: 120px; height: 120px; }
 
 .pvp-nameplate {
     flex: 1; max-width: 240px;
