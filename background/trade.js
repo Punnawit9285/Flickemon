@@ -27,6 +27,7 @@
 import { FIREBASE_CONFIG, TRADES_COLLECTION } from './firebase-config.js';
 import { getIdToken } from './auth.js';
 import { codeForUid } from './pvp.js';
+import { readDoc, mutateDoc, invalidateDoc } from './cache.js';
 
 function docUrl(code) {
     return `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}` +
@@ -64,13 +65,23 @@ async function auth() {
     return a;
 }
 
-async function write(code, data, idToken) {
-    const res = await fetch(docUrl(code), {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(toFields(data)),
+/**
+ * Read-modify-write on the shared table.
+ *
+ * `transform(trade)` returns the whole document to write, or null to abort.
+ * The write is conditional on the version that was read, so a cached copy can
+ * never overwrite an offer the other trainer made in the meantime — the server
+ * rejects it and mutateDoc rebuilds from a fresh read.
+ */
+async function mutate(code, idToken, transform) {
+    const res = await mutateDoc(docUrl(code), idToken, (current) => {
+        if (!current) return null;
+        const next = transform({ ...fromDoc(current.doc), code });
+        return next ? toFields(next) : null;
     });
-    if (!res.ok) throw new Error(`Could not update the trade (${res.status})`);
+    if (res.aborted) throw new Error('That trade has ended.');
+    if (res.conflict) throw new Error('The other trainer changed the table. Try again.');
+    return res;
 }
 
 /** Opens (or replaces) this student's own trade table. */
@@ -78,47 +89,56 @@ export async function openTrade({ displayName }) {
     const a = await auth();
     const code = codeForUid(a.uid);
 
-    await write(code, {
-        host: a.uid,
-        hostName: displayName || a.email || 'Trainer',
-        guest: '',
-        guestName: '',
-        state: {
-            phase: 'waiting',
-            hostOffer: null, guestOffer: null,
-            hostConfirmed: false, guestConfirmed: false,
-            hostApplied: false, guestApplied: false,
-            tradeId: null,
-        },
-    }, a.idToken);
+    // A fresh table replaces whatever was there, so this one write is
+    // unconditional — and the cached copy of the old document must go.
+    invalidateDoc(docUrl(code));
+    const res = await fetch(docUrl(code), {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${a.idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: toFields({
+            host: a.uid,
+            hostName: displayName || a.email || 'Trainer',
+            guest: '',
+            guestName: '',
+            state: {
+                phase: 'waiting',
+                hostOffer: null, guestOffer: null,
+                hostConfirmed: false, guestConfirmed: false,
+                hostApplied: false, guestApplied: false,
+                tradeId: null,
+            },
+        }) }),
+    });
+    if (!res.ok) throw new Error(`Could not open a trade (${res.status})`);
+    invalidateDoc(docUrl(code));
 
     return { code, uid: a.uid };
 }
 
 /** Reads a trade. Returns null when the code has no table open. */
-export async function readTrade(code) {
+export async function readTrade(code, { fresh = true } = {}) {
     const a = await auth();
-    const res = await fetch(docUrl(code), { headers: { Authorization: `Bearer ${a.idToken}` } });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`Could not read the trade (${res.status})`);
-    return { ...fromDoc(await res.json()), code, me: a.uid };
+    // The poll wants the truth every time; the operations below reuse whatever
+    // the poll just fetched, because their writes are version-checked anyway.
+    const current = await readDoc(docUrl(code), a.idToken, { fresh });
+    if (!current) return null;
+    return { ...fromDoc(current.doc), code, me: a.uid };
 }
 
 /** Sits down at someone else's table. */
 export async function joinTrade(code, { displayName }) {
     const a = await auth();
-    const trade = await readTrade(code);
 
-    if (!trade) throw new Error(`No trainer is waiting on code ${code}.`);
-    if (trade.host === a.uid) throw new Error("That's your own code — share it with someone else.");
-    if (trade.guest && trade.guest !== a.uid) throw new Error('That trainer is already trading.');
-
-    await write(code, {
-        ...trade,
-        guest: a.uid,
-        guestName: displayName || a.email || 'Trainer',
-        state: { ...trade.state, phase: 'offering' },
-    }, a.idToken);
+    await mutate(code, a.idToken, (trade) => {
+        if (trade.host === a.uid) throw new Error("That's your own code — share it with someone else.");
+        if (trade.guest && trade.guest !== a.uid) throw new Error('That trainer is already trading.');
+        return {
+            ...trade,
+            guest: a.uid,
+            guestName: displayName || a.email || 'Trainer',
+            state: { ...trade.state, phase: 'offering' },
+        };
+    });
 
     return { code, uid: a.uid, role: 'guest' };
 }
@@ -132,39 +152,42 @@ export async function joinTrade(code, { displayName }) {
  */
 export async function offerPokemon(code, offer) {
     const a = await auth();
-    const trade = await readTrade(code);
-    if (!trade) throw new Error('That trade has ended.');
 
-    const isHost = trade.host === a.uid;
-    const state = {
-        ...trade.state,
-        [isHost ? 'hostOffer' : 'guestOffer']: offer,
-        hostConfirmed: false,
-        guestConfirmed: false,
-    };
-
-    await write(code, { ...trade, state }, a.idToken);
+    await mutate(code, a.idToken, (trade) => {
+        const isHost = trade.host === a.uid;
+        return { ...trade, state: {
+            ...trade.state,
+            [isHost ? 'hostOffer' : 'guestOffer']: offer,
+            hostConfirmed: false,
+            guestConfirmed: false,
+        } };
+    });
     return { ok: true };
 }
 
 /** Confirms, or withdraws a confirmation. */
 export async function confirmTrade(code, confirmed) {
     const a = await auth();
-    const trade = await readTrade(code);
-    if (!trade) throw new Error('That trade has ended.');
+    let sealed = false;
 
-    const isHost = trade.host === a.uid;
-    const state = { ...trade.state, [isHost ? 'hostConfirmed' : 'guestConfirmed']: confirmed !== false };
+    await mutate(code, a.idToken, (trade) => {
+        const isHost = trade.host === a.uid;
+        const state = {
+            ...trade.state,
+            [isHost ? 'hostConfirmed' : 'guestConfirmed']: confirmed !== false,
+        };
 
-    // Both sides in with something on the table: seal it. The tradeId is what
-    // makes applying it idempotent on each account.
-    if (state.hostConfirmed && state.guestConfirmed && state.hostOffer && state.guestOffer) {
-        state.phase = 'done';
-        state.tradeId = state.tradeId || `${code}-${Date.now()}-${trade.host.slice(0, 6)}`;
-    }
+        // Both sides in with something on the table: seal it. The tradeId is
+        // what makes applying it idempotent on each account.
+        if (state.hostConfirmed && state.guestConfirmed && state.hostOffer && state.guestOffer) {
+            state.phase = 'done';
+            state.tradeId = state.tradeId || `${code}-${Date.now()}-${trade.host.slice(0, 6)}`;
+        }
+        sealed = state.phase === 'done';
+        return { ...trade, state };
+    });
 
-    await write(code, { ...trade, state }, a.idToken);
-    return { ok: true, sealed: state.phase === 'done' };
+    return { ok: true, sealed };
 }
 
 /**
@@ -174,18 +197,27 @@ export async function confirmTrade(code, confirmed) {
  */
 export async function acknowledgeTrade(code) {
     const a = await auth();
-    const trade = await readTrade(code);
-    if (!trade) return { ok: true, gone: true };
+    let bothApplied = false;
 
-    const isHost = trade.host === a.uid;
-    const state = { ...trade.state, [isHost ? 'hostApplied' : 'guestApplied']: true };
-    await write(code, { ...trade, state }, a.idToken);
-    return { ok: true, bothApplied: Boolean(state.hostApplied && state.guestApplied) };
+    try {
+        await mutate(code, a.idToken, (trade) => {
+            const isHost = trade.host === a.uid;
+            const state = { ...trade.state, [isHost ? 'hostApplied' : 'guestApplied']: true };
+            bothApplied = Boolean(state.hostApplied && state.guestApplied);
+            return { ...trade, state };
+        });
+    } catch {
+        // The table is already gone, which only means the other side finished
+        // first. The swap has landed locally either way.
+        return { ok: true, gone: true };
+    }
+    return { ok: true, bothApplied };
 }
 
 /** Host clears the table. */
 export async function closeTrade(code) {
     const a = await auth();
+    invalidateDoc(docUrl(code));
     const res = await fetch(docUrl(code), {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${a.idToken}` },

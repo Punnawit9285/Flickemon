@@ -945,6 +945,20 @@ class FlickemonUI {
                             <button class="dmg-spd-btn" data-spd="1000" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">1000x</button>
                             <button class="dmg-spd-btn" data-spd="10000" style="padding:4px 8px; border-radius:4px; border:1px solid #ccc; cursor:pointer;">10000x</button>
                         </div>
+                        <div class="admin-summon-row">
+                            <span class="admin-field-label">Summon:</span>
+                            <input type="text" class="admin-summon-input" list="flickemon-species-list"
+                                   placeholder="Name or #" autocomplete="off"/>
+                            <datalist id="flickemon-species-list"></datalist>
+                            <input type="number" class="admin-summon-lvl" min="1" max="100"
+                                   placeholder="Lv" title="Level (defaults to your partner's)"/>
+                            <label class="admin-shiny-toggle">
+                                <input type="checkbox" class="admin-summon-shiny"/> Shiny
+                            </label>
+                            <button class="admin-summon-btn">Summon</button>
+                        </div>
+                        <p class="admin-summon-result"></p>
+
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="font-size:0.85rem; font-weight:600;">Set Level:</span>
                             <input type="number" class="admin-lvl-input" min="1" max="100" value="5" style="width:60px; padding:4px; border-radius:4px; border:1px solid #ccc; background:var(--flick-card-bg); color:var(--flick-text);"/>
@@ -1138,6 +1152,46 @@ class FlickemonUI {
                 btn.style.background = 'var(--flick-primary)';
                 btn.style.color = '#fff';
             });
+        });
+
+        // 1,025 <option>s is a lot of DOM for a panel most students never open,
+        // but a datalist gets native type-ahead for free and the panel is built
+        // only after an admin check has already passed.
+        const speciesList = adminPanel.querySelector('#flickemon-species-list');
+        if (speciesList) {
+            speciesList.innerHTML = this.config.POKEMON_REGISTRY
+                .map(sp => `<option value="${sp.name}">#${sp.id}</option>`).join('');
+        }
+
+        const summonBtn = adminPanel.querySelector('.admin-summon-btn');
+        const summonResult = adminPanel.querySelector('.admin-summon-result');
+        summonBtn?.addEventListener('click', async () => {
+            const raw = (adminPanel.querySelector('.admin-summon-input').value || '').trim();
+            const lvlRaw = adminPanel.querySelector('.admin-summon-lvl').value;
+            const shiny = adminPanel.querySelector('.admin-summon-shiny').checked;
+            if (!raw) return;
+
+            // Accept a dex number, "#25", or a name in any casing.
+            const byNumber = Number(raw.replace(/^#/, ''));
+            const species = Number.isFinite(byNumber) && byNumber > 0
+                ? this.config.getSpeciesById(byNumber)
+                : this.config.POKEMON_REGISTRY.find(
+                    sp => sp.name.toLowerCase() === raw.toLowerCase());
+
+            if (!species) {
+                summonResult.textContent = `No Pokémon called "${raw}".`;
+                summonResult.className = 'admin-summon-result bad';
+                return;
+            }
+
+            const res = await this.engine.adminSummonOpponent(species.id, {
+                shiny,
+                level: lvlRaw ? Number(lvlRaw) : undefined,
+            });
+            summonResult.textContent = res.ok
+                ? `${res.shiny ? 'Shiny ' : ''}${res.species.name} (Lv.${res.level}) is now the opponent.`
+                : 'Could not summon that.';
+            summonResult.className = `admin-summon-result ${res.ok ? 'good' : 'bad'}`;
         });
 
         adminPanel.querySelector('.admin-set-lvl-btn').addEventListener('click', async () => {

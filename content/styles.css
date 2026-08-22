@@ -1730,3 +1730,32 @@
     color: var(--flick-text-muted);
     font-variant-numeric: tabular-nums;
 }
+
+/* ── Admin: summon an opponent ── */
+.admin-summon-row {
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap; margin-bottom: 8px;
+}
+.admin-field-label { font-size: 0.85rem; font-weight: 600; }
+.admin-summon-input, .admin-summon-lvl {
+    padding: 4px 6px; border-radius: 4px;
+    border: 1px solid var(--flick-border);
+    background: var(--flick-card-bg); color: var(--flick-text);
+}
+.admin-summon-input { flex: 1; min-width: 120px; }
+.admin-summon-lvl { width: 56px; }
+.admin-shiny-toggle {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 0.8rem; font-weight: 600; color: var(--flick-text);
+    cursor: pointer; white-space: nowrap;
+}
+.admin-summon-btn {
+    background: var(--flick-primary); color: var(--flick-on-primary);
+    border: none; padding: 5px 12px; border-radius: 4px;
+    cursor: pointer; font-weight: 700;
+}
+.admin-summon-result {
+    margin: 0 0 8px; font-size: 0.75rem; min-height: 1em;
+}
+.admin-summon-result.good { color: var(--flick-success); }
+.admin-summon-result.bad { color: var(--flick-danger); }

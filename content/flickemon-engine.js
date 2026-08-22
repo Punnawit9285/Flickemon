@@ -71,6 +71,44 @@ class FlickemonEngine {
         return this.adminDamageMultiplier;
     }
 
+    /**
+     * Replaces the current encounter with a chosen species, shiny or not.
+     *
+     * Admin-only, and gated on the server the same way every other admin tool
+     * is: the caller checks isAdmin() first, and that answer comes from a
+     * document no client can write. This only touches the wild slot — nothing
+     * is added to the party until the student actually wins the battle, so a
+     * summon still has to be earned.
+     */
+    async adminSummonOpponent(speciesId, { shiny = false, level } = {}) {
+        const species = this.config.getSpeciesById(Number(speciesId));
+        if (!species) return { ok: false, reason: 'unknown-species' };
+
+        const active = this.getActivePokemon();
+        const wildLevel = Number.isFinite(level) && level > 0
+            ? Math.min(this.config.MAX_LEVEL, Math.round(level))
+            : (active ? active.level : 5);
+
+        const maxHp = this.config.calculateRealMaxHp(species.baseStats.hp, wildLevel);
+        if (this.respawnTimer) clearTimeout(this.respawnTimer);
+        this.wildHpAcc = maxHp;
+        this.wildOpponent = {
+            wildSpecies: species,
+            wildLevel,
+            maxHp,
+            currentHp: maxHp,
+            status: 'fighting',
+            fightDurationSeconds: 0,
+            shiny: shiny === true,
+        };
+
+        this.gameState.wildOpponent = this.wildOpponent;
+        this.updatePokedex(species.id, false);
+        this.emitWild();
+        await this.saveGameState();
+        return { ok: true, species, level: wildLevel, shiny: shiny === true };
+    }
+
     async adminSetPokemonLevel(level) {
         const active = this.getActivePokemon();
         if (!active) return;

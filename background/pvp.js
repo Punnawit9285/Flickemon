@@ -17,6 +17,7 @@
 
 import { FIREBASE_CONFIG, BATTLES_COLLECTION } from './firebase-config.js';
 import { getIdToken } from './auth.js';
+import { readDoc, mutateDoc, invalidateDoc } from './cache.js';
 
 function docUrl(code) {
     return `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}` +
@@ -84,58 +85,69 @@ export async function openLobby({ displayName, team }) {
         state: { phase: 'waiting', turn: 0, hostTeam: team, guestTeam: null, log: [] },
     });
 
+    // A fresh lobby replaces whatever was there, so this write is
+    // unconditional — and any cached copy of the old document must go.
+    invalidateDoc(docUrl(code));
     const res = await fetch(docUrl(code), {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${a.idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ fields: body }),
     });
     if (!res.ok) throw new Error(`Could not open lobby (${res.status})`);
+    invalidateDoc(docUrl(code));
     return { code, uid: a.uid };
 }
 
 /** Reads a battle. Returns null when the code has no lobby. */
-export async function readBattle(code) {
+export async function readBattle(code, { fresh = true } = {}) {
     const a = await auth();
-    const res = await fetch(docUrl(code), { headers: { Authorization: `Bearer ${a.idToken}` } });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`Could not read battle (${res.status})`);
-    return { ...fromDoc(await res.json()), code, me: a.uid };
+    // The poll wants the truth every time; the operations below reuse what the
+    // poll just fetched, because their writes are version-checked anyway.
+    const current = await readDoc(docUrl(code), a.idToken, { fresh });
+    if (!current) return null;
+    return { ...fromDoc(current.doc), code, me: a.uid };
 }
 
-async function write(code, data, idToken) {
-    const res = await fetch(docUrl(code), {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(toFields(data)),
+/**
+ * Read-modify-write on the shared battle.
+ *
+ * The write carries the version it was built from, so an action based on a
+ * cached read cannot overwrite the move the opponent submitted a moment ago —
+ * the server rejects it and mutateDoc rebuilds from a fresh copy.
+ */
+async function mutate(code, idToken, transform) {
+    const res = await mutateDoc(docUrl(code), idToken, (current) => {
+        if (!current) return null;
+        const next = transform({ ...fromDoc(current.doc), code });
+        return next ? toFields(next) : null;
     });
-    if (!res.ok) throw new Error(`Could not update battle (${res.status})`);
+    if (res.aborted) throw new Error('That battle has ended.');
+    if (res.conflict) throw new Error('The battle moved on. Try again.');
+    return res;
 }
 
 /** Joins someone else's lobby by their code. */
 export async function joinBattle(code, { displayName, team }) {
     const a = await auth();
-    const battle = await readBattle(code);
 
-    if (!battle) throw new Error(`No trainer is waiting on code ${code}.`);
-    if (battle.host === a.uid) throw new Error("That's your own code — share it with someone else.");
-    if (battle.guest && battle.guest !== a.uid) throw new Error('That trainer is already in a battle.');
-
-    const state = {
-        ...battle.state,
-        phase: 'battling',
-        turn: 1,
-        guestTeam: team,
-        hostAction: null,
-        guestAction: null,
-        log: [`${battle.hostName} vs ${displayName}!`],
-    };
-
-    await write(code, {
-        ...battle,
-        guest: a.uid,
-        guestName: displayName || a.email || 'Trainer',
-        state,
-    }, a.idToken);
+    await mutate(code, a.idToken, (battle) => {
+        if (battle.host === a.uid) throw new Error("That's your own code — share it with someone else.");
+        if (battle.guest && battle.guest !== a.uid) throw new Error('That trainer is already in a battle.');
+        return {
+            ...battle,
+            guest: a.uid,
+            guestName: displayName || a.email || 'Trainer',
+            state: {
+                ...battle.state,
+                phase: 'battling',
+                turn: 1,
+                guestTeam: team,
+                hostAction: null,
+                guestAction: null,
+                log: [`${battle.hostName} vs ${displayName}!`],
+            },
+        };
+    });
 
     return { code, uid: a.uid, role: 'guest' };
 }
@@ -143,29 +155,27 @@ export async function joinBattle(code, { displayName, team }) {
 /** Submits this player's action for the current turn. */
 export async function submitAction(code, action) {
     const a = await auth();
-    const battle = await readBattle(code);
-    if (!battle) throw new Error('That battle has ended.');
 
-    const isHost = battle.host === a.uid;
-    const state = { ...battle.state };
-    state[isHost ? 'hostAction' : 'guestAction'] = { ...action, turn: state.turn };
-
-    await write(code, { ...battle, state }, a.idToken);
+    await mutate(code, a.idToken, (battle) => {
+        const isHost = battle.host === a.uid;
+        const state = { ...battle.state };
+        state[isHost ? 'hostAction' : 'guestAction'] = { ...action, turn: state.turn };
+        return { ...battle, state };
+    });
     return { ok: true };
 }
 
 /** Publishes the agreed post-turn state. Either client may write it; both compute the same thing. */
 export async function commitTurn(code, state) {
     const a = await auth();
-    const battle = await readBattle(code);
-    if (!battle) throw new Error('That battle has ended.');
-    await write(code, { ...battle, state }, a.idToken);
+    await mutate(code, a.idToken, (battle) => ({ ...battle, state }));
     return { ok: true };
 }
 
 /** Host tears the lobby down when leaving. */
 export async function closeLobby(code) {
     const a = await auth();
+    invalidateDoc(docUrl(code));
     const res = await fetch(docUrl(code), {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${a.idToken}` },

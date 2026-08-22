@@ -23,22 +23,38 @@
 import {
     FIREBASE_CONFIG, isConfigured, isAllowedEmail, ALLOWED_EMAIL_DOMAINS, WEB_OAUTH_CLIENT_ID,
 } from './firebase-config.js';
+import { createMemoCache } from './cache.js';
 
 const AUTH_KEY = 'flickemon_auth_v1';
 
 // Refresh slightly early so a request never races token expiry.
 const EXPIRY_SKEW_MS = 60000;
 
+// A single PVP or trade action calls auth() two or three times over — once
+// directly, once inside the read it performs — and the poll loop repeats that
+// every couple of seconds. Each call was a storage round-trip for a value that
+// changes only at sign-in, sign-out and token refresh, all of which go through
+// writeAuth/clearAuth below and clear this. The worker's own eviction bounds
+// how long a cached copy can live.
+const authMemo = createMemoCache(30000);
+const AUTH_MEMO = 'auth';
+
 async function readAuth() {
-    const data = await chrome.storage.local.get([AUTH_KEY]);
-    return (data && data[AUTH_KEY]) || null;
+    return await authMemo.through(AUTH_MEMO, async () => {
+        const data = await chrome.storage.local.get([AUTH_KEY]);
+        // through() skips caching undefined, so absence is stored as null.
+        return (data && data[AUTH_KEY]) || null;
+    });
 }
 
 async function writeAuth(auth) {
+    authMemo.delete(AUTH_MEMO);
     await chrome.storage.local.set({ [AUTH_KEY]: auth });
+    authMemo.set(AUTH_MEMO, auth);
 }
 
 async function clearAuth() {
+    authMemo.delete(AUTH_MEMO);
     await chrome.storage.local.remove([AUTH_KEY]);
 }
 
