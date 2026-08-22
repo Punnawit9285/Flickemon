@@ -38,6 +38,10 @@ class FlickemonEngine {
         this.STORAGE_KEY = 'flickemon_ext_save_v2';
         // Last state before anything destructive, so progress is recoverable.
         this.BACKUP_KEY = 'flickemon_ext_save_backup_v1';
+        // Deliberately outside the game state: it identifies the device, not
+        // the account, so it must not sync and must survive a progress reset.
+        this.DEVICE_KEY = 'flickemon_device_id_v1';
+        this.deviceId = null;
         this.config = window.FlickemonConfig;
 
         this.gameState = this.createEmptyState();
@@ -168,7 +172,21 @@ class FlickemonEngine {
             // see REWARD_DURATION_MS in flickemon-config.js.
             activeReward: null,
             pokedex: [],
+            // Derived — the sum of studyMinutes below. Kept as a field because
+            // the admin portal queries it as a column, and because every older
+            // save has it.
             totalMinutesWatched: 0,
+            // Study time credited per source, so two devices watching in the
+            // same period ADD UP. This used to be one cumulative number merged
+            // with Math.max, which silently discarded the smaller side: a
+            // student watching 30 minutes on a laptop and 40 on a desktop
+            // between syncs was credited 40, not 70.
+            //
+            // `legacy` holds the pre-migration figure, still merged with max
+            // because it is already a merged number and the lost time cannot be
+            // recovered retroactively. Every other key is a source — a device,
+            // or one day something that is not this extension at all.
+            studyMinutes: {},
             lastSyncedAt: 0,
             wildOpponent: null,
             // Firebase uid this save belongs to; guards against one student's
@@ -263,6 +281,21 @@ class FlickemonEngine {
         s.teamIds = migrateIds(s.teamIds).slice(0, this.config.MAX_TEAM_SIZE);
         s.schemaVersion = 2;
         if (!Number.isFinite(s.totalMinutesWatched) || s.totalMinutesWatched < 0) s.totalMinutesWatched = 0;
+
+        // Migrate a pre-split save: whatever it accumulated becomes `legacy`.
+        // The test is "no buckets yet", not "field missing" — createEmptyState
+        // supplies an empty object, so a missing-field check never fires and
+        // the student's whole history would be dropped on load.
+        if (!s.studyMinutes || typeof s.studyMinutes !== 'object' || Array.isArray(s.studyMinutes)) {
+            s.studyMinutes = {};
+        }
+        if (Object.keys(s.studyMinutes).length === 0 && s.totalMinutesWatched > 0) {
+            s.studyMinutes = { legacy: s.totalMinutesWatched };
+        }
+        for (const [source, minutes] of Object.entries(s.studyMinutes)) {
+            if (!Number.isFinite(minutes) || minutes < 0) delete s.studyMinutes[source];
+        }
+        s.totalMinutesWatched = this.sumStudyMinutes(s.studyMinutes);
         if (!Number.isFinite(s.lastSyncedAt)) s.lastSyncedAt = 0;
 
         // The active pointer must name a party member that actually exists.
@@ -316,6 +349,8 @@ class FlickemonEngine {
 
     async init() {
         if (typeof chrome === 'undefined' || !chrome.storage) return;
+
+        await this.loadDeviceId();
 
         // 1. Optimistic UI: Fast load from local storage
         if (chrome.storage.local) {
@@ -531,6 +566,7 @@ class FlickemonEngine {
             party: this.gameState.party,
             pokedex: this.gameState.pokedex,
             totalMinutesWatched: this.gameState.totalMinutesWatched,
+            studyMinutes: this.gameState.studyMinutes || {},
             battleMode: this.gameState.battleMode,
             favouriteIds: this.gameState.favouriteIds,
             teamIds: this.gameState.teamIds,
@@ -548,10 +584,22 @@ class FlickemonEngine {
         const before = JSON.stringify(this.buildCloudPayload());
 
         this.gameState.hasStarted = this.gameState.hasStarted || Boolean(cloud.hasStarted);
-        this.gameState.totalMinutesWatched = Math.max(
-            this.gameState.totalMinutesWatched || 0,
-            cloud.totalMinutesWatched || 0
-        );
+        // Study time merges per source and then sums. Each source is monotonic
+        // on its own, so max() per key is still right — but taking the max of
+        // the TOTALS, as this used to, threw away whatever the other device had
+        // watched in the same period.
+        const cloudMinutes = (cloud.studyMinutes && typeof cloud.studyMinutes === 'object')
+            ? cloud.studyMinutes
+            // A save from before the split contributes its total as `legacy`.
+            : (cloud.totalMinutesWatched ? { legacy: cloud.totalMinutesWatched } : {});
+
+        const merged = { ...(this.gameState.studyMinutes || {}) };
+        for (const [source, minutes] of Object.entries(cloudMinutes)) {
+            if (!Number.isFinite(minutes) || minutes < 0) continue;
+            merged[source] = Math.max(merged[source] || 0, minutes);
+        }
+        this.gameState.studyMinutes = merged;
+        this.gameState.totalMinutesWatched = this.sumStudyMinutes(merged);
 
         // Pokédex: union. Caught outranks merely seen.
         for (const entry of cloud.pokedex || []) {
@@ -1186,7 +1234,7 @@ class FlickemonEngine {
         }
 
         this.gameState.wildOpponent = this.wildOpponent;
-        this.gameState.totalMinutesWatched += secondsWatched / 60;
+        this.creditStudyMinutes(this.studySource(), secondsWatched / 60);
         await this.saveGameState({ immediate: capturedThisTick });
     }
 
@@ -1343,6 +1391,57 @@ class FlickemonEngine {
                 }
             }
         }
+    }
+
+    // ─────────────────────── Study time ───────────────────────
+
+    sumStudyMinutes(buckets) {
+        return Object.values(buckets || {})
+            .reduce((total, m) => total + (Number.isFinite(m) && m > 0 ? m : 0), 0);
+    }
+
+    /**
+     * Which bucket this device's watching goes into.
+     *
+     * Per device, not per account: two devices watching in the same period must
+     * land in different buckets or their totals compete instead of adding. The
+     * id lives outside the game state so a reset or a sign-out cannot merge two
+     * devices' histories into one bucket.
+     */
+    studySource() {
+        return this.deviceId || 'unknown-device';
+    }
+
+    async loadDeviceId() {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+            this.deviceId = 'unknown-device';
+            return this.deviceId;
+        }
+        const data = await chrome.storage.local.get([this.DEVICE_KEY]);
+        let id = data && data[this.DEVICE_KEY];
+        if (typeof id !== 'string' || !id) {
+            id = 'dev_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+            await chrome.storage.local.set({ [this.DEVICE_KEY]: id });
+        }
+        this.deviceId = id;
+        return id;
+    }
+
+    /**
+     * Credits study time to a named source.
+     *
+     * Public because the source does not have to be this extension. Anything
+     * that can prove the student was watching — a Safari extension on an iPad,
+     * a companion page, a figure from the lecture platform itself — can write
+     * into its own bucket and have it add to the total rather than compete with
+     * it. Each bucket is monotonic, which is what keeps the cross-device merge
+     * safe.
+     */
+    creditStudyMinutes(source, minutes) {
+        if (!source || !Number.isFinite(minutes) || minutes <= 0) return;
+        this.gameState.studyMinutes = this.gameState.studyMinutes || {};
+        this.gameState.studyMinutes[source] = (this.gameState.studyMinutes[source] || 0) + minutes;
+        this.gameState.totalMinutesWatched = this.sumStudyMinutes(this.gameState.studyMinutes);
     }
 
     updatePokedex(speciesId, caught, shiny = false) {
