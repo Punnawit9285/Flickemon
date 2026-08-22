@@ -95,6 +95,7 @@
     /* Shiny. The alternate palette is on the sprite itself; this is the framing
      * that tells you it is deliberate and not a rendering fault. */
     --flick-shiny: var(--ion-color-warning, #f5b301);
+    --flick-legendary: var(--ion-color-secondary, #7c3aed);
     --flick-trade: var(--ion-color-tertiary, #0ea5e9);
     --flick-trade-rgb: var(--ion-color-tertiary-rgb, 14, 165, 233);
     /* Green and red read differently on the scene's dark ground than on a page,
@@ -1349,6 +1350,26 @@
     background: var(--flick-shiny);
     color: var(--flick-on-type-dark);
 }
+/* Legendary and shiny are independent, and a Pokémon can be both — the two
+   badges sit side by side rather than one replacing the other. */
+.badge-legendary {
+    background: var(--flick-legendary);
+    color: var(--flick-on-primary);
+}
+.legendary-flag {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    color: var(--flick-legendary);
+}
+.pvp-rarity {
+    font-size: 0.62rem;
+    font-weight: 800;
+    margin-left: 4px;
+}
+.pvp-rarity.legendary { color: var(--flick-legendary); }
+.pvp-rarity.shiny { color: var(--flick-shiny); }
+.partner-big-name .badge { vertical-align: middle; font-size: 0.6rem; }
 .shiny-flag {
     font-size: 0.7rem;
     font-weight: 800;

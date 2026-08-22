@@ -340,6 +340,9 @@ class FlickemonPvp {
         const hpClass = p => p > 50 ? 'ok' : p > 20 ? 'warn' : 'low';
         const badge = c => c.status
             ? `<span class="pvp-status ${c.status}">${this.B.STATUS_LABEL[c.status]}</span>` : '';
+        // Worth knowing what you are up against before choosing a move.
+        const rarity = c => `${c.legendary ? '<span class="pvp-rarity legendary" title="Legendary">★</span>' : ''}`
+                          + `${c.shiny ? '<span class="pvp-rarity shiny" title="Shiny">✦</span>' : ''}`;
 
         const over = phase === 'over';
         const iWon = over && ((st.winner === 'host') === (this.role === 'host'));
@@ -360,7 +363,7 @@ class FlickemonPvp {
                     <div class="pvp-side foe">
                         <div class="pvp-nameplate">
                             <span class="pvp-mon-name">${foe.name}</span>
-                            <span class="pvp-mon-lv">Lv${foe.level}</span>${badge(foe)}
+                            <span class="pvp-mon-lv">Lv${foe.level}</span>${rarity(foe)}${badge(foe)}
                             <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(foe))}" style="width:${hpPct(foe)}%"></div></div>
                         </div>
                         <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}" src="${this.config.getSpriteUrl(foe.speciesId, foe.shiny)}" alt="${foe.name}"/>
@@ -370,7 +373,7 @@ class FlickemonPvp {
                              onerror="this.src='${this.config.getSpriteUrl(me.speciesId, me.shiny)}'" alt="${me.name}"/>
                         <div class="pvp-nameplate">
                             <span class="pvp-mon-name">${me.name}</span>
-                            <span class="pvp-mon-lv">Lv${me.level}</span>${badge(me)}
+                            <span class="pvp-mon-lv">Lv${me.level}</span>${rarity(me)}${badge(me)}
                             <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(me))}" style="width:${hpPct(me)}%"></div></div>
                             <div class="pvp-hp-num">${me.hp}/${me.maxHp}</div>
                         </div>

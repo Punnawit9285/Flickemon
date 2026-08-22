@@ -185,6 +185,7 @@ function toCombatant(pokemon, species, config) {
         // Cosmetic only — a shiny fights exactly like any other — but it has to
         // reach the opponent's screen or half the point of owning one is lost.
         shiny: pokemon.shiny === true,
+        legendary: species.isLegendary === true,
         name: species.name,
         types: [...species.types],
         level: pokemon.level,

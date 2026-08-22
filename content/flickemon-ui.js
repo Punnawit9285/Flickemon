@@ -227,6 +227,7 @@ class FlickemonUI {
                                 <div class="hp-bar-track">
                                     <div class="hp-bar-fill" style="width: ${Math.round((wild.currentHp / wild.maxHp) * 100)}%;"></div>
                                 </div>
+                                ${wild.wildSpecies.isLegendary ? '<div class="legendary-flag">★ Legendary!</div>' : ''}
                                 ${wild.shiny ? '<div class="shiny-flag">✦ Shiny!</div>' : ''}
                                 <div class="status-line ${wild.status}">
                                     ${wild.status === 'captured' ? `🏆 Captured! (+${wild.expGained || 0} EXP)` : wild.status === 'defeated' ? `💥 Defeated! (+${wild.expGained || 0} EXP)` : wild.status === 'escaped' ? `💨 Escaped! (+${wild.expGained || 0} EXP)` : `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`}
@@ -702,7 +703,11 @@ class FlickemonUI {
                     content.innerHTML = `
                         <div class="partner-section">
                             <img src="${this.config.getSpriteUrl(activeSpecies.id, active.shiny)}" alt="${activeSpecies.name}" class="partner-big-sprite${active.shiny ? ' is-shiny' : ''}"/>
-                            <h2 class="partner-big-name">${activeSpecies.name}</h2>
+                            <h2 class="partner-big-name">
+                                ${activeSpecies.name}
+                                ${activeSpecies.isLegendary ? '<span class="badge badge-legendary" title="Legendary">★</span>' : ''}
+                                ${active.shiny ? '<span class="badge badge-shiny" title="Shiny">✦</span>' : ''}
+                            </h2>
                             <div class="partner-types">${activeSpecies.types.map(t => `<span class="type-badge" data-type="${t}">${t}</span>`).join('')}</div>
                             <p class="partner-big-level">Level ${active.level}</p>
                             
@@ -773,6 +778,7 @@ class FlickemonUI {
                                     <div class="party-row-info">
                                         <span class="party-row-name">
                                             ${sp.name}${dupe}
+                                            ${sp.isLegendary ? '<span class="badge badge-legendary" title="Legendary">★</span>' : ''}
                                             ${pk.shiny ? '<span class="badge badge-shiny" title="Shiny">✦</span>' : ''}
                                             ${isActive ? '<span class="badge badge-active">ACTIVE</span>' : ''}
                                             ${onTeam && !isActive ? '<span class="badge badge-team">TEAM</span>' : ''}
@@ -862,7 +868,7 @@ class FlickemonUI {
                                                 width="64" height="64" loading="lazy" decoding="async"/>`
                                         : `<div class="pokedex-unknown">?</div>`
                                     }
-                                    <span class="pokedex-num">#${sp.id}</span>
+                                    <span class="pokedex-num">#${sp.id}${sp.isLegendary && caught ? ' ★' : ''}</span>
                                     ${caught ? `<span class="pokedex-name">${sp.name}</span>` : ''}
                                 </div>
                             `;
