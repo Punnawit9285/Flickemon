@@ -6,6 +6,7 @@ Flickémon runs entirely client-side as a content script. It doesn't talk to Fli
 
 ## How to download & Beta-testing !! (very important -- infact you only need this)
 **All progress during Beta-testing will be reset when offical launch and all admin authorities given wilk be revoked !!
+
 1.<img width="2637" height="1590" alt="image" src="https://github.com/user-attachments/assets/40134d36-941f-4791-97f5-7cee820470f7" />
 
 2. extract zip file --> Go to `chrome://extensions`, enable **Developer mode** (top right) --> Click **Load unpacked** and select the repo folder
