@@ -317,6 +317,12 @@ class FlickemonTrade {
                 await this.engine.tradeOffer(this.code, same ? null : {
                     instanceId: pk.instanceId, speciesId: pk.speciesId,
                     level: pk.level, totalExp: pk.totalExp, shiny: pk.shiny === true,
+                    // Stones travel with the Pokémon, so the offer has to name
+                    // them — otherwise the receiver is shown a mega and handed
+                    // something that can no longer become one. The receiving
+                    // side filters this list against the species it is actually
+                    // getting; see sanitizeTradedStones.
+                    megaStones: Array.isArray(pk.megaStones) ? pk.megaStones : [],
                 });
                 this.poll();
             });

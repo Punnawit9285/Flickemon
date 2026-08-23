@@ -180,13 +180,37 @@ function makeRng(seedStr) {
 /** Battle-ready copy of a party member. Never mutates the source. */
 function toCombatant(pokemon, species, config) {
     const maxHp = config.calculateRealMaxHp(species.baseStats.hp, pokemon.level);
+
+    // A mega is resolved here rather than passed in, because everything needed
+    // is already to hand: the stone list lives on the party member and the
+    // roster lives on the config. Same three conditions the engine's
+    // activeMegaForm applies — selected, owned, and belonging to this species.
+    const mega = pokemon.megaActive
+        && Array.isArray(pokemon.megaStones)
+        && pokemon.megaStones.includes(pokemon.megaActive)
+        ? (config.megaFormsFor(species.id) || []).find(f => f.key === pokemon.megaActive) || null
+        : null;
+
     return {
         speciesId: species.id,
         // Cosmetic only — a shiny fights exactly like any other — but it has to
         // reach the opponent's screen or half the point of owning one is lost.
         shiny: pokemon.shiny === true,
         legendary: species.isLegendary === true,
-        name: species.name,
+        // A mega is NOT cosmetic — see damageMult below — but like shiny it has
+        // to reach the opponent's screen, and for the same reason.
+        megaForm: mega ? mega.key : null,
+        // What to draw. Equal to speciesId unless megaed, so a reader that has
+        // never heard of megas still renders every combatant correctly.
+        spriteId: mega ? mega.spriteId : species.id,
+        // The multiplier travels as a NUMBER rather than being looked up from
+        // megaForm on each side. Two clients whose rosters disagree about a key
+        // would otherwise compute different damage from the same document — one
+        // applying 1.30 and the other 1, desyncing HP with no error anywhere.
+        // A self-describing number makes the document the single source of
+        // truth, which is what the rest of the wire format already assumes.
+        damageMult: mega ? config.MEGA_DAMAGE_MULTIPLIER : 1,
+        name: mega ? mega.name : species.name,
         types: [...species.types],
         level: pokemon.level,
         maxHp,
@@ -218,6 +242,27 @@ function effectiveDefense(c) {
 
 function effectiveSpeed(c) {
     return c.status === 'paralyze' ? c.speed * 0.5 : c.speed;
+}
+
+// The mega bonus, clamped on READ.
+//
+// This field arrives in a document the opponent can also write, so an
+// unclamped read is a "99x damage" forgery waiting to happen. Both clients
+// clamp identically, so pinning it to [1, MEGA_MULT_CAP] costs no determinism —
+// a forged value simply resolves to the same legal number on both screens
+// instead of only on the forger's.
+//
+// Held here rather than read from FlickemonConfig even though config loads
+// first: every content script shares one global scope, so the name must be
+// distinct from the config's, and turn resolution is deliberately free of
+// outside lookups. Keep the value in step with MEGA_DAMAGE_MULTIPLIER there —
+// a test asserts they match.
+const MEGA_MULT_CAP = 1.30;
+
+function megaMult(c) {
+    const raw = Number(c && c.damageMult);
+    if (!Number.isFinite(raw)) return 1;
+    return Math.min(MEGA_MULT_CAP, Math.max(1, raw));
 }
 
 /**
@@ -253,7 +298,7 @@ function computeDamage(attacker, defender, move, rng) {
 
     const damage = Math.max(
         eff === 0 ? 0 : 1,
-        Math.floor(base * stab * eff * spread * (crit ? 1.5 : 1) * DAMAGE_SCALE)
+        Math.floor(base * stab * eff * spread * (crit ? 1.5 : 1) * DAMAGE_SCALE * megaMult(attacker))
     );
     return { damage, effectiveness: eff, crit };
 }
@@ -397,7 +442,7 @@ function decideOrder(p1, p2, a1, a2, rng) {
 }
 
 window.FlickemonBattle = {
-    TYPE_CHART, MOVES, DAMAGE_SCALE, getMove, getMovesetFor,
+    TYPE_CHART, MOVES, DAMAGE_SCALE, MEGA_MULT_CAP, megaMult, getMove, getMovesetFor,
     typeEffectiveness, computeDamage, resolveTurn, decideOrder,
     toCombatant, makeRng, effectiveSpeed, effectiveDefense, effectiveAttack,
     STATUS_LABEL, isImmuneToStatus,

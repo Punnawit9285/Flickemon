@@ -13,6 +13,16 @@ const EVOLUTION_OVERLAY_MS = 6000;
 // churn of a real particle system.
 const EVOLUTION_SPARK_COUNT = 12;
 
+// Mega evolution runs longer than an ordinary one and is meant to: it is a
+// once-per-Pokémon event rather than something that happens every few levels,
+// and the extra time buys the stone its own entrance before the transformation
+// begins. Keyed to the delays in styles.css, same as EVOLUTION_OVERLAY_MS.
+const MEGA_OVERLAY_MS = 8500;
+
+// More shards than the evolution's sparks, thrown in two rings — this is the
+// stone breaking apart, not a glow.
+const MEGA_SHARD_COUNT = 20;
+
 // Starter base stats span 31-90, so bars are drawn against a fixed 100 rather
 // than the trio's own maximum: that keeps a Gen 1 bar comparable to a Gen 9 one.
 const STARTER_STAT_SCALE = 100;
@@ -201,7 +211,7 @@ class FlickemonUI {
                 <div class="hud-columns">
                     <!-- Left: Active Partner -->
                     <div class="hud-col partner-col">
-                        <img src="${this.config.getSpriteUrl(activeSpecies.id, active.shiny)}" alt="${activeSpecies.name}" class="partner-mini-sprite${active.shiny ? ' is-shiny' : ''}"/>
+                        <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(active), active.shiny)}" alt="${activeSpecies.name}" class="partner-mini-sprite${active.shiny ? ' is-shiny' : ''}${this.engine.activeMegaForm(active) ? ' is-mega' : ''}"/>
                         <div class="partner-info">
                             <div class="name-line">
                                 <strong class="pk-name">${activeSpecies.name}</strong>
@@ -218,7 +228,7 @@ class FlickemonUI {
                     <div class="hud-col battle-col-box">
                         ${wild ? `
                             <span class="vs-badge">VS</span>
-                            <img src="${this.config.getSpriteUrl(wild.wildSpecies.id, wild.shiny)}" alt="${wild.wildSpecies.name}" class="wild-mini-sprite ${wild.status} ${wild.shiny ? 'is-shiny' : ''} ${this.isFlashingDamage ? 'damage-flash' : ''}"/>
+                            <img src="${this.config.getSpriteUrl(this.wildSpriteId(wild), wild.shiny)}" alt="${wild.wildSpecies.name}" class="wild-mini-sprite ${wild.status} ${wild.shiny ? 'is-shiny' : ''} ${wild.megaForm ? 'is-mega' : ''} ${this.isFlashingDamage ? 'damage-flash' : ''}"/>
                             <div class="battle-info">
                                 <div class="name-line">
                                     <strong class="pk-name">${wild.wildSpecies.name}</strong>
@@ -229,6 +239,7 @@ class FlickemonUI {
                                 </div>
                                 ${wild.wildSpecies.isLegendary ? '<div class="legendary-flag">★ Legendary!</div>' : ''}
                                 ${wild.shiny ? '<div class="shiny-flag">✦ Shiny!</div>' : ''}
+                                ${wild.megaForm ? `<div class="mega-flag">◆ ${this.wildMegaName(wild)}!</div>` : ''}
                                 <div class="status-line ${wild.status}">
                                     ${wild.status === 'captured' ? `🏆 Captured! (+${wild.expGained || 0} EXP)` : wild.status === 'defeated' ? `💥 Defeated! (+${wild.expGained || 0} EXP)` : wild.status === 'escaped' ? `💨 Escaped! (+${wild.expGained || 0} EXP)` : `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`}
                                 </div>
@@ -702,11 +713,12 @@ class FlickemonUI {
                     const expProg = this.engine.getExpProgress(active);
                     content.innerHTML = `
                         <div class="partner-section">
-                            <img src="${this.config.getSpriteUrl(activeSpecies.id, active.shiny)}" alt="${activeSpecies.name}" class="partner-big-sprite${active.shiny ? ' is-shiny' : ''}"/>
+                            <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(active), active.shiny)}" alt="${activeSpecies.name}" class="partner-big-sprite${active.shiny ? ' is-shiny' : ''}${this.engine.activeMegaForm(active) ? ' is-mega' : ''}"/>
                             <h2 class="partner-big-name">
                                 ${activeSpecies.name}
                                 ${activeSpecies.isLegendary ? '<span class="badge badge-legendary" title="Legendary">★</span>' : ''}
                                 ${active.shiny ? '<span class="badge badge-shiny" title="Shiny">✦</span>' : ''}
+                                ${this.engine.activeMegaForm(active) ? `<span class="badge badge-mega" title="${this.engine.activeMegaForm(active).name} — deals 1.3x damage">MEGA</span>` : ''}
                             </h2>
                             <div class="partner-types">${activeSpecies.types.map(t => `<span class="type-badge" data-type="${t}">${t}</span>`).join('')}</div>
                             <p class="partner-big-level">Level ${active.level}</p>
@@ -771,10 +783,16 @@ class FlickemonUI {
                             const full = this.engine.isTeamFull();
                             const dupe = copiesOf.get(pk.speciesId) > 1
                                 ? `<span class="party-row-copy">#${ordinal.get(pk.instanceId)}</span>` : '';
+                            // Mega: what it is wearing now, what it could wear,
+                            // and what it owns but cannot use yet.
+                            const megaOn = this.engine.activeMegaForm(pk);
+                            const megaReady = this.engine.availableMegaForms(pk);
+                            const megaDormant = this.engine.dormantMegaStones(pk);
+                            const stoneNames = [...megaReady, ...megaDormant].map(f => f.stone);
                             return `
                                 <div class="party-row ${isActive ? 'is-active' : ''} ${onTeam ? 'on-team' : ''}"
                                      data-instance="${pk.instanceId}">
-                                    <img src="${this.config.getSpriteUrl(sp.id, pk.shiny)}" alt="${sp.name}" class="party-row-sprite${pk.shiny ? ' is-shiny' : ''}"/>
+                                    <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(pk), pk.shiny)}" alt="${sp.name}" class="party-row-sprite${pk.shiny ? ' is-shiny' : ''}${megaOn ? ' is-mega' : ''}"/>
                                     <div class="party-row-info">
                                         <span class="party-row-name">
                                             ${sp.name}${dupe}
@@ -782,8 +800,13 @@ class FlickemonUI {
                                             ${pk.shiny ? '<span class="badge badge-shiny" title="Shiny">✦</span>' : ''}
                                             ${isActive ? '<span class="badge badge-active">ACTIVE</span>' : ''}
                                             ${onTeam && !isActive ? '<span class="badge badge-team">TEAM</span>' : ''}
+                                            ${megaOn ? `<span class="badge badge-mega" title="${megaOn.name} — deals 1.3x damage">MEGA</span>` : ''}
                                         </span>
-                                        <span class="party-row-level">Lv. ${pk.level}</span>
+                                        <span class="party-row-level">Lv. ${pk.level}${
+                                            stoneNames.length
+                                                ? `<span class="party-row-stones" title="Mega stones held by this Pokémon">◆ ${stoneNames.join(' · ')}${
+                                                      megaDormant.length ? ' (locked until it evolves)' : ''}</span>`
+                                                : ''}</span>
                                     </div>
                                     <div class="party-row-actions">
                                         <button class="row-btn partner-btn ${isActive ? 'on' : ''}"
@@ -801,6 +824,17 @@ class FlickemonUI {
                                                         : full ? `Team is full (${maxTeam})` : 'Add to team'}">
                                             ${onTeam ? '✓' : '+'}
                                         </button>
+                                        ${megaReady.length || megaDormant.length ? `
+                                        <button class="row-btn mega-btn ${megaOn ? 'on' : ''}"
+                                                data-instance="${pk.instanceId}"
+                                                ${megaReady.length ? '' : 'disabled'}
+                                                title="${megaReady.length
+                                                    ? (megaOn
+                                                        ? (megaReady.length > 1
+                                                            ? `${megaOn.name} — click for the next form`
+                                                            : `${megaOn.name} — click to revert`)
+                                                        : `Mega Evolve into ${megaReady[0].name}`)
+                                                    : `${megaDormant[0].stone} is held but unusable until ${sp.name} ${this.megaUnlockHint(pk)}`}">◆</button>` : ''}
                                     </div>
                                 </div>
                             `;
@@ -830,6 +864,29 @@ class FlickemonUI {
                         e.stopPropagation();
                         if (btn.disabled) return;
                         await this.engine.switchActivePokemon(btn.dataset.instance);
+                        renderTab('party');
+                    });
+                });
+                // Cycles owned forms and then back to normal. The row's own
+                // click handler sets the active partner, so stopping the event
+                // here is mandatory rather than tidy.
+                content.querySelectorAll('.mega-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        if (btn.disabled) return;
+                        const res = await this.engine.toggleMega(btn.dataset.instance);
+                        if (!res.ok) {
+                            if (res.reason === 'dormant') {
+                                alert('That Pokémon holds a Mega Stone but has not reached '
+                                    + 'its final form yet. It will be usable once it evolves.');
+                            }
+                            return;
+                        }
+                        // Deliberately silent. The scene belongs to the first
+                        // transformation — winning the stone, or evolving into a
+                        // form that can finally use one it was already carrying.
+                        // Replaying it on every flick of this button would wear
+                        // out the one moment it exists for.
                         renderTab('party');
                     });
                 });
@@ -961,6 +1018,10 @@ class FlickemonUI {
                             <label class="admin-shiny-toggle">
                                 <input type="checkbox" class="admin-summon-shiny"/> Shiny
                             </label>
+                            <label class="admin-shiny-toggle admin-mega-toggle">
+                                <input type="checkbox" class="admin-summon-mega"/> Mega
+                            </label>
+                            <select class="admin-summon-megaform" title="Which Mega form" hidden></select>
                             <button class="admin-summon-btn">Summon</button>
                         </div>
                         <p class="admin-summon-result"></p>
@@ -1169,12 +1230,39 @@ class FlickemonUI {
                 .map(sp => `<option value="${sp.name}">#${sp.id}</option>`).join('');
         }
 
+        // The form picker only appears for a species that has more than one
+        // Mega, so the common case stays a single checkbox.
+        const megaBox  = adminPanel.querySelector('.admin-summon-mega');
+        const megaSel  = adminPanel.querySelector('.admin-summon-megaform');
+        const speciesInput = adminPanel.querySelector('.admin-summon-input');
+        const syncMegaPicker = () => {
+            const raw = (speciesInput.value || '').trim();
+            const byNumber = Number(raw.replace(/^#/, ''));
+            const sp = Number.isFinite(byNumber) && byNumber > 0
+                ? this.config.getSpeciesById(byNumber)
+                : this.config.POKEMON_REGISTRY.find(x => x.name.toLowerCase() === raw.toLowerCase());
+            const forms = sp ? this.config.megaFormsFor(sp.id) : [];
+            megaBox.disabled = forms.length === 0;
+            if (forms.length === 0) megaBox.checked = false;
+            const show = megaBox.checked && forms.length > 1;
+            megaSel.hidden = !show;
+            if (show) {
+                megaSel.innerHTML = forms.map(f =>
+                    `<option value="${f.key}">${f.name}</option>`).join('');
+            }
+        };
+        speciesInput?.addEventListener('input', syncMegaPicker);
+        megaBox?.addEventListener('change', syncMegaPicker);
+        syncMegaPicker();
+
         const summonBtn = adminPanel.querySelector('.admin-summon-btn');
         const summonResult = adminPanel.querySelector('.admin-summon-result');
         summonBtn?.addEventListener('click', async () => {
             const raw = (adminPanel.querySelector('.admin-summon-input').value || '').trim();
             const lvlRaw = adminPanel.querySelector('.admin-summon-lvl').value;
             const shiny = adminPanel.querySelector('.admin-summon-shiny').checked;
+            const wantMega = adminPanel.querySelector('.admin-summon-mega').checked;
+            const formSel = adminPanel.querySelector('.admin-summon-megaform');
             if (!raw) return;
 
             // Accept a dex number, "#25", or a name in any casing.
@@ -1190,14 +1278,31 @@ class FlickemonUI {
                 return;
             }
 
+            const forms = this.config.megaFormsFor(species.id);
+            if (wantMega && forms.length === 0) {
+                summonResult.textContent = `${species.name} has no Mega form.`;
+                summonResult.className = 'admin-summon-result bad';
+                return;
+            }
+            // With two or three forms the picker decides; with one there is
+            // nothing to pick and the checkbox is the whole choice.
+            const megaForm = wantMega
+                ? (forms.find(f => f.key === formSel.value) || forms[0]).key
+                : null;
+
             const res = await this.engine.adminSummonOpponent(species.id, {
                 shiny,
                 level: lvlRaw ? Number(lvlRaw) : undefined,
+                megaForm,
             });
             summonResult.textContent = res.ok
-                ? `${res.shiny ? 'Shiny ' : ''}${res.species.name} (Lv.${res.level}) is now the opponent.`
+                ? `${res.mega ? res.mega.name : `${res.shiny ? 'Shiny ' : ''}${res.species.name}`} (Lv.${res.level}) is now the opponent.`
                 : 'Could not summon that.';
             summonResult.className = `admin-summon-result ${res.ok ? 'good' : 'bad'}`;
+            // Summoning a mega shows the transformation, same as winning one.
+            if (res.ok && res.mega) {
+                this.showMegaOverlay(res.mega, { speciesId: res.species.id, shiny: res.shiny });
+            }
         });
 
         adminPanel.querySelector('.admin-set-lvl-btn').addEventListener('click', async () => {
@@ -1216,6 +1321,41 @@ class FlickemonUI {
      * request fullscreen through the old API, and Chrome only mirrors the state
      * onto the property that was used.
      */
+    /**
+     * What a Pokémon still has to do before a held stone works.
+     *
+     * Naming the form it is waiting for is the difference between "some day"
+     * and "get this to Charizard". The already-fully-evolved branch should be
+     * unreachable — a stone is only dormant because a later form owns it — but
+     * saying "reaches its final form" to something that is already there would
+     * be nonsense, so it is handled rather than assumed away.
+     */
+    megaUnlockHint(member) {
+        if (this.config.isFullyEvolved(member.speciesId)) {
+            return 'can use it — this stone belongs to a different form';
+        }
+        const finalSpecies = this.config.getSpeciesById(this.config.finalFormOf(member.speciesId));
+        return finalSpecies ? `evolves into ${finalSpecies.name}` : 'reaches its final form';
+    }
+
+    /** Sprite id for a wild opponent — the mega form when one was summoned. */
+    wildSpriteId(wild) {
+        if (!wild) return null;
+        const form = this.wildMegaForm(wild);
+        return form ? form.spriteId : wild.wildSpecies.id;
+    }
+
+    wildMegaForm(wild) {
+        if (!wild || !wild.megaForm) return null;
+        return this.config.megaFormsFor(wild.wildSpecies.id)
+            .find(f => f.key === wild.megaForm) || null;
+    }
+
+    wildMegaName(wild) {
+        const form = this.wildMegaForm(wild);
+        return form ? form.name : 'Mega';
+    }
+
     isFullscreen() {
         return !!(document.fullscreenElement || document.webkitFullscreenElement);
     }
@@ -1258,6 +1398,24 @@ class FlickemonUI {
     }
 
     /**
+     * Queues the mega transformation scene.
+     *
+     * `form` is a MEGA_FORMS entry; `member` is the party member wearing it, or
+     * a {speciesId, shiny} shaped stand-in for an admin-summoned wild.
+     */
+    showMegaOverlay(form, member) {
+        if (!form || !member) return;
+        const species = this.config.getSpeciesById(member.speciesId);
+        if (!species) return;
+        this.showEvolutionOverlay({
+            kind: 'mega',
+            form,
+            species,
+            shiny: member.shiny === true,
+        });
+    }
+
+    /**
      * Plays queued evolutions one at a time. A long fullscreen session can bank
      * several, and overlapping five-second takeovers would be unreadable.
      */
@@ -1267,7 +1425,11 @@ class FlickemonUI {
         if (!evo) return;
 
         this.evolutionPlaying = true;
-        const cancel = this.playEvolutionOverlay(evo, () => {
+        // One queue, two scenes. Megas and evolutions share the fullscreen
+        // suspend/replay machinery because the problem is identical, but they
+        // are different animations and must not overlap each other either.
+        const play = evo.kind === 'mega' ? this.playMegaOverlay : this.playEvolutionOverlay;
+        const cancel = play.call(this, evo, () => {
             this.currentEvolution = null;
             this.evolutionPlaying = false;
             this.drainEvolutionQueue();
@@ -1339,6 +1501,90 @@ class FlickemonUI {
     }
 
     /** Sparks thrown outward by the burst, evenly spread with a scattered delay. */
+    /**
+     * Renders the mega transformation; calls `done` when dismissed or timed out.
+     * Returns an abort function that tears it down WITHOUT advancing the queue,
+     * exactly like playEvolutionOverlay — suspendEvolutionOverlay calls it on
+     * entering fullscreen.
+     *
+     * Bigger than an evolution on purpose. An evolution happens every few
+     * levels; this happens once per Pokémon, so it gets the longer runtime, the
+     * stone's own entrance, and a shockwave the evolution scene has no
+     * equivalent of. The timeline lives in styles.css and every beat is an
+     * animation-delay — the only JS timer here is the one that ends it.
+     */
+    playMegaOverlay(evo, done) {
+        const overlay = document.createElement('div');
+        overlay.className = 'mega-overlay-screen';
+
+        const queued = this.pendingEvolutions.length;
+        const species = evo.species;
+        const form = evo.form;
+
+        overlay.innerHTML = `
+            <div class="mega-flash"></div>
+            <div class="mega-box">
+                ${evo.deferred ? '<p class="evo-deferred">While you were watching…</p>' : ''}
+                <p class="mega-lead"><b>${species.name}</b> is reacting to <b>${form.stone}</b>!</p>
+                <div class="mega-stage">
+                    <div class="mega-vortex"></div>
+                    <div class="mega-ring mega-ring-1"></div>
+                    <div class="mega-ring mega-ring-2"></div>
+                    <div class="mega-ring mega-ring-3"></div>
+                    <div class="mega-stone-orbit"><span class="mega-stone"></span></div>
+                    <div class="mega-shock"></div>
+                    <div class="mega-burst"></div>
+                    <div class="mega-morph">
+                        <img src="${this.config.getSpriteUrl(species.id, evo.shiny)}"
+                             alt="${species.name}" class="old-sprite"/>
+                        <img src="${this.config.getSpriteUrl(form.spriteId, evo.shiny)}"
+                             alt="${form.name}" class="new-sprite"/>
+                    </div>
+                    <div class="mega-shards">${this.renderMegaShards()}</div>
+                </div>
+                <div class="mega-outcome">
+                    <p class="mega-desc">${species.name} Mega Evolved into <b>${form.name}</b>!</p>
+                    <div class="types-row">${species.types.map(t =>
+                        `<span class="type-pill" data-type="${t}">${t}</span>`).join('')}</div>
+                    <p class="mega-boon">◆ Deals 1.3x damage while studying and in PVP</p>
+                </div>
+                ${queued ? `<p class="evo-queue">+${queued} more</p>` : ''}
+                <p class="evo-skip">Click anywhere to skip</p>
+            </div>`;
+
+        // Same three-way race as the evolution scene: the timer, a click, or an
+        // abort from fullscreen. One `settled` flag so none of them can double-fire.
+        let settled = false;
+        const settle = (advance) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            overlay.remove();
+            if (advance) done();
+        };
+        const timer = setTimeout(() => settle(true), MEGA_OVERLAY_MS);
+        overlay.addEventListener('click', () => settle(true));
+
+        document.body.appendChild(overlay);
+        return () => settle(false);
+    }
+
+    /**
+     * The stone's shards. Two rings rather than one — an inner fast ring and an
+     * outer slow one — which reads as debris rather than as a starburst.
+     */
+    renderMegaShards() {
+        let out = '';
+        for (let i = 0; i < MEGA_SHARD_COUNT; i++) {
+            const ring = i % 2;
+            const angle = (360 / MEGA_SHARD_COUNT) * i + (ring ? 9 : 0);
+            const reach = ring ? 230 : 150;
+            const delay = (ring ? 0.08 : 0) + (i / MEGA_SHARD_COUNT) * 0.16;
+            out += `<i style="--angle:${angle}deg;--reach:${reach}px;--delay:${delay.toFixed(3)}s"></i>`;
+        }
+        return out;
+    }
+
     renderEvolutionSparks() {
         return Array.from({ length: EVOLUTION_SPARK_COUNT }, (_, i) => {
             const angle = Math.round((360 / EVOLUTION_SPARK_COUNT) * i);
