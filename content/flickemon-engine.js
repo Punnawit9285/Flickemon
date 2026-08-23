@@ -157,6 +157,14 @@ class FlickemonEngine {
             // so they still line up across devices — see mergeCloudState.
             favouriteIds: [],
             teamIds: [],
+            // The PVP line-up, kept apart from teamIds on purpose. The EXP team
+            // decides who shares the partner's study EXP, which is a long-term
+            // commitment; a battle line-up is picked to beat the trainer in
+            // front of you and changed again next match. Tying them together
+            // meant every PVP tweak quietly re-routed EXP for the rest of the
+            // day. Ordered — slot 1 leads — and persisted, so a line-up that
+            // worked is still there next time.
+            pvpTeamIds: [],
             isHidden: false,
             activeInstanceId: null,
             party: [],
@@ -171,6 +179,9 @@ class FlickemonEngine {
             // { type, expiresAt } from a PVP win. One at a time, by design —
             // see REWARD_DURATION_MS in flickemon-config.js.
             activeReward: null,
+            // Set on a PVP loss; wins earn nothing until it passes. See
+            // PVP_LOSS_LOCKOUT_MS in flickemon-config.js.
+            rewardLockUntil: 0,
             pokedex: [],
             // Derived — the sum of studyMinutes below. Kept as a field because
             // the admin portal queries it as a column, and because every older
@@ -279,6 +290,12 @@ class FlickemonEngine {
         };
         s.favouriteIds = migrateIds(s.favouriteIds);
         s.teamIds = migrateIds(s.teamIds).slice(0, this.config.MAX_TEAM_SIZE);
+        s.pvpTeamIds = migrateIds(s.pvpTeamIds).slice(0, this.config.MAX_TEAM_SIZE);
+
+        // A lockout that ran out while the tab was closed is simply over.
+        if (!Number.isFinite(s.rewardLockUntil) || s.rewardLockUntil <= Date.now()) {
+            s.rewardLockUntil = 0;
+        }
         s.schemaVersion = 2;
         if (!Number.isFinite(s.totalMinutesWatched) || s.totalMinutesWatched < 0) s.totalMinutesWatched = 0;
 
@@ -570,6 +587,8 @@ class FlickemonEngine {
             battleMode: this.gameState.battleMode,
             favouriteIds: this.gameState.favouriteIds,
             teamIds: this.gameState.teamIds,
+            pvpTeamIds: this.gameState.pvpTeamIds || [],
+            rewardLockUntil: this.gameState.rewardLockUntil || 0,
             lastSyncedAt: this.gameState.lastSyncedAt,
         };
     }
@@ -717,6 +736,17 @@ class FlickemonEngine {
             if (fav) this.gameState.favouriteIds = fav;
             const team = adopt(cloud.teamIds);
             if (team) this.gameState.teamIds = team.slice(0, this.config.MAX_TEAM_SIZE);
+            const pvpTeam = adopt(cloud.pvpTeamIds);
+            if (pvpTeam) this.gameState.pvpTeamIds = pvpTeam.slice(0, this.config.MAX_TEAM_SIZE);
+        }
+
+        // The LATER lockout wins, unlike the preferences above, and it is taken
+        // regardless of which save is newer. A lockout is a penalty, so the
+        // merge rule that matters is the one a student cannot game: picking up
+        // a second device must never be a way to shed a loss.
+        if (Number.isFinite(cloud.rewardLockUntil)) {
+            this.gameState.rewardLockUntil =
+                Math.max(this.gameState.rewardLockUntil || 0, cloud.rewardLockUntil);
         }
 
         this.gameState.lastSyncedAt = Math.max(this.gameState.lastSyncedAt || 0, cloud.lastSyncedAt || 0);
@@ -924,19 +954,72 @@ class FlickemonEngine {
     async tradeAck(code)            { return await this.sendToWorker({ type: 'TRADE_ACK', code }); }
     async tradeClose(code)          { return await this.sendToWorker({ type: 'TRADE_CLOSE', code }); }
 
+    // ─────────────────────── PVP line-up ───────────────────────
+    //
+    // Stored separately from the EXP team (see pvpTeamIds in createEmptyState).
+    // Any party member may be picked, not only the six sharing study EXP, and
+    // the order is the order they were added — slot 1 leads.
+
+    /** The saved PVP line-up as instanceIds, dropping anything no longer owned. */
+    getPvpTeam() {
+        const owned = new Set(this.gameState.party.map(p => p.instanceId));
+        const stored = (this.gameState.pvpTeamIds || []).filter(id => owned.has(id));
+
+        // An account that has never opened PVP starts from its EXP team rather
+        // than from nothing — an empty line-up on first visit reads as a bug,
+        // and the EXP team is the best guess at who this student battles with.
+        // Not written back: the first real edit is what makes it a saved
+        // line-up, and until then the two should keep tracking each other.
+        if (stored.length === 0) return this.getTeam();
+
+        return stored.slice(0, this.config.MAX_TEAM_SIZE);
+    }
+
+    isOnPvpTeam(instanceId) { return this.getPvpTeam().includes(instanceId); }
+
+    isPvpTeamFull() { return this.getPvpTeam().length >= this.config.MAX_TEAM_SIZE; }
+
+    /**
+     * Adds or removes one Pokémon from the PVP line-up.
+     *
+     * Returns { ok, reason }. Unlike the EXP team there is no protected member:
+     * the active partner has no special standing in a battle line-up, which is
+     * the whole reason these are two lists. Removing everyone is allowed right
+     * up to the last one, since a line-up of nobody cannot enter a match.
+     */
+    async togglePvpTeamMember(instanceId) {
+        const list = this.getPvpTeam().slice();   // materialises the EXP-team seed
+        const i = list.indexOf(instanceId);
+
+        if (i >= 0) {
+            if (list.length <= 1) return { ok: false, reason: 'last' };
+            list.splice(i, 1);
+        } else {
+            if (list.length >= this.config.MAX_TEAM_SIZE) return { ok: false, reason: 'full' };
+            if (!this.gameState.party.some(p => p.instanceId === instanceId)) {
+                return { ok: false, reason: 'unknown' };
+            }
+            list.push(instanceId);
+        }
+
+        this.gameState.pvpTeamIds = list;
+        this.emitState();
+        await this.saveGameState();
+        return { ok: true };
+    }
+
     /**
      * The team taken into a PVP battle, as plain battle-ready combatants.
      * Sent over the wire so the opponent can render and simulate it without
      * needing to look anything up.
      *
-     * `size` is the format's team size. The cut is taken from getTeam(), which
-     * puts the active partner first, so a 1v1 always sends the Pokémon the
-     * student is actually training rather than an arbitrary party member.
+     * `size` is the format's team size, and the cut is taken from the front of
+     * the line-up — so in 1v1 slot 1 is the entrant.
      */
     buildPvpTeam(size = this.config.MAX_TEAM_SIZE) {
         const B = window.FlickemonBattle;
         const out = [];
-        for (const instanceId of this.getTeam()) {
+        for (const instanceId of this.getPvpTeam()) {
             const member = this.gameState.party.find(p => p.instanceId === instanceId);
             if (!member) continue;
             const species = this.config.getSpeciesById(member.speciesId);
@@ -960,6 +1043,30 @@ class FlickemonEngine {
         return { ...r, msLeft: r.expiresAt - Date.now() };
     }
 
+    /** Milliseconds left on the post-loss lockout, or 0 when there is none. */
+    getRewardLock() {
+        const until = this.gameState.rewardLockUntil || 0;
+        if (until <= Date.now()) {
+            if (until) this.gameState.rewardLockUntil = 0;
+            return 0;
+        }
+        return until - Date.now();
+    }
+
+    /**
+     * Starts the no-reward window after a defeat.
+     *
+     * Extends rather than replaces, so losing twice in a row cannot shorten the
+     * lockout the first loss started.
+     */
+    async recordPvpLoss() {
+        const until = Date.now() + this.config.PVP_LOSS_LOCKOUT_MS;
+        this.gameState.rewardLockUntil = Math.max(this.gameState.rewardLockUntil || 0, until);
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+        return { lockedForMs: this.getRewardLock() };
+    }
+
     /**
      * Grants a random boost for winning a PVP battle.
      *
@@ -971,6 +1078,10 @@ class FlickemonEngine {
     async grantPvpReward(durationMs = this.config.REWARD_DURATION_MS) {
         const running = this.getActiveReward();
         if (running) return { granted: false, reason: 'active', reward: running };
+
+        // A recent loss pays nothing, however the next match went.
+        const lockMsLeft = this.getRewardLock();
+        if (lockMsLeft > 0) return { granted: false, reason: 'locked', msLeft: lockMsLeft };
 
         // The caller passes the format's duration. Clamped rather than trusted:
         // this figure decides how long a boost runs, and it arrives from the
@@ -1053,8 +1164,9 @@ class FlickemonEngine {
         this.gameState.releasedIds = [...new Set([...(this.gameState.releasedIds || []), givenId])];
         this.gameState.party.push(arrival);
 
-        // The departed Pokémon cannot stay on the team or in the favourites.
+        // The departed Pokémon cannot stay on either team or in the favourites.
         this.gameState.teamIds = (this.gameState.teamIds || []).filter(id => id !== givenId);
+        this.gameState.pvpTeamIds = (this.gameState.pvpTeamIds || []).filter(id => id !== givenId);
         this.gameState.favouriteIds = (this.gameState.favouriteIds || []).filter(id => id !== givenId);
         if (wasActive) this.gameState.activeInstanceId = arrival.instanceId;
 

@@ -83,6 +83,20 @@ const SHINY_CHANCE = 1 / 512;
 // to earn more per hour of battling.
 const REWARD_DURATION_MS = 60 * 60 * 1000;   // fallback only; modes set the real one
 
+// Losing locks you out of rewards for half an hour.
+//
+// Without it the no-stacking rule has a hole: two students who both want a
+// boost can take turns throwing matches, and each collects on their scheduled
+// win. Rewards exist to send someone back to a lecture, so they have to cost
+// something to lose. Half an hour is long enough that trading wins is slower
+// than simply studying, and short enough that a genuine loss is not a
+// punishment you feel for the rest of the session.
+//
+// This is stored on the loser's own save, like every other rule here. A student
+// running the extension unpacked could clear it — the same is true of the party
+// and the Pokédex, and none of it is worth a server to defend.
+const PVP_LOSS_LOCKOUT_MS = 30 * 60 * 1000;
+
 const REWARDS = {
     EXP: 'exp',
     LEGENDARY: 'legendary',
@@ -1863,6 +1877,7 @@ window.FlickemonConfig = {
     SHINY_CHANCE,
     rollShiny,
     REWARD_DURATION_MS,
+    PVP_LOSS_LOCKOUT_MS,
     REWARDS,
     REWARD_INFO,
     REWARD_EXP_MULTIPLIER,
