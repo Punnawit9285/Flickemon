@@ -71,6 +71,8 @@ class FlickemonPvp {
         // Lobby state, kept across re-renders of the lobby screen.
         this.modeId = this.config.DEFAULT_PVP_MODE;
         this.rosterOpen = false;
+        this.rosterFilter = '';
+        this.lossRecorded = false;
         this.switchPanelOpen = false;
 
         // A hidden tab has nobody watching the battle, so reads there are pure
@@ -112,7 +114,7 @@ class FlickemonPvp {
             return;
         }
 
-        if (this.engine.getTeam().length === 0) {
+        if (this.engine.getPvpTeam().length === 0) {
             modal.body.innerHTML = `<div class="pvp-notice">
                 <p class="pvp-8bit">NO TEAM</p>
                 <p class="pvp-sub">Catch a Pokémon first — you need at least one to battle.</p>
@@ -162,6 +164,8 @@ class FlickemonPvp {
 
                 ${this.renderLobbyTeam(mode, team)}
 
+                ${this.renderPrizeList(mode)}
+
                 <button class="pvp-btn pvp-host-btn">WAIT FOR CHALLENGER</button>
 
                 <div class="pvp-divider"><span>OR</span></div>
@@ -189,31 +193,41 @@ class FlickemonPvp {
             </div>`;
 
         return `
-            <p class="pvp-8bit small">YOUR LINE-UP ${fielded.length}/${mode.size}</p>
+            <p class="pvp-8bit small">YOUR PVP LINE-UP ${fielded.length}/${mode.size}</p>
             <div class="pvp-team-strip">
                 ${fielded.map(c => chip(c, false)).join('')}
                 ${benched.map(c => chip(c, true)).join('')}
             </div>
             ${benched.length ? `<p class="pvp-sub">The faded ${benched.length === 1 ? 'one stays' : 'ones stay'}
                 behind in ${mode.label} — pick a bigger format or reorder below.</p>` : ''}
-            <button class="pvp-btn ghost pvp-roster-btn">${this.rosterOpen ? 'DONE' : 'EDIT TEAM'}</button>
+            <button class="pvp-btn ghost pvp-roster-btn">${this.rosterOpen ? 'DONE' : 'EDIT LINE-UP'}</button>
             ${this.rosterOpen ? this.renderRoster() : ''}
         `;
     }
 
     /**
-     * The party, with the same two controls the Game Hub offers: who leads, and
-     * who is on the team at all. Leading matters more here than it does there —
-     * the team is ordered partner-first, so in 1v1 the partner IS the entrant.
+     * Every Pokémon in the party, not just the six sharing study EXP.
+     *
+     * A battle line-up is picked to answer whoever is in front of you, and the
+     * right answer is regularly a Pokémon that has no business soaking up EXP
+     * all day — so the whole party is selectable here. The EXP six are listed
+     * first anyway, because they are who a student thinks of as "my team".
+     *
+     * There is no lead button. Choosing the lead by promoting a Pokémon to
+     * active partner changed who earned EXP for the rest of the day, which is
+     * a heavy side effect for a decision about one battle. Slot 1 leads, and
+     * slot 1 is whoever was added first.
      */
     renderRoster() {
         const party = this.engine.getParty();
-        const active = this.engine.getActivePokemon();
-        const full = this.engine.isTeamFull();
+        const pvpTeam = this.engine.getPvpTeam();
+        const expTeam = this.engine.getTeam();
+        const full = this.engine.isPvpTeamFull();
+        const mode = this.config.getPvpMode(this.modeId);
 
         // Two of the same species at the same level would be indistinguishable,
         // so number the copies — in party order, so a badge does not move when
-        // the list below is sorted differently.
+        // the list below is sorted or filtered differently.
         const copies = new Map();
         party.forEach(pk => copies.set(pk.speciesId, (copies.get(pk.speciesId) || 0) + 1));
         const ordinal = new Map();
@@ -224,52 +238,108 @@ class FlickemonPvp {
             ordinal.set(pk.instanceId, n);
         });
 
-        // Team first, in team order, so the line-up above reads top-down here.
-        const teamOrder = this.engine.getTeam();
-        const ordered = [...party].sort((a, b) => {
-            const ia = teamOrder.indexOf(a.instanceId);
-            const ib = teamOrder.indexOf(b.instanceId);
-            if (ia !== ib) return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
-            return b.level - a.level;
-        });
+        // Picked line-up first in slot order, then the EXP team, then the rest
+        // of the party by level. So the two groups a student already has a name
+        // for sit at the top, and the long tail is still reachable below.
+        const group = (id) => {
+            const p = pvpTeam.indexOf(id);
+            if (p >= 0) return [0, p];
+            const e = expTeam.indexOf(id);
+            if (e >= 0) return [1, e];
+            return [2, 0];
+        };
+
+        const needle = this.rosterFilter.trim().toLowerCase();
+        const rows = party
+            .map(pk => ({ pk, sp: this.engine.getSpeciesForPokemon(pk) }))
+            .filter(({ sp }) => sp && (!needle || sp.name.toLowerCase().includes(needle)))
+            .sort((a, b) => {
+                const [ga, ia] = group(a.pk.instanceId);
+                const [gb, ib] = group(b.pk.instanceId);
+                if (ga !== gb) return ga - gb;
+                if (ia !== ib) return ia - ib;
+                return b.pk.level - a.pk.level;
+            });
 
         return `
+            ${party.length > 12 ? `<input class="pvp-roster-filter" placeholder="Search your party..."
+                       value="${esc(this.rosterFilter)}"/>` : ''}
             <div class="pvp-roster">
-                ${ordered.map(pk => {
-                    const sp = this.engine.getSpeciesForPokemon(pk);
-                    if (!sp) return '';
-                    const isActive = active && pk.instanceId === active.instanceId;
-                    const onTeam = this.engine.isOnTeam(pk.instanceId);
-                    const slot = teamOrder.indexOf(pk.instanceId);
+                ${rows.length === 0 ? '<p class="pvp-sub pvp-roster-empty">Nothing matches that name.</p>' : ''}
+                ${rows.map(({ pk, sp }) => {
+                    const slot = pvpTeam.indexOf(pk.instanceId);
+                    const onTeam = slot >= 0;
+                    const onExpTeam = expTeam.includes(pk.instanceId);
+                    const benched = onTeam && slot >= mode.size;
                     const dupe = copies.get(pk.speciesId) > 1
                         ? `<span class="pvp-roster-copy">#${ordinal.get(pk.instanceId)}</span>` : '';
                     return `
-                        <div class="pvp-roster-row ${onTeam ? 'on-team' : ''}" data-instance="${esc(pk.instanceId)}">
-                            <span class="pvp-roster-slot">${slot >= 0 ? slot + 1 : '·'}</span>
+                        <div class="pvp-roster-row ${onTeam ? 'on-team' : ''} ${benched ? 'benched' : ''}"
+                             data-instance="${esc(pk.instanceId)}">
+                            <span class="pvp-roster-slot">${onTeam ? slot + 1 : '·'}</span>
                             <img src="${this.config.getSpriteUrl(sp.id, pk.shiny)}" alt="${esc(sp.name)}"
+                                 loading="lazy"
                                  class="pvp-roster-sprite${pk.shiny ? ' is-shiny' : ''}"/>
                             <span class="pvp-roster-name">
                                 ${esc(sp.name)}${dupe}
                                 ${sp.isLegendary ? '<span class="pvp-rarity legendary" title="Legendary">★</span>' : ''}
                                 ${pk.shiny ? '<span class="pvp-rarity shiny" title="Shiny">✦</span>' : ''}
                                 <span class="pvp-roster-lv">Lv${pk.level}</span>
+                                ${onExpTeam ? '<span class="pvp-roster-tag" title="Also on your EXP team">EXP</span>' : ''}
                             </span>
-                            <button class="pvp-roster-btn-sm lead-btn ${isActive ? 'on' : ''}"
-                                    data-instance="${esc(pk.instanceId)}" ${isActive ? 'disabled' : ''}
-                                    title="${isActive ? 'Leads the team' : `Lead with ${esc(sp.name)}`}">⚔</button>
                             <button class="pvp-roster-btn-sm join-btn ${onTeam ? 'on' : ''}"
-                                    data-instance="${esc(pk.instanceId)}" ${isActive ? 'disabled' : ''}
-                                    title="${isActive ? 'Your lead is always on the team'
-                                            : onTeam ? 'Remove from team'
-                                            : full ? `Team is full (${this.config.MAX_TEAM_SIZE})` : 'Add to team'}">
-                                ${onTeam ? '✓' : '+'}
+                                    data-instance="${esc(pk.instanceId)}"
+                                    title="${onTeam ? 'Remove from the line-up'
+                                            : full ? `Line-up is full (${this.config.MAX_TEAM_SIZE})` : 'Add to the line-up'}">
+                                ${onTeam ? '\u2713' : '+'}
                             </button>
                         </div>`;
                 }).join('')}
             </div>
-            <p class="pvp-sub">Slot 1 leads. In ${this.config.getPvpMode(this.modeId).label}
-               the first ${this.config.getPvpMode(this.modeId).size} enter the battle.</p>
+            <p class="pvp-sub">Slot 1 leads, and slots run in the order you added them —
+               remove and re-add to move someone. In ${mode.label} the first
+               ${mode.size} enter the battle. This line-up is only used for PVP;
+               your EXP team is untouched.</p>
         `;
+    }
+
+    /**
+     * What a win is actually worth.
+     *
+     * All three were previously a surprise revealed on the results screen,
+     * which made "is this match worth playing" impossible to answer before
+     * playing it. The draw is still random — naming the three does not make it
+     * a choice — but the student can now see the whole prize table, how long
+     * this format runs it for, and whether they are eligible at all.
+     */
+    renderPrizeList(mode) {
+        const lockMs = this.engine.getRewardLock();
+        const running = this.engine.getActiveReward();
+
+        return `
+            <div class="pvp-prizes">
+                <p class="pvp-8bit small">WIN ONE OF THESE — ${mode.rewardLabel.toUpperCase()}</p>
+                <div class="pvp-prize-row">
+                    ${Object.values(this.config.REWARDS).map(type => {
+                        const info = this.config.REWARD_INFO[type];
+                        return `
+                            <div class="pvp-prize">
+                                <span class="pvp-prize-icon">${info.icon}</span>
+                                <span class="pvp-prize-label">${info.label}</span>
+                                <span class="pvp-prize-detail">${info.detail}</span>
+                            </div>`;
+                    }).join('')}
+                </div>
+                <p class="pvp-sub">Drawn at random, one third each.</p>
+                ${lockMs > 0 ? `
+                    <p class="pvp-lock">⛔ You lost recently — wins pay nothing for
+                       ${Math.ceil(lockMs / 60000)} more min.</p>` : ''}
+                ${running ? `
+                    <p class="pvp-lock">${this.config.REWARD_INFO[running.type].icon}
+                       ${this.config.REWARD_INFO[running.type].label} is already running
+                       (${Math.ceil(running.msLeft / 60000)} min left). Boosts never stack,
+                       so a win now earns nothing.</p>` : ''}
+            </div>`;
     }
 
     bindLobby(mode) {
@@ -289,24 +359,28 @@ class FlickemonPvp {
             this.renderLobby();
         });
 
-        body.querySelectorAll('.lead-btn').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                if (btn.disabled) return;
-                await this.engine.switchActivePokemon(btn.dataset.instance);
-                this.renderLobby();
-            });
+        // Re-rendering on every keystroke would drop focus, so put the caret
+        // back where the student left it.
+        const filter = body.querySelector('.pvp-roster-filter');
+        filter?.addEventListener('input', () => {
+            this.rosterFilter = filter.value;
+            const caret = filter.selectionStart;
+            this.renderLobby();
+            const again = this.modal.body.querySelector('.pvp-roster-filter');
+            if (again) { again.focus(); again.setSelectionRange(caret, caret); }
         });
 
         body.querySelectorAll('.join-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 if (btn.disabled) return;
-                const res = await this.engine.toggleTeamMember(btn.dataset.instance);
+                const res = await this.engine.togglePvpTeamMember(btn.dataset.instance);
                 if (!res.ok) {
-                    fail(res.reason === 'active'
-                        ? 'Your lead is always on the team.'
-                        : `Your team is full (${this.config.MAX_TEAM_SIZE}). Remove someone first.`);
+                    fail(res.reason === 'last'
+                        ? 'Keep at least one Pokémon in the line-up.'
+                        : res.reason === 'full'
+                        ? `Your line-up is full (${this.config.MAX_TEAM_SIZE}). Remove someone first.`
+                        : 'That Pokémon is not in your party.');
                     return;
                 }
                 this.renderLobby();
@@ -735,6 +809,16 @@ class FlickemonPvp {
                 .catch(() => {});
         }
 
+        // A defeat starts the no-reward window. Same once-only guard, for the
+        // same reason — and recorded on the loser's own device, so it is the
+        // person who lost who carries it.
+        if (over && !iWon && !this.lossRecorded) {
+            this.lossRecorded = true;
+            this.engine.recordPvpLoss()
+                .then(() => this.renderBattle())
+                .catch(() => {});
+        }
+
         this.modal.body.innerHTML = `
             <div class="pvp-battle">
                 <div class="pvp-mode-tag">${mode.label}</div>
@@ -766,7 +850,7 @@ class FlickemonPvp {
                 ${over ? `
                     <div class="pvp-result ${iWon ? 'win' : 'lose'}">
                         <p class="pvp-8bit">${iWon ? 'YOU WIN!' : 'YOU LOSE...'}</p>
-                        ${iWon ? this.renderRewardNotice() : ''}
+                        ${iWon ? this.renderRewardNotice() : this.renderLossNotice()}
                         <button class="pvp-btn pvp-exit-btn">BACK</button>
                     </div>
                 ` : this.renderActions(me, myTeam, myIndex, phase)}
@@ -894,6 +978,18 @@ class FlickemonPvp {
         const res = this.rewardResult;
         if (!res) return '<p class="pvp-sub">Claiming your reward…</p>';
 
+        // A lockout has no reward attached to name, so it is handled before
+        // the REWARD_INFO lookup rather than falling through it.
+        if (!res.granted && res.reason === 'locked') {
+            const mins = Math.ceil((res.msLeft || 0) / 60000);
+            return `<div class="pvp-reward held">
+                <p class="pvp-8bit small">⛔ NO BOOST — RECENT LOSS</p>
+                <p class="pvp-sub">A defeat costs you ${Math.round(this.config.PVP_LOSS_LOCKOUT_MS / 60000)}
+                minutes of prizes, and ${mins} of those are left. Win again after that
+                and the draw pays as normal.</p>
+            </div>`;
+        }
+
         const info = this.config.REWARD_INFO[res.reward && res.reward.type];
         if (!info) return '';
 
@@ -909,6 +1005,16 @@ class FlickemonPvp {
         return `<div class="pvp-reward won">
             <p class="pvp-8bit small">${info.icon} ${info.label}</p>
             <p class="pvp-sub">${info.detail} Runs for ${this.mode.rewardLabel}.</p>
+        </div>`;
+    }
+
+    /** What the defeat cost, so the lockout is never a silent surprise later. */
+    renderLossNotice() {
+        const mins = Math.round(this.config.PVP_LOSS_LOCKOUT_MS / 60000);
+        return `<div class="pvp-reward held">
+            <p class="pvp-sub">No boost for ${mins} min, even if you win again —
+            otherwise two trainers could take turns losing and collect every time.
+            Your line-up is saved; go and study, then come back.</p>
         </div>`;
     }
 

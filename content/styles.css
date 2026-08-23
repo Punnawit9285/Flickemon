@@ -1693,6 +1693,50 @@
 .pvp-roster-btn-sm.on { background: var(--flick-pvp); color: var(--flick-on-primary); }
 .pvp-roster-btn-sm:disabled { opacity: 0.4; cursor: default; }
 
+/* Picked, but past the cut for the chosen format. */
+.pvp-roster-row.benched .pvp-roster-sprite,
+.pvp-roster-row.benched .pvp-roster-name { opacity: 0.45; }
+.pvp-roster-row.benched .pvp-roster-slot { opacity: 0.45; }
+
+/* Marks a Pokémon that is also on the EXP team, which this screen never edits. */
+.pvp-roster-tag {
+    margin-left: 6px; padding: 0 4px;
+    border: 1px solid var(--flick-border);
+    font-size: 0.52rem; font-weight: 800; letter-spacing: 0.06em;
+    color: var(--flick-text-muted);
+}
+
+.pvp-roster-filter {
+    display: block; width: 100%; box-sizing: border-box;
+    margin: 0.5rem 0 0; padding: 7px 9px;
+    border: 3px solid var(--flick-text);
+    background: var(--flick-card-bg); color: var(--flick-text);
+    font-family: "Courier New", monospace; font-size: 0.76rem;
+}
+.pvp-roster-empty { padding: 0.75rem; margin: 0; }
+
+/* ── Prize board ── */
+.pvp-prizes { margin: 1rem 0 0.5rem; }
+.pvp-prize-row { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; margin: 0.5rem 0; }
+.pvp-prize {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    flex: 1 1 140px; max-width: 168px; padding: 8px 9px;
+    border: 3px solid var(--flick-text);
+    background: var(--flick-card-bg);
+    box-shadow: 3px 3px 0 var(--flick-shadow-strong);
+    font-family: "Courier New", monospace;
+}
+.pvp-prize-icon { font-size: 1.15rem; line-height: 1.2; }
+.pvp-prize-label { font-size: 0.7rem; font-weight: 800; color: var(--flick-text); text-align: center; }
+.pvp-prize-detail { font-size: 0.58rem; color: var(--flick-text-muted); text-align: center; line-height: 1.35; }
+
+.pvp-lock {
+    margin: 0.5rem 0 0; padding: 7px 9px;
+    border: 2px dashed var(--flick-danger);
+    font-size: 0.68rem; font-weight: 700; line-height: 1.4;
+    color: var(--flick-danger);
+}
+
 /* ── Format tag on the battle screen ── */
 .pvp-mode-tag {
     text-align: center; margin-bottom: 6px;
