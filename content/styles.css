@@ -1641,9 +1641,97 @@
 .pvp-result.win .pvp-8bit { color: var(--flick-success); }
 .pvp-result.lose .pvp-8bit { color: var(--flick-danger); }
 
+/* ── Format picker ── */
+.pvp-modes { display: flex; justify-content: center; gap: 6px; margin: 0.5rem 0 0.75rem; flex-wrap: wrap; }
+.pvp-mode {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    min-width: 92px; padding: 8px 10px;
+    border: 3px solid var(--flick-text);
+    background: var(--flick-card-bg); color: var(--flick-text);
+    box-shadow: 3px 3px 0 var(--flick-shadow-strong);
+    font-family: "Courier New", monospace; cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.1s, background 0.15s;
+}
+.pvp-mode:hover { transform: translate(1px, 1px); box-shadow: 2px 2px 0 var(--flick-shadow-strong); }
+.pvp-mode.on { background: var(--flick-pvp); color: var(--flick-on-primary); }
+.pvp-mode-label { font-weight: 800; font-size: 0.82rem; letter-spacing: 0.06em; }
+.pvp-mode-reward { font-size: 0.58rem; opacity: 0.8; }
+
+/* Team members the chosen format leaves behind. */
+.pvp-team-chip.benched { opacity: 0.35; filter: grayscale(1); }
+
+/* ── Lobby roster editor ── */
+.pvp-roster {
+    max-height: 240px; overflow-y: auto;
+    margin: 0.5rem 0 0.75rem;
+    border: 3px solid var(--flick-text);
+    background: var(--flick-card-bg);
+    text-align: left;
+}
+.pvp-roster-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 8px;
+    border-bottom: 2px solid var(--flick-border);
+    font-family: "Courier New", monospace;
+}
+.pvp-roster-row:last-child { border-bottom: none; }
+.pvp-roster-row.on-team { background: rgba(var(--flick-pvp-rgb), 0.1); }
+.pvp-roster-slot {
+    width: 18px; flex-shrink: 0; text-align: center;
+    font-size: 0.7rem; font-weight: 800; color: var(--flick-text-muted);
+}
+.pvp-roster-sprite { width: 36px; height: 36px; image-rendering: pixelated; flex-shrink: 0; }
+.pvp-roster-name { flex: 1; min-width: 0; font-size: 0.74rem; font-weight: 700; color: var(--flick-text); }
+.pvp-roster-lv { margin-left: 6px; font-size: 0.64rem; font-weight: 400; color: var(--flick-text-muted); }
+.pvp-roster-copy { margin-left: 3px; font-size: 0.6rem; color: var(--flick-text-muted); }
+.pvp-roster-btn-sm {
+    flex-shrink: 0; width: 28px; height: 28px;
+    border: 2px solid var(--flick-text);
+    background: var(--flick-card-bg); color: var(--flick-text);
+    font-size: 0.78rem; font-weight: 800; line-height: 1; cursor: pointer;
+}
+.pvp-roster-btn-sm.on { background: var(--flick-pvp); color: var(--flick-on-primary); }
+.pvp-roster-btn-sm:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Format tag on the battle screen ── */
+.pvp-mode-tag {
+    text-align: center; margin-bottom: 6px;
+    font-family: "Courier New", monospace; font-size: 0.62rem; font-weight: 800;
+    letter-spacing: 0.14em; color: var(--flick-text-muted);
+}
+
+/* ── Remaining-Pokémon markers on each nameplate ── */
+.pvp-balls { display: inline-flex; gap: 3px; margin-right: 6px; vertical-align: middle; }
+.pvp-ball {
+    width: 8px; height: 8px; display: inline-block;
+    border: 2px solid var(--flick-text);
+    background: var(--flick-hp-empty);
+}
+.pvp-ball.ready { background: var(--flick-hp-ok); }
+.pvp-ball.active { background: var(--flick-pvp); }
+.pvp-ball.out { background: var(--flick-hp-empty); opacity: 0.45; }
+
+/* ── Bench picker: voluntary switches and forced replacements ── */
+.pvp-bench { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 10px; }
+.pvp-bench-mon {
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    min-width: 86px; padding: 6px 8px;
+    border: 3px solid var(--flick-text);
+    background: var(--flick-card-bg); color: var(--flick-text);
+    box-shadow: 3px 3px 0 var(--flick-shadow-strong);
+    font-family: "Courier New", monospace; cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.1s;
+}
+.pvp-bench-mon:hover:not(:disabled) { transform: translate(1px, 1px); box-shadow: 2px 2px 0 var(--flick-shadow-strong); }
+.pvp-bench-mon:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+.pvp-bench-mon img { width: 48px; height: 48px; image-rendering: pixelated; }
+.pvp-bench-name { font-size: 0.68rem; font-weight: 800; }
+.pvp-bench-hp { font-size: 0.58rem; color: var(--flick-text-muted); }
+
 @media (prefers-reduced-motion: reduce) {
     .pvp-8bit.blink { animation: none; }
     .pvp-hp-fill { transition: none; }
+    .pvp-mode, .pvp-bench-mon { transition: none; }
 }
 
 /* ────────────────────────── Trade ──────────────────────────
