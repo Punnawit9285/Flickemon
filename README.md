@@ -5,6 +5,7 @@ A Chrome extension that gamifies studying on [Flick](https://flick.docchula.com)
 Flickémon runs entirely client-side as a content script. It doesn't talk to Flick's servers or the [FlickPlayer](https://github.com/docchula/FlickPlayer) source — it just watches the page DOM for lecture playback and reacts to it, storing all progress locally via `chrome.storage.local`.
 
 ## How to download & Beta-testing !! (very important -- infact you only need this)
+**All progress during Beta-testing will be reset when offical launch and all admin authorities given wilk be revoked !!
 1.<img width="2637" height="1590" alt="image" src="https://github.com/user-attachments/assets/40134d36-941f-4791-97f5-7cee820470f7" />
 
 2. extract zip file --> Go to `chrome://extensions`, enable **Developer mode** (top right) --> Click **Load unpacked** and select the repo folder
