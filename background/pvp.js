@@ -73,7 +73,7 @@ async function auth() {
 }
 
 /** Creates or replaces the caller's own lobby, ready for a challenger. */
-export async function openLobby({ displayName, team }) {
+export async function openLobby({ displayName, team, mode, rulesVersion }) {
     const a = await auth();
     const code = codeForUid(a.uid);
 
@@ -82,7 +82,19 @@ export async function openLobby({ displayName, team }) {
         hostName: displayName || a.email || 'Trainer',
         guest: '',
         guestName: '',
-        state: { phase: 'waiting', turn: 0, hostTeam: team, guestTeam: null, log: [] },
+        state: {
+            phase: 'waiting',
+            turn: 0,
+            // The host's choice of format, and the resolution contract they will
+            // play it under. Both are read by the guest before they commit.
+            mode,
+            rulesVersion,
+            hostTeam: team,
+            guestTeam: null,
+            hostIndex: 0,
+            guestIndex: 0,
+            log: [],
+        },
     });
 
     // A fresh lobby replaces whatever was there, so this write is
@@ -126,13 +138,30 @@ async function mutate(code, idToken, transform) {
     return res;
 }
 
-/** Joins someone else's lobby by their code. */
-export async function joinBattle(code, { displayName, team }) {
+/**
+ * Joins someone else's lobby by their code.
+ *
+ * The rules-version check is the one thing worth failing loudly over. Nothing
+ * about the document format has ever broken across releases, but turn
+ * resolution runs locally on both clients from a shared seed, so two builds
+ * that disagree about (say) what a fainted Pokémon does will quietly compute
+ * different battles from the same moves. Refusing the match is far kinder than
+ * letting them play one that only one of them can see correctly.
+ */
+export async function joinBattle(code, { displayName, team, rulesVersion }) {
     const a = await auth();
 
     await mutate(code, a.idToken, (battle) => {
         if (battle.host === a.uid) throw new Error("That's your own code — share it with someone else.");
         if (battle.guest && battle.guest !== a.uid) throw new Error('That trainer is already in a battle.');
+
+        const theirs = battle.state?.rulesVersion || 1;
+        if (theirs !== rulesVersion) {
+            throw new Error(theirs < rulesVersion
+                ? 'That trainer is on an older Flickémon. Ask them to update.'
+                : 'That trainer is on a newer Flickémon. Update yours to battle them.');
+        }
+
         return {
             ...battle,
             guest: a.uid,
@@ -142,6 +171,8 @@ export async function joinBattle(code, { displayName, team }) {
                 phase: 'battling',
                 turn: 1,
                 guestTeam: team,
+                hostIndex: 0,
+                guestIndex: 0,
                 hostAction: null,
                 guestAction: null,
                 log: [`${battle.hostName} vs ${displayName}!`],

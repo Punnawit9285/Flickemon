@@ -928,8 +928,12 @@ class FlickemonEngine {
      * The team taken into a PVP battle, as plain battle-ready combatants.
      * Sent over the wire so the opponent can render and simulate it without
      * needing to look anything up.
+     *
+     * `size` is the format's team size. The cut is taken from getTeam(), which
+     * puts the active partner first, so a 1v1 always sends the Pokémon the
+     * student is actually training rather than an arbitrary party member.
      */
-    buildPvpTeam() {
+    buildPvpTeam(size = this.config.MAX_TEAM_SIZE) {
         const B = window.FlickemonBattle;
         const out = [];
         for (const instanceId of this.getTeam()) {
@@ -940,7 +944,7 @@ class FlickemonEngine {
             // from its own level and moveset.
             if (species) out.push(B.toCombatant(member, species, this.config));
         }
-        return out;
+        return out.slice(0, Math.max(1, size));
     }
 
     // ─────────────────────── PVP victory rewards ───────────────────────
@@ -964,12 +968,20 @@ class FlickemonEngine {
      * reward is to spend the hour watching lectures rather than queueing for
      * another match.
      */
-    async grantPvpReward() {
+    async grantPvpReward(durationMs = this.config.REWARD_DURATION_MS) {
         const running = this.getActiveReward();
         if (running) return { granted: false, reason: 'active', reward: running };
 
+        // The caller passes the format's duration. Clamped rather than trusted:
+        // this figure decides how long a boost runs, and it arrives from the
+        // battle document, which the opponent can also write.
+        const ms = Number.isFinite(durationMs)
+            ? Math.min(this.config.PVP_MODES[this.config.PVP_MODES.length - 1].rewardMs,
+                       Math.max(this.config.PVP_MODES[0].rewardMs, durationMs))
+            : this.config.REWARD_DURATION_MS;
+
         const type = this.config.rollReward();
-        this.gameState.activeReward = { type, expiresAt: Date.now() + this.config.REWARD_DURATION_MS };
+        this.gameState.activeReward = { type, expiresAt: Date.now() + ms, durationMs: ms };
         this.emitState();
         await this.saveGameState({ immediate: true });
         return { granted: true, reward: this.getActiveReward() };

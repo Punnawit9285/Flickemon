@@ -66,7 +66,8 @@ const SHINY_CHANCE = 1 / 512;
 
 // ─────────────────────── PVP victory rewards ───────────────────────
 //
-// Winning a PVP battle grants one of three hour-long boosts, drawn at random.
+// Winning a PVP battle grants one of three boosts, drawn at random. How long
+// the boost runs is set by the battle format — see PVP_MODES below.
 //
 // They deliberately do NOT stack, and a second win while one is running earns
 // nothing. That rule is the whole design: a student who can bank rewards by
@@ -74,7 +75,13 @@ const SHINY_CHANCE = 1 / 512;
 // which is the opposite of what this extension is for. Because the boost only
 // pays out while studying, the fastest way to use a reward is to go back to
 // the video — and the only way to earn the next one is to let this one run out.
-const REWARD_DURATION_MS = 60 * 60 * 1000;
+//
+// No-stacking is also what keeps the longer formats honest. A 6v6 pays four
+// times what a 1v1 pays, but it cannot be farmed four times as fast: whichever
+// format you win, the next reward is gated behind the one you are holding.
+// Picking 6v6 is therefore a bet that you can win the longer match, not a way
+// to earn more per hour of battling.
+const REWARD_DURATION_MS = 60 * 60 * 1000;   // fallback only; modes set the real one
 
 const REWARDS = {
     EXP: 'exp',
@@ -85,17 +92,17 @@ const REWARDS = {
 const REWARD_INFO = {
     [REWARDS.EXP]: {
         label: 'Double EXP',
-        detail: 'Every EXP gain is doubled for an hour.',
+        detail: 'Every EXP gain is doubled while it runs.',
         icon: '\u26a1',
     },
     [REWARDS.LEGENDARY]: {
         label: 'Legendary Radar',
-        detail: 'Legendary encounters become far more likely for an hour.',
+        detail: 'Legendary encounters become 10x more likely (Lv40+).',
         icon: '\u2726',
     },
     [REWARDS.SHINY]: {
         label: 'Shiny Charm',
-        detail: 'Shiny encounters become far more likely for an hour.',
+        detail: 'Shiny encounters become 10x more likely.',
         icon: '\u2728',
     },
 };
@@ -106,6 +113,43 @@ const REWARD_EXP_MULTIPLIER = 2;
 // the hour", which is what makes the reward worth going back to the lecture for.
 const REWARD_LEGENDARY_MULTIPLIER = 10;
 const REWARD_SHINY_MULTIPLIER = 10;
+
+// ────────────────────── PVP formats ──────────────────────
+//
+// The host picks the format; the guest is shown it before committing and both
+// teams are cut to `size`. Reward length scales with the length of the match,
+// so a format is a real choice rather than a cosmetic one: 6v6 takes several
+// times as long to play and pays several times as long a boost.
+//
+// Anything above 1v1 needs switching, which means both clients must agree on
+// what a fainted Pokémon does — hence PVP_RULES_VERSION below.
+const PVP_MODES = [
+    { id: '1v1', size: 1, label: '1 v 1', blurb: 'One Pokémon each. Quick.',        rewardMs: 30 * 60 * 1000,  rewardLabel: '30 min' },
+    { id: '3v3', size: 3, label: '3 v 3', blurb: 'Three each, switching allowed.',  rewardMs: 60 * 60 * 1000,  rewardLabel: '1 hour' },
+    { id: '6v6', size: 6, label: '6 v 6', blurb: 'Full teams. The long game.',      rewardMs: 120 * 60 * 1000, rewardLabel: '2 hours' },
+];
+
+const DEFAULT_PVP_MODE = '3v3';
+
+/**
+ * The battle-resolution contract two clients must share.
+ *
+ * Bump this whenever the LOCAL half of turn resolution changes — the type
+ * chart, the damage formula, the crit or spread rolls, the order or number of
+ * rng() calls, or what happens when a Pokémon faints. Stats and move data
+ * travel inside the battle document and are safe to change without a bump;
+ * anything each client computes for itself is not.
+ *
+ * Version 2 introduced multi-Pokémon formats and the forced-switch phase, which
+ * a version 1 client would resolve as "first faint ends the match".
+ */
+const PVP_RULES_VERSION = 2;
+
+/** The named format, or the default when a document predates modes. */
+function getPvpMode(id) {
+    return PVP_MODES.find(m => m.id === id)
+        || PVP_MODES.find(m => m.id === DEFAULT_PVP_MODE);
+}
 
 /** One of the three, uniformly. */
 function rollReward() {
@@ -1824,6 +1868,10 @@ window.FlickemonConfig = {
     REWARD_EXP_MULTIPLIER,
     REWARD_LEGENDARY_MULTIPLIER,
     REWARD_SHINY_MULTIPLIER,
+    PVP_MODES,
+    DEFAULT_PVP_MODE,
+    PVP_RULES_VERSION,
+    getPvpMode,
     rollReward,
     EXP_PER_MINUTE,
     BATTLE_WIN_EXP_BONUS,
