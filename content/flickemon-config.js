@@ -37,6 +37,11 @@ function bundledUrl(path) {
     }
 }
 
+/** Extension-relative URL for a bundled asset, or the plain path off-extension. */
+function getAssetUrl(path) {
+    return bundledUrl(path) || path;
+}
+
 function getSpriteUrl(pokemonId, shiny = false) {
     const rel = shiny ? `sprites/shiny/${pokemonId}.png` : `sprites/${pokemonId}.png`;
     const remote = shiny ? `${SPRITE_BASE_URL}/shiny/${pokemonId}.png`
@@ -96,6 +101,24 @@ const REWARD_DURATION_MS = 60 * 60 * 1000;   // fallback only; modes set the rea
 // running the extension unpacked could clear it — the same is true of the party
 // and the Pokédex, and none of it is worth a server to defend.
 const PVP_LOSS_LOCKOUT_MS = 30 * 60 * 1000;
+
+// ─────────────────────── Balance reference ───────────────────────
+//
+// What the tuning above actually costs a student, in hours of watching. These
+// are MEASURED by simulating the real engine, not derived: a closed form gets
+// it roughly 20% wrong because it cannot account for encounters that escape,
+// which burn 90 seconds for half the EXP.
+//
+// The in-game guide quotes these, so they must not drift. tests/test_guide.js
+// re-runs the simulation and fails if any figure moves more than 15%.
+const BALANCE_REFERENCE = {
+    // Level 36 — a three-stage line fully evolved.
+    fullyEvolvedHours: { capture: 19, exp: 10 },
+    // Level 100, the ceiling.
+    maxLevelHours: { capture: 151, exp: 78 },
+    // Time to defeat one wild Pokémon, whatever its level.
+    battleMinutes: 2.5,
+};
 
 const REWARDS = {
     EXP: 'exp',
@@ -1891,8 +1914,10 @@ window.FlickemonConfig = {
     SPRITE_BASE_URL,
     getSpriteUrl,
     getBackSpriteUrl,
+    getAssetUrl,
     SHINY_CHANCE,
     rollShiny,
+    BALANCE_REFERENCE,
     REWARD_DURATION_MS,
     PVP_LOSS_LOCKOUT_MS,
     REWARDS,

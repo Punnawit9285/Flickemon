@@ -37,6 +37,8 @@ cp background/firebase-config.js \
    background/trade.js \
    background/service-worker.js "$OUT/background/"
 cp icons/flickemon-48.png icons/flickemon-128.png "$OUT/icons/"
+# Optional: the support page shows this if it exists, and says so if it doesn't.
+[ -f icons/promptpay-qr.png ] && cp icons/promptpay-qr.png "$OUT/icons/" || true
 cp popup/popup.html "$OUT/popup/"
 
 # Not referenced by the manifest, but the attribution has to travel with the

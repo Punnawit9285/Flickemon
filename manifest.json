@@ -43,7 +43,8 @@
                 "sprites/*.png",
                 "sprites/back/*.png",
                 "sprites/shiny/*.png",
-                "sprites/back/shiny/*.png"
+                "sprites/back/shiny/*.png",
+                "icons/*.png"
             ],
             "matches": [
                 "https://flick.docchula.com/*"

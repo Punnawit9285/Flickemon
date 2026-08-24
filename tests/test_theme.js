@@ -76,6 +76,10 @@ console.log('\n=== neutral fills survive a dark theme ===');
 {
     // A fixed rgba(0,0,0,0.05) fill is invisible on a dark surface. Ionic's
     // step scale is derived between background and text, so it flips with it.
+    check('the QR colours are fixed on purpose, and only those',
+        /--flick-qr-ground:\s*#ffffff/.test(tokens) && /--flick-qr-ink:\s*#/.test(tokens),
+        'a QR must stay dark-on-white or it stops scanning');
+
     for (const t of ['--flick-fill-subtle', '--flick-fill', '--flick-fill-strong', '--flick-track']) {
         check(`${t} uses the Ionic step scale`,
             new RegExp(t + ':\\s*var\\(--ion-color-step-').test(tokens));
@@ -127,7 +131,7 @@ console.log('\n=== a re-themed host actually moves every colour ===');
         // Scene tokens paint the extension's own full-screen grounds and are
         // meant to be independent of the host surface.
         const SCENE = ['scrim', 'shadow', 'spark', 'ray', 'burst', 'damage',
-                       'on-type', 'field', 'tint-neutral', 'highlight', 'sheen'];
+                       'on-type', 'field', 'tint-neutral', 'highlight', 'sheen', 'qr-'];
         if (SCENE.some(k => name.includes(k))) continue;
         // A token pointing at another token inherits whatever that one does.
         if (/var\(--(?:type|flick)-[\w-]+/.test(value)) continue;

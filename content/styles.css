@@ -96,6 +96,12 @@
      * that tells you it is deliberate and not a rendering fault. */
     --flick-shiny: var(--ion-color-warning, #f5b301);
     --flick-legendary: var(--ion-color-secondary, #7c3aed);
+
+    /* A QR code is read by a camera, not a person. It must stay dark-on-white
+     * whatever the site is wearing, or a dark theme stops it scanning — so
+     * these two are fixed on purpose, like the evolution white-out. */
+    --flick-qr-ground: #ffffff;
+    --flick-qr-ink: #6b7280;
     --flick-trade: var(--ion-color-tertiary, #0ea5e9);
     --flick-trade-rgb: var(--ion-color-tertiary-rgb, 14, 165, 233);
     /* Green and red read differently on the scene's dark ground than on a page,
@@ -1966,3 +1972,113 @@
 }
 .admin-summon-result.good { color: var(--flick-success); }
 .admin-summon-result.bad { color: var(--flick-danger); }
+
+/* ────────────────────────── How to Play ────────────────────────── */
+
+.guide { color: var(--flick-text); }
+.guide-lead {
+    font-size: 0.95rem;
+    line-height: 1.55;
+    color: var(--flick-text);
+    margin: 0 0 1.25rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--flick-border);
+}
+.guide-section { margin-bottom: 1.5rem; }
+.guide-h {
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--flick-primary);
+    margin: 0 0 0.6rem;
+}
+.guide p {
+    margin: 0 0 0.6rem;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--flick-text-muted);
+}
+.guide p strong { color: var(--flick-text); font-weight: 700; }
+.guide-note {
+    font-size: 0.78rem !important;
+    padding-left: 10px;
+    border-left: 2px solid var(--flick-border);
+}
+
+/* Two columns where there is room, so a term and its value stay on one line. */
+.guide-rows {
+    display: grid;
+    grid-template-columns: minmax(90px, auto) 1fr;
+    gap: 4px 12px;
+    margin: 0 0 0.75rem;
+    font-size: 0.82rem;
+}
+.guide-rows dt { font-weight: 700; color: var(--flick-text); }
+.guide-rows dd { margin: 0; color: var(--flick-text-muted); line-height: 1.5; }
+@media (max-width: 420px) {
+    .guide-rows { grid-template-columns: 1fr; gap: 1px 0; }
+    .guide-rows dd { margin-bottom: 6px; }
+}
+
+/* ────────────────────────── Support ────────────────────────── */
+
+.support { text-align: center; color: var(--flick-text); }
+.support-lead {
+    font-size: 0.9rem;
+    line-height: 1.55;
+    color: var(--flick-text-muted);
+    margin: 0 auto 1.25rem;
+    max-width: 34ch;
+}
+.support-qr-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    padding: 14px;
+    background: var(--flick-qr-ground);
+    border: 1px solid var(--flick-border);
+    border-radius: 12px;
+    margin: 0 auto;
+    max-width: 260px;
+}
+.support-qr { width: 100%; max-width: 220px; height: auto; display: block; }
+.support-qr-missing { color: var(--flick-qr-ink); font-size: 0.8rem; }
+.support-qr-missing p { margin: 0 0 6px; color: inherit; }
+.support-qr-hint { font-size: 0.72rem; }
+.support-qr-missing code {
+    background: var(--flick-fill);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+}
+.support-qr-caption {
+    font-size: 0.72rem;
+    color: var(--flick-text-muted);
+    margin: 0.6rem 0 1.5rem;
+}
+
+.support-why { text-align: left; }
+.support-why h3 {
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--flick-primary);
+    margin: 0 0 0.6rem;
+}
+.support-why p, .support-why li {
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--flick-text-muted);
+}
+.support-why p { margin: 0 0 0.6rem; }
+.support-why ul { margin: 0 0 0.75rem; padding-left: 1.1rem; }
+.support-why li { margin-bottom: 0.5rem; }
+.support-why strong { color: var(--flick-text); font-weight: 700; }
+.support-note {
+    font-size: 0.78rem !important;
+    padding-left: 10px;
+    border-left: 2px solid var(--flick-border);
+}
