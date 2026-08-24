@@ -933,6 +933,17 @@
     margin: 0.15rem 0 0;
 }
 
+/* Whose evolution this is. A team member evolving while you watch a different
+   Pokémon fight is otherwise baffling. */
+.evo-benched {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--flick-on-scrim-faint);
+    margin: 0;
+}
+
 /* Deferred from fullscreen — say so, or the replay looks like a glitch. */
 .evo-deferred {
     font-size: 0.7rem;

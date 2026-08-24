@@ -50,6 +50,7 @@ class FlickemonUI {
         this.pendingEvolutions = [];
         this.evolutionPlaying = false;
         this.currentEvolution = null;
+        this.currentOverlayEl = null;
         this.watchFullscreen();
 
         document.addEventListener('click', () => {
@@ -1325,6 +1326,22 @@ class FlickemonUI {
         this.pendingEvolutions.push({ ...evo, deferred: this.isFullscreen() });
         if (this.isFullscreen()) return;   // watchFullscreen replays it on exit
         this.drainEvolutionQueue();
+        // Several team members can cross a threshold on the same battle tick,
+        // which queues them after the first overlay has already rendered its
+        // count. Correct it rather than under-reporting the backlog.
+        this.refreshQueueBadge();
+    }
+
+    /** Keeps the "+N more" line honest while an overlay is already on screen. */
+    refreshQueueBadge() {
+        const el = this.currentOverlayEl && this.currentOverlayEl.querySelector
+            ? this.currentOverlayEl.querySelector('.evo-queue')
+            : null;
+        if (!el) return;
+        const queued = this.pendingEvolutions.length;
+        el.textContent = `+${queued} more`;
+        if (queued > 0) el.removeAttribute('hidden');
+        else el.setAttribute('hidden', '');
     }
 
     /**
@@ -1339,6 +1356,7 @@ class FlickemonUI {
         this.evolutionPlaying = true;
         const cancel = this.playEvolutionOverlay(evo, () => {
             this.currentEvolution = null;
+            this.currentOverlayEl = null;
             this.evolutionPlaying = false;
             this.drainEvolutionQueue();
         });
@@ -1366,6 +1384,7 @@ class FlickemonUI {
             <div class="evo-flash"></div>
             <div class="evo-box">
                 ${evo.deferred ? '<p class="evo-deferred">While you were watching…</p>' : ''}
+                ${evo.benched ? '<p class="evo-benched">On your team</p>' : ''}
                 <p class="evo-lead">What? <b>${evo.from.name}</b> is evolving!</p>
                 <div class="evo-stage">
                     <div class="evo-rays"></div>
@@ -1386,7 +1405,7 @@ class FlickemonUI {
                         : ''}
                     ${this.renderEvolutionGains(fromSpecies, toSpecies)}
                 </div>
-                ${queued ? `<p class="evo-queue">+${queued} more</p>` : ''}
+                <p class="evo-queue"${queued ? '' : ' hidden'}>+${queued} more</p>
                 <p class="evo-skip">Click anywhere to skip</p>
             </div>
         `;
@@ -1405,7 +1424,8 @@ class FlickemonUI {
         overlay.addEventListener('click', () => settle(true));
 
         document.body.appendChild(overlay);
-        return () => settle(false);
+        this.currentOverlayEl = overlay;
+        return () => { this.currentOverlayEl = null; settle(false); };
     }
 
     /** Sparks thrown outward by the burst, evenly spread with a scattered delay. */

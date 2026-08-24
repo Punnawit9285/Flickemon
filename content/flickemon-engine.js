@@ -1481,10 +1481,12 @@ class FlickemonEngine {
      * Awards TEAM_EXP_SHARE of `exp` to every team member except the partner,
      * who already received the full amount.
      *
-     * Team members evolve too, but silently: the evolution overlay is a
-     * five-second fullscreen takeover, and several members crossing a threshold
-     * on the same battle would stack them. The Pokédex is still updated, so the
-     * change is visible in the party list and dex.
+     * Team members evolve too, and now announce it. They used to do so silently,
+     * because the overlay was a five-second takeover and several members
+     * crossing a threshold on the same battle would have stacked on top of each
+     * other. The overlay queues since then — one at a time, with a backlog
+     * count — so the reason for hiding them is gone, and an evolution the
+     * student earned should not happen off-screen.
      */
     shareExpWithTeam(exp, activeInstanceId) {
         const shared = Math.round(exp * this.config.TEAM_EXP_SHARE);
@@ -1506,12 +1508,19 @@ class FlickemonEngine {
 
             const evo = this.config.canEvolveAt(member.speciesId, member.level);
             if (evo) {
+                const from = this.config.getSpeciesById(member.speciesId);
                 const to = this.config.getSpeciesById(evo.toId);
-                if (to) {
+                if (from && to) {
                     // The instance keeps its id through an evolution, so the
                     // team and favourite lists still point at it.
                     member.speciesId = evo.toId;
                     this.updatePokedex(evo.toId, true, member.shiny === true);
+                    // `benched` lets the overlay say whose evolution this is —
+                    // without it, a student watching their Charizard fight sees
+                    // a Bulbasaur evolving and has no idea why.
+                    this.evolutionListeners.forEach(cb => cb({
+                        from, to, shiny: member.shiny === true, benched: true,
+                    }));
                 }
             }
         }
