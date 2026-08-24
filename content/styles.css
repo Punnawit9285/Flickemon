@@ -1745,6 +1745,20 @@
     color: var(--flick-danger);
 }
 
+/* Countdowns inside the notices above. Tabular figures so a ticking clock
+   doesn't shuffle the words next to it once a second. */
+.pvp-lock-left, .pvp-boost-left {
+    font-variant-numeric: tabular-nums;
+    font-weight: 800;
+    font-size: 1.05em;
+}
+.pvp-lock-cleared {
+    margin: 0.5rem 0 0; padding: 7px 9px;
+    border: 2px dashed var(--flick-success);
+    font-size: 0.68rem; font-weight: 700; line-height: 1.4;
+    color: var(--flick-success);
+}
+
 /* ── Format tag on the battle screen ── */
 .pvp-mode-tag {
     text-align: center; margin-bottom: 6px;
@@ -1876,20 +1890,41 @@
 .pvp-reward.won .pvp-8bit { color: var(--flick-gold); }
 
 .reward-banner {
+    position: relative;
     display: flex; align-items: center; gap: 8px;
-    padding: 6px 10px; margin-bottom: 0.75rem;
+    padding: 6px 10px 8px; margin-bottom: 0.75rem;
     border: 1.5px solid var(--flick-gold);
     border-radius: 8px;
     background: var(--flick-fill-subtle);
     font-size: 0.75rem;
+    overflow: hidden;
 }
 .reward-icon { font-size: 0.95rem; line-height: 1; }
+.reward-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .reward-label { font-weight: 800; color: var(--flick-gold); }
+.reward-note {
+    font-size: 0.62rem; font-weight: 600; line-height: 1.3;
+    color: var(--flick-text-muted);
+}
 .reward-left {
     margin-left: auto;
-    font-size: 0.68rem; font-weight: 700;
-    color: var(--flick-text-muted);
+    font-size: 0.95rem; font-weight: 800;
+    color: var(--flick-gold);
     font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
+
+/* The bar drains rather than fills: at a glance the boost is a thing being
+   spent, and it reads without anyone having to parse the digits. */
+.reward-drain {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 3px;
+    background: var(--flick-border);
+}
+.reward-drain-fill {
+    display: block; height: 100%;
+    background: var(--flick-gold);
+    transition: width 1s linear;
 }
 
 /* ── Admin: summon an opponent ── */

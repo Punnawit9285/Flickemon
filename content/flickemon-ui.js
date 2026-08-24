@@ -83,8 +83,53 @@ class FlickemonUI {
             }),
         ];
 
+        // The widget redraws on engine events and video progress, neither of
+        // which fires while a lecture is paused — so the boost clock would sit
+        // frozen at whatever second it was drawn at, on the one screen where a
+        // student is watching it run down. A 1s tick patches the countdown in
+        // place; a full re-render each second would close the options popover
+        // mid-click and restart the damage flash.
+        clearInterval(this.rewardTicker);
+        this.rewardTicker = setInterval(() => this.tickRewardBanner(card), 1000);
+
         this.widgetCard = card;
         return card;
+    }
+
+    /** Share of the boost still to run, for the draining bar. */
+    rewardPercentLeft(reward) {
+        if (!reward || !Number.isFinite(reward.durationMs) || reward.durationMs <= 0) return 100;
+        return Math.max(0, Math.min(100, (reward.msLeft / reward.durationMs) * 100));
+    }
+
+    paintRewardBanner(banner, reward) {
+        const left = banner.querySelector('.reward-left');
+        if (left) left.textContent = this.config.formatCountdown(reward.msLeft);
+        const fill = banner.querySelector('.reward-drain-fill');
+        if (fill) fill.style.width = `${this.rewardPercentLeft(reward)}%`;
+    }
+
+    /**
+     * One second of the boost timer.
+     *
+     * Appearing and disappearing is left to the normal render path: the reward
+     * type is part of the widget signature, so asking for a full update is what
+     * adds the banner on a win and removes it on expiry.
+     */
+    tickRewardBanner(card) {
+        if (!card.isConnected) {
+            clearInterval(this.rewardTicker);
+            this.rewardTicker = null;
+            return;
+        }
+        const banner = card.querySelector('.reward-banner');
+        const reward = this.engine.getActiveReward ? this.engine.getActiveReward() : null;
+
+        if (!!reward !== !!banner) {
+            this.updateWidgetView(card, this.engine.getGameState(), this.engine.wildOpponent);
+            return;
+        }
+        if (reward) this.paintRewardBanner(banner, reward);
     }
 
     updateWidgetView(card, state, wild) {
@@ -195,8 +240,12 @@ class FlickemonUI {
                 ${reward ? `
                     <div class="reward-banner reward-${reward.type}">
                         <span class="reward-icon">${this.config.REWARD_INFO[reward.type].icon}</span>
-                        <span class="reward-label">${this.config.REWARD_INFO[reward.type].label}</span>
-                        <span class="reward-left">${Math.ceil(reward.msLeft / 60000)} min left</span>
+                        <div class="reward-copy">
+                            <span class="reward-label">${this.config.REWARD_INFO[reward.type].label}</span>
+                            <span class="reward-note">Boosts never stack — win again once this runs out.</span>
+                        </div>
+                        <span class="reward-left" title="Time left on this boost">${this.config.formatCountdown(reward.msLeft)}</span>
+                        <span class="reward-drain"><span class="reward-drain-fill" style="width: ${this.rewardPercentLeft(reward)}%;"></span></span>
                     </div>` : ''}
                 <div class="hud-columns">
                     <!-- Left: Active Partner -->
@@ -309,10 +358,10 @@ class FlickemonUI {
      * in-flight click or open menu) intact.
      */
     patchWidgetView(card, expProg, wild) {
-        const left = card.querySelector('.reward-left');
-        if (left && this.engine.getActiveReward) {
+        const banner = card.querySelector('.reward-banner');
+        if (banner && this.engine.getActiveReward) {
             const r = this.engine.getActiveReward();
-            if (r) left.textContent = `${Math.ceil(r.msLeft / 60000)} min left`;
+            if (r) this.paintRewardBanner(banner, r);
         }
 
         const expFill = card.querySelector('.exp-bar-fill');

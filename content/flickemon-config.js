@@ -171,6 +171,23 @@ function rollReward() {
     return types[Math.floor(Math.random() * types.length)];
 }
 
+/**
+ * A remaining duration as h:mm:ss, or m:ss under an hour.
+ *
+ * Rounds up rather than down: a boost that still doubles EXP while its clock
+ * reads 0:00 looks broken, and one that reads 0:01 for its last moment does
+ * not. Both the boost timer and the loss penalty are drawn through here so the
+ * two never disagree about what "a minute left" looks like.
+ */
+function formatCountdown(ms) {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const hours = Math.floor(total / 3600);
+    const mins = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return hours > 0 ? `${hours}:${pad(mins)}:${pad(secs)}` : `${mins}:${pad(secs)}`;
+}
+
 function rollShiny() {
     return Math.random() < SHINY_CHANCE;
 }
@@ -1888,6 +1905,7 @@ window.FlickemonConfig = {
     PVP_RULES_VERSION,
     getPvpMode,
     rollReward,
+    formatCountdown,
     EXP_PER_MINUTE,
     BATTLE_WIN_EXP_BONUS,
     EXP_MODE_WIN_EXP_BONUS,

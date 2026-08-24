@@ -57,6 +57,7 @@ class FlickemonPvp {
         this.B = window.FlickemonBattle;
 
         this.pollTimer = null;
+        this.clockTimer = null;
         this.pollPaused = false;
         this.pollingSince = 0;
         this.lobbyPolls = 0;
@@ -98,6 +99,7 @@ class FlickemonPvp {
         const modal = this.ui.createModalOverlay('PVP Battle');
         modal.overlay.classList.add('pvp-overlay');
         this.modal = modal;
+        this.startClock();
 
         modal.overlay.addEventListener('click', (e) => {
             if (e.target === modal.overlay) this.leave();
@@ -332,13 +334,13 @@ class FlickemonPvp {
                 </div>
                 <p class="pvp-sub">Drawn at random, one third each.</p>
                 ${lockMs > 0 ? `
-                    <p class="pvp-lock">⛔ You lost recently — wins pay nothing for
-                       ${Math.ceil(lockMs / 60000)} more min.</p>` : ''}
+                    <p class="pvp-lock pvp-lock-timer">⛔ You lost recently — wins pay nothing for
+                       <span class="pvp-lock-left">${this.config.formatCountdown(lockMs)}</span>.</p>` : ''}
                 ${running ? `
-                    <p class="pvp-lock">${this.config.REWARD_INFO[running.type].icon}
+                    <p class="pvp-lock pvp-boost-timer">${this.config.REWARD_INFO[running.type].icon}
                        ${this.config.REWARD_INFO[running.type].label} is already running
-                       (${Math.ceil(running.msLeft / 60000)} min left). Boosts never stack,
-                       so a win now earns nothing.</p>` : ''}
+                       (<span class="pvp-boost-left">${this.config.formatCountdown(running.msLeft)}</span> left).
+                       Boosts never stack, so a win now earns nothing.</p>` : ''}
             </div>`;
     }
 
@@ -492,6 +494,73 @@ class FlickemonPvp {
                 <button class="pvp-btn ghost pvp-cancel-btn">CANCEL</button>
             </div>`;
         this.modal.body.querySelector('.pvp-cancel-btn').addEventListener('click', () => this.leave());
+    }
+
+    // ────────────────────────── Countdowns ──────────────────────────
+
+    /**
+     * Drives every countdown on the PVP screen.
+     *
+     * The loss penalty is shown here rather than on the widget on purpose. It
+     * is the one number a student has no way to act on — no amount of studying
+     * shortens it — so putting it beside the lecture would be a clock to stare
+     * at instead of the video. Here it is only in front of the person who came
+     * looking for a battle, which is exactly who needs to know a win pays
+     * nothing yet.
+     *
+     * Unlike polling this keeps running while the tab is hidden: it costs one
+     * timer and no network, and a clock that resumes stale reads as broken.
+     */
+    startClock() {
+        clearInterval(this.clockTimer);
+        this.clockTimer = setInterval(() => this.paintClocks(), 1000);
+    }
+
+    /** One second, patched into whichever screen is currently up. */
+    paintClocks() {
+        if (!this.modal) {
+            clearInterval(this.clockTimer);
+            this.clockTimer = null;
+            return;
+        }
+
+        const boostEls = this.modal.body.querySelectorAll('.pvp-boost-left');
+        if (boostEls.length) {
+            const running = this.engine.getActiveReward();
+            if (running) {
+                boostEls.forEach(el => {
+                    el.textContent = this.config.formatCountdown(running.msLeft);
+                });
+            } else {
+                // Ran out while this screen was open — which is the moment a win
+                // starts paying again, so say that rather than leave a sentence
+                // about a boost that has ended written in the present tense.
+                this.modal.body.querySelectorAll('.pvp-boost-timer').forEach(el => {
+                    el.classList.remove('pvp-lock');
+                    el.classList.add('pvp-lock-cleared');
+                    el.textContent = '✅ Boost finished — the next win can grant another.';
+                });
+            }
+        }
+
+        const lockEls = this.modal.body.querySelectorAll('.pvp-lock-left');
+        if (!lockEls.length) return;
+
+        const msLeft = this.engine.getRewardLock();
+        if (msLeft > 0) {
+            lockEls.forEach(el => { el.textContent = this.config.formatCountdown(msLeft); });
+            return;
+        }
+
+        // Served its time. The line is rewritten in place rather than the
+        // screen re-rendered: this can fire over a finished battle the student
+        // is still reading, and throwing that away to clear a warning would be
+        // the more annoying bug.
+        this.modal.body.querySelectorAll('.pvp-lock-timer').forEach(el => {
+            el.classList.remove('pvp-lock');
+            el.classList.add('pvp-lock-cleared');
+            el.textContent = '✅ Loss penalty over — the next win pays as normal.';
+        });
     }
 
     // ─────────────────────────── Sync loop ───────────────────────────
@@ -981,12 +1050,12 @@ class FlickemonPvp {
         // A lockout has no reward attached to name, so it is handled before
         // the REWARD_INFO lookup rather than falling through it.
         if (!res.granted && res.reason === 'locked') {
-            const mins = Math.ceil((res.msLeft || 0) / 60000);
             return `<div class="pvp-reward held">
                 <p class="pvp-8bit small">⛔ NO BOOST — RECENT LOSS</p>
-                <p class="pvp-sub">A defeat costs you ${Math.round(this.config.PVP_LOSS_LOCKOUT_MS / 60000)}
-                minutes of prizes, and ${mins} of those are left. Win again after that
-                and the draw pays as normal.</p>
+                <p class="pvp-sub pvp-lock-timer">A defeat costs you
+                ${Math.round(this.config.PVP_LOSS_LOCKOUT_MS / 60000)} minutes of prizes, and
+                <span class="pvp-lock-left">${this.config.formatCountdown(res.msLeft || 0)}</span>
+                of that is left. Win again after that and the draw pays as normal.</p>
             </div>`;
         }
 
@@ -994,11 +1063,11 @@ class FlickemonPvp {
         if (!info) return '';
 
         if (!res.granted) {
-            const mins = Math.ceil((res.reward.msLeft || 0) / 60000);
             return `<div class="pvp-reward held">
                 <p class="pvp-8bit small">${info.icon} ${info.label} STILL RUNNING</p>
-                <p class="pvp-sub">${mins} min left. One boost at a time — go and spend it
-                on a lecture, and the next win can grant another.</p>
+                <p class="pvp-sub pvp-boost-timer"><span class="pvp-boost-left">${this.config.formatCountdown(res.reward.msLeft || 0)}</span>
+                left. One boost at a time — go and spend it on a lecture, and the next
+                win can grant another.</p>
             </div>`;
         }
 
@@ -1012,7 +1081,9 @@ class FlickemonPvp {
     renderLossNotice() {
         const mins = Math.round(this.config.PVP_LOSS_LOCKOUT_MS / 60000);
         return `<div class="pvp-reward held">
-            <p class="pvp-sub">No boost for ${mins} min, even if you win again —
+            <p class="pvp-8bit small pvp-lock-timer">⛔ NO BOOST FOR
+               <span class="pvp-lock-left">${this.config.formatCountdown(this.engine.getRewardLock() || this.config.PVP_LOSS_LOCKOUT_MS)}</span></p>
+            <p class="pvp-sub">Nothing pays out for ${mins} min, even if you win again —
             otherwise two trainers could take turns losing and collect every time.
             Your line-up is saved; go and study, then come back.</p>
         </div>`;
@@ -1031,6 +1102,8 @@ class FlickemonPvp {
 
     async leave() {
         this.stopPolling();
+        clearInterval(this.clockTimer);
+        this.clockTimer = null;
         if (this.code && this.role === 'host') {
             try { await this.engine.pvpClose(this.code); } catch { /* best effort */ }
         }
