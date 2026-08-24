@@ -19,3 +19,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+────────────────────────────────────────────────────────────────────────────
+
+The MIT licence above covers the original code and content of this project
+only.
+
+It does NOT cover the Pokémon material this project references — the sprite
+PNGs in sprites/, the species, type, move and item names, or any other
+Pokémon property. Those are the copyrighted works and trademarks of Nintendo,
+Creatures Inc. and GAME FREAK inc., are used here without licence in a
+non-commercial fan project, and are not the copyright holders' to relicense.
+
+See LEGAL.md.

@@ -39,6 +39,10 @@ cp background/firebase-config.js \
 cp icons/flickemon-48.png icons/flickemon-128.png "$OUT/icons/"
 cp popup/popup.html "$OUT/popup/"
 
+# Not referenced by the manifest, but the attribution has to travel with the
+# package: a zip passed around without the repo is how most people get this.
+cp LEGAL.md LICENSE "$OUT/"
+
 # 4,100 sprite PNGs — 1,025 species x {front, back} x {normal, shiny}, ~3.9MB.
 # Bundled so the extension never reaches out to a third-party host to draw a
 # Pokémon. PNGs only: PROVENANCE.md documents the set for this repo, not for

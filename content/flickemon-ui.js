@@ -984,6 +984,27 @@ class FlickemonUI {
                     </div>
                 </div>
             </div>
+
+            <!-- Attribution for the Pokémon material the game is built on. This is
+                 the one screen every player can reach, so the notice lives here
+                 rather than only in the repo. See LEGAL.md. -->
+            <div class="flickemon-list-card flickemon-legal-card">
+                <div class="flickemon-list-item">
+                    <span class="flickemon-list-item-title">About &amp; legal</span>
+                    <span class="flickemon-list-item-sub">
+                        Flickémon is an unofficial, non-commercial fan project made by
+                        students, free to play. It is not affiliated with, endorsed by, or
+                        associated with Nintendo, Creatures Inc., GAME FREAK inc. or The
+                        Pokémon Company.
+                    </span>
+                    <span class="flickemon-list-item-sub">
+                        Pokémon and all related names, characters and artwork are the
+                        trademarks and copyrighted works of their owners —
+                        © 1995–2026 Nintendo / Creatures Inc. / GAME FREAK inc. — used
+                        here without licence and with no claim of ownership.
+                    </span>
+                </div>
+            </div>
         `;
 
         // Reset lives inside the admin panel now, so these elements exist but stay

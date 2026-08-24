@@ -1127,6 +1127,14 @@
     color: var(--flick-text-muted);
 }
 
+/* Attribution block at the foot of Settings — deliberately quiet, but always
+   present rather than behind a link. */
+.flickemon-legal-card .flickemon-list-item-sub {
+    font-size: 0.72rem;
+    line-height: 1.45;
+    margin-top: 6px;
+}
+
 /* Reset Button */
 .flickemon-danger-btn {
     width: 100%;

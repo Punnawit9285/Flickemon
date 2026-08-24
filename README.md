@@ -2,6 +2,13 @@
 
 A Chrome extension that gamifies studying on [Flick](https://flick.docchula.com) (FlickPlayer) — catch, battle, and evolve Pokémon while you watch lectures.
 
+> **Unofficial fan project.** Flickémon is not affiliated with, endorsed by, or
+> associated with Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon
+> Company. Pokémon and all related names and artwork are their trademarks and
+> copyrighted works — © 1995–2026 Nintendo / Creatures Inc. / GAME FREAK inc.
+> This is a non-commercial student project, free to use, distributed within one
+> university faculty for study purposes. See **[LEGAL.md](LEGAL.md)**.
+
 Flickémon runs entirely client-side as a content script. It doesn't talk to Flick's servers or the [FlickPlayer](https://github.com/docchula/FlickPlayer) source — it just watches the page DOM for lecture playback and reacts to it, storing all progress locally via `chrome.storage.local`.
 
 ## How to download & Beta-testing !! (very important -- infact you only need this)
@@ -47,11 +54,23 @@ No build step — it's vanilla JS loaded directly by the browser.
 - Test on an actual Flick lecture page before opening a PR — describe what you tested in the PR description.
 - Match the existing code style (vanilla JS, no framework, JSDoc-style file banners).
 - Don't add new permissions to `manifest.json` without discussing in an issue first — this extension intentionally requests only `storage`.
+- Keep the constraints in [LEGAL.md](LEGAL.md) intact: no monetisation of any kind, no official Pokémon logo or branding, no assets taken from game files or ROMs, and no public store listing without discussing it in an issue first.
 
 ## Status
 
 Early / experimental. Expect breaking save-format changes between versions for now.
 
-## License
+## License and rights
 
-[MIT](LICENSE)
+The project's own code and content are [MIT](LICENSE) licensed.
+
+The Pokémon material it uses — the sprites in `sprites/`, the species, type,
+move and item names — is **not** ours and is **not** covered by that licence. It
+belongs to Nintendo, Creatures Inc. and GAME FREAK inc., and is used here
+without licence in a non-commercial fan project.
+
+[**LEGAL.md**](LEGAL.md) sets out who owns what, the constraints that keep this
+project's use narrow (non-commercial, no store listing, no game files, no
+official branding), and how to reach us with a takedown request — which we will
+honour promptly and in full. Read it before forking, redistributing, or
+publishing this anywhere public.

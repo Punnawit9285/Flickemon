@@ -38,3 +38,6 @@ extension did previously, does not put the project in a materially different
 position — but shipping them inside a package submitted to the Chrome Web Store
 is a more visible use, and Nintendo has historically acted against fan projects.
 Worth a decision before any public listing.
+
+The project's full position on this — who owns what, the constraints that keep
+the use narrow, and the takedown commitment — is in [LEGAL.md](../LEGAL.md).
