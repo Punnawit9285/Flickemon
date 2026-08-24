@@ -113,11 +113,19 @@ const PVP_LOSS_LOCKOUT_MS = 30 * 60 * 1000;
 // re-runs the simulation and fails if any figure moves more than 15%.
 const BALANCE_REFERENCE = {
     // Level 36 — a three-stage line fully evolved.
-    fullyEvolvedHours: { capture: 19, exp: 10 },
+    //
+    // Rounded to 20 from a measured 18.6, deliberately: one block of a medical
+    // subject runs to roughly 20 hours of recordings, so "one fully evolved
+    // Pokémon per block" is a unit a student already thinks in. The test
+    // tolerance is 15%, which this sits well inside.
+    fullyEvolvedHours: { capture: 20, exp: 10 },
     // Level 100, the ceiling.
     maxLevelHours: { capture: 151, exp: 78 },
     // Time to defeat one wild Pokémon, whatever its level.
     battleMinutes: 2.5,
+    // What a block of a medical subject averages, in hours of recordings. The
+    // guide uses it to express progress in something a student can picture.
+    blockHours: 20,
 };
 
 const REWARDS = {

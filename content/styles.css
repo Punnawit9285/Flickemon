@@ -2005,6 +2005,13 @@
     padding-left: 10px;
     border-left: 2px solid var(--flick-border);
 }
+/* The one figure a student can picture, so it gets to stand out. */
+.guide-block {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--flick-fill-subtle);
+    border-left: 3px solid var(--flick-primary);
+}
 
 /* Two columns where there is room, so a term and its value stay on one line. */
 .guide-rows {

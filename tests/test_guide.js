@@ -69,6 +69,19 @@ console.log('\n=== the guide states the real tuning ===');
     check('says duplicates are separate', /second, separate/.test(t));
     check('says boosts do not stack', /Only one boost runs at a time/.test(t));
 
+    check('block length matches config',
+        t.includes(`around ${cfg.BALANCE_REFERENCE.blockHours} hours of recordings`),
+        `config says ${cfg.BALANCE_REFERENCE.blockHours}`);
+    check('the block framing is stated',
+        /One block, one fully evolved Pok/.test(t));
+    // The comparison only holds while a block and a full evolution cost the same.
+    check('one block really does equal one full evolution',
+        cfg.BALANCE_REFERENCE.blockHours === cfg.BALANCE_REFERENCE.fullyEvolvedHours.capture,
+        `block ${cfg.BALANCE_REFERENCE.blockHours}h vs evolution ${cfg.BALANCE_REFERENCE.fullyEvolvedHours.capture}h`);
+    check('and two of them in EXP mode',
+        cfg.BALANCE_REFERENCE.fullyEvolvedHours.exp * 2 === cfg.BALANCE_REFERENCE.blockHours,
+        `${cfg.BALANCE_REFERENCE.fullyEvolvedHours.exp}h x2 vs ${cfg.BALANCE_REFERENCE.blockHours}h`);
+
     check('no unresolved template holes', !t.includes('undefined') && !t.includes('NaN'), t.slice(0, 200));
 }
 

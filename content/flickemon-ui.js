@@ -1372,6 +1372,10 @@ class FlickemonUI {
                         ['Fully evolved', `about ${bal.fullyEvolvedHours.capture} hours in capture mode, ${bal.fullyEvolvedHours.exp} in EXP mode`],
                         [`Level ${c.MAX_LEVEL}`, `about ${bal.maxLevelHours.capture} hours in capture mode, ${bal.maxLevelHours.exp} in EXP mode`],
                     ])}
+                    <p class="guide-block"><strong>One block, one fully evolved Pokémon.</strong>
+                    A block of a medical subject averages around ${bal.blockHours} hours of
+                    recordings — so watching a block through gets a starter to its final form
+                    in capture mode, or two of them in EXP mode.</p>
                     <p class="guide-note">The middle levels are the long part. The last few are
                     quick, because wild Pokémon scale up with you.</p>`)}
 
