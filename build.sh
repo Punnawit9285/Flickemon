@@ -21,7 +21,7 @@ mkdir -p "$OUT"
 
 # Runtime files, mirroring what manifest.json references.
 cp manifest.json "$OUT/"
-mkdir -p "$OUT/content" "$OUT/background" "$OUT/icons" "$OUT/popup"
+mkdir -p "$OUT/content" "$OUT/background" "$OUT/icons" "$OUT/popup" "$OUT/player"
 cp content/flickemon-config.js \
    content/flickemon-playlist.js \
    content/flickemon-music.js \
@@ -42,6 +42,8 @@ cp icons/flickemon-48.png icons/flickemon-128.png "$OUT/icons/"
 # Optional: the support page shows this if it exists, and says so if it doesn't.
 [ -f icons/promptpay-qr.png ] && cp icons/promptpay-qr.png "$OUT/icons/" || true
 cp popup/popup.html "$OUT/popup/"
+mkdir -p "$OUT/player"
+cp player/player.html player/player.js "$OUT/player/"
 
 # Not referenced by the manifest, but the attribution has to travel with the
 # package: a zip passed around without the repo is how most people get this.

@@ -64,20 +64,47 @@ class FlickemonMusic {
         this.badEntries = [];
 
         this.tracks = raw.map((entry, i) => {
-            const url = typeof entry === 'string' ? entry : (entry && entry.url);
+            const { url, name } = FlickemonMusic.readEntry(entry);
             const parsed = FlickemonMusic.parseYouTubeUrl(url);
             if (!parsed) {
-                if (url || entry) this.badEntries.push(String(url || JSON.stringify(entry)).slice(0, 60));
+                const shown = url || (entry && typeof entry === 'object'
+                    ? JSON.stringify(entry) : String(entry ?? ''));
+                if (shown) this.badEntries.push(shown.slice(0, 60));
                 return null;
             }
-            const given = typeof entry === 'object' && entry.title ? String(entry.title) : '';
             return {
                 ...parsed,
-                title: given || (parsed.listId && !parsed.videoId
+                title: name || (parsed.listId && !parsed.videoId
                     ? `Playlist ${i + 1}`
                     : `Track ${i + 1}`),
             };
         }).filter(Boolean);
+    }
+
+    /**
+     * Reads one playlist line into { url, name }.
+     *
+     * The documented shape is { name, url }, but this is a file people edit by
+     * hand at midnight. A bare URL works, `title` works as well as `name`, and
+     * so does a plain [name, url] pair — being forgiving here costs nothing and
+     * saves someone puzzling over why their song vanished.
+     */
+    static readEntry(entry) {
+        if (typeof entry === 'string') return { url: entry, name: '' };
+
+        if (Array.isArray(entry)) {
+            // Either order: whichever half looks like a link is the link.
+            const [a, b] = entry.map(v => (typeof v === 'string' ? v.trim() : ''));
+            return FlickemonMusic.parseYouTubeUrl(a)
+                ? { url: a, name: b }
+                : { url: b, name: a };
+        }
+
+        if (entry && typeof entry === 'object') {
+            const name = entry.name || entry.title || entry.label || '';
+            return { url: entry.url || entry.link || entry.href || '', name: String(name).trim() };
+        }
+        return { url: '', name: '' };
     }
 
     /**
@@ -125,14 +152,42 @@ class FlickemonMusic {
 
     // ─────────────────────── The player ───────────────────────
 
-    /** Creates the host element once, outside anything the site rebuilds. */
+    /**
+     * Creates the docked panel once, outside anything the site rebuilds.
+     *
+     * It is genuinely visible, and that is not cosmetic. Chrome refuses to
+     * autoplay an iframe that is effectively invisible, and YouTube's player
+     * will not start in a zero-size frame — the first version of this hid the
+     * frame at 1x1 with opacity:0 and simply never played. The frame is also
+     * never re-parented once mounted: moving an iframe in the DOM reloads it,
+     * which would restart the track.
+     */
     ensureHost() {
         if (this.host && document.body.contains(this.host)) return this.host;
 
         const host = document.createElement('div');
         host.id = MUSIC_HOST_ID;
         host.className = 'flickemon-music-host';
+        host.innerHTML = `
+            <div class="music-dock-bar">
+                <span class="music-dock-title">Music</span>
+                <button class="music-dock-btn music-dock-collapse" title="Shrink">–</button>
+                <button class="music-dock-btn music-dock-close" title="Stop the music">✕</button>
+            </div>
+            <div class="music-dock-frame"></div>`;
         document.body.appendChild(host);
+
+        host.querySelector('.music-dock-close').addEventListener('click', () => this.stop());
+        host.querySelector('.music-dock-collapse').addEventListener('click', () => {
+            // Collapsing shrinks the video away but keeps the frame on screen
+            // and non-zero, because a hidden frame stops playing.
+            host.classList.toggle('collapsed');
+            const btn = host.querySelector('.music-dock-collapse');
+            const small = host.classList.contains('collapsed');
+            btn.textContent = small ? '+' : '–';
+            btn.title = small ? 'Expand' : 'Shrink';
+        });
+
         this.host = host;
         return host;
     }
@@ -168,7 +223,8 @@ class FlickemonMusic {
             ? `/embed/${track.videoId}`
             : `/embed/videoseries`;
 
-        host.innerHTML = `<iframe
+        const slot = host.querySelector('.music-dock-frame');
+        slot.innerHTML = `<iframe
             class="flickemon-music-frame"
             src="${MUSIC_ORIGIN}${path}?${params.toString()}"
             title="Flickémon music player"
@@ -176,7 +232,10 @@ class FlickemonMusic {
             referrerpolicy="strict-origin-when-cross-origin"
             frameborder="0"></iframe>`;
 
-        this.frame = host.querySelector('.flickemon-music-frame');
+        const label = host.querySelector('.music-dock-title');
+        if (label) label.textContent = track.title;
+
+        this.frame = slot.querySelector('.flickemon-music-frame');
         this.playing = Boolean(autoplay);
         this.emit();
 
@@ -279,11 +338,31 @@ class FlickemonMusic {
     stop() {
         clearTimeout(this.blockTimer);
         this.command('pauseVideo');
-        if (this.host) this.host.innerHTML = '';
+        if (this.host) {
+            this.host.remove();
+            this.host = null;
+        }
         this.frame = null;
         this.ready = false;
         this.playing = false;
         this.emit();
+    }
+
+    /**
+     * Opens the player as its own pinned tab.
+     *
+     * The last-resort answer: an extension page is not subject to anything the
+     * lecture site does, and a click inside that tab is a real user gesture, so
+     * playback cannot be refused for want of one. The cost is a visible tab.
+     */
+    openInTab() {
+        if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) return;
+        this.stop();
+        chrome.runtime.sendMessage({ type: 'MUSIC_OPEN_TAB' }, () => {
+            // A closed port here just means the worker was asleep; the tab
+            // still opens. Reading lastError keeps it from being logged.
+            void chrome.runtime.lastError;
+        });
     }
 
     // ─────────────────────── The lecture wins ───────────────────────
@@ -299,6 +378,12 @@ class FlickemonMusic {
         video.dataset.flickemonMusicHooked = 'true';
         video.addEventListener('play', () => {
             if (this.playing) this.pause();
+            // The standalone tab is a different page with its own player, and
+            // only the worker can reach it.
+            if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+                chrome.runtime.sendMessage({ type: 'MUSIC_LECTURE_STARTED' },
+                    () => void chrome.runtime.lastError);
+            }
         });
     }
 

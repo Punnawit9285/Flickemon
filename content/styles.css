@@ -102,6 +102,10 @@
      * these two are fixed on purpose, like the evolution white-out. */
     --flick-qr-ground: #ffffff;
     --flick-qr-ink: #6b7280;
+
+    /* Letterbox behind a video frame. Black whatever the theme, because that is
+     * what a video's own bars are — tinting it just makes the seam visible. */
+    --flick-video-ground: #000000;
     --flick-trade: var(--ion-color-tertiary, #0ea5e9);
     --flick-trade-rgb: var(--ion-color-tertiary-rgb, 14, 165, 233);
     /* Green and red read differently on the scene's dark ground than on a page,
@@ -2095,18 +2099,62 @@
    visible YouTube chrome floating over the lecture page would be worse than
    useless. Our own controls drive it over postMessage. */
 
+/* The dock is genuinely visible, and that is load-bearing rather than
+   decorative: Chrome refuses to autoplay an effectively invisible iframe, and
+   YouTube's player will not start in a zero-size one. The first version of this
+   hid it at 1x1 with opacity:0 and never played a note. Collapsing shrinks the
+   video away but keeps the frame on screen and non-zero. */
 .flickemon-music-host {
     position: fixed;
-    width: 1px;
-    height: 1px;
-    left: -9999px;
-    top: 0;
-    /* Not display:none — a hidden frame is throttled and may not play at all. */
-    opacity: 0;
-    pointer-events: none;
+    right: 16px;
+    bottom: 16px;
+    z-index: 19000;                 /* under the modals, over the page */
+    width: 264px;
+    border-radius: 10px;
     overflow: hidden;
+    background: var(--flick-video-ground);
+    border: 1px solid var(--flick-border);
+    box-shadow: 0 10px 30px var(--flick-shadow-strong);
 }
-.flickemon-music-frame { width: 320px; height: 180px; border: 0; }
+.music-dock-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    background: var(--flick-card-bg);
+    border-bottom: 1px solid var(--flick-border);
+}
+.music-dock-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--flick-text);
+}
+.music-dock-btn {
+    background: transparent;
+    border: none;
+    color: var(--flick-text-muted);
+    cursor: pointer;
+    font-size: 0.8rem;
+    line-height: 1;
+    padding: 2px 5px;
+    border-radius: 4px;
+}
+.music-dock-btn:hover { background: var(--flick-fill); color: var(--flick-text); }
+.music-dock-frame { width: 264px; height: 149px; }
+.flickemon-music-frame { width: 100%; height: 100%; border: 0; display: block; }
+
+/* Collapsed: a sliver rather than nothing, for the reason above. */
+.flickemon-music-host.collapsed .music-dock-frame { height: 1px; }
+
+@media (max-width: 520px) {
+    .flickemon-music-host { right: 8px; bottom: 8px; width: 200px; }
+    .music-dock-frame { width: 200px; height: 113px; }
+}
 
 /* ── Mini bar inside the widget ── */
 .music-bar {
@@ -2287,3 +2335,29 @@
     border-left: 2px solid var(--flick-border);
     margin: 0;
 }
+
+.music-fallback {
+    margin: 0 0 1rem;
+    padding: 12px;
+    border: 1px dashed var(--flick-border);
+    border-radius: 10px;
+    text-align: center;
+}
+.music-fallback p {
+    margin: 0.6rem 0 0;
+    font-size: 0.76rem;
+    line-height: 1.55;
+    color: var(--flick-text-muted);
+}
+.music-btn-wide {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--flick-primary);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--flick-primary);
+    font-weight: 700;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+.music-btn-wide:hover { background: var(--flick-primary); color: var(--flick-on-primary); }

@@ -16,6 +16,31 @@ import { pullState, pushState, checkAdmin } from './firestore.js';
 import { codeForUid, openLobby, readBattle, joinBattle, submitAction, commitTurn, closeLobby } from './pvp.js';
 import { openTrade, readTrade, joinTrade, offerPokemon, confirmTrade, acknowledgeTrade, closeTrade } from './trade.js';
 
+/**
+ * The music tab's id, in storage because this worker is evicted after ~30s
+ * idle and a module variable would not survive to the next lecture.
+ */
+const MUSIC_TAB_KEY = 'flickemon_music_tab_v1';
+
+async function getMusicTabId() {
+    const data = await chrome.storage.local.get([MUSIC_TAB_KEY]);
+    const id = data && data[MUSIC_TAB_KEY];
+    return Number.isInteger(id) ? id : null;
+}
+
+async function setMusicTabId(id) {
+    if (id === null) await chrome.storage.local.remove([MUSIC_TAB_KEY]);
+    else await chrome.storage.local.set({ [MUSIC_TAB_KEY]: id });
+}
+
+// Forget the tab as soon as it closes, so reopening does not try to focus a
+// tab that is not there.
+if (chrome.tabs && chrome.tabs.onRemoved) {
+    chrome.tabs.onRemoved.addListener(async (tabId) => {
+        if (await getMusicTabId() === tabId) await setMusicTabId(null);
+    });
+}
+
 /** Offline pushes park here until connectivity returns. */
 const PENDING_KEY = 'flickemon_pending_push_v1';
 
@@ -109,6 +134,56 @@ const handlers = {
     async TRADE_CONFIRM(msg) { return await confirmTrade(msg.code, msg.confirmed); },
     async TRADE_ACK(msg)     { return await acknowledgeTrade(msg.code); },
     async TRADE_CLOSE(msg)   { return await closeTrade(msg.code); },
+
+    /**
+     * Opens the standalone music tab, or focuses the one already open.
+     *
+     * The tab's id is remembered rather than found with tabs.query({url}),
+     * which would require the "tabs" permission and show every student a
+     * "read your browsing history" warning at install. A music player has no
+     * business asking for that.
+     */
+    async MUSIC_OPEN_TAB() {
+        const known = await getMusicTabId();
+        if (known !== null) {
+            try {
+                await chrome.tabs.get(known);            // throws if it is gone
+                await chrome.tabs.update(known, { active: true });
+                return { ok: true, focused: true };
+            } catch {
+                await setMusicTabId(null);
+            }
+        }
+        // Pinned and inactive: a background player should not steal the tab
+        // from the lecture the student is already reading.
+        const tab = await chrome.tabs.create({
+            url: chrome.runtime.getURL('player/player.html'),
+            pinned: true,
+            active: false,
+        });
+        await setMusicTabId(tab.id);
+        return { ok: true, created: true };
+    },
+
+    /**
+     * Relays "a lecture started" to the music tab.
+     *
+     * A content script cannot message another tab, and the music tab is not
+     * listening to the lecture page's <video> — this worker is the only thing
+     * that sits between them.
+     */
+    async MUSIC_LECTURE_STARTED() {
+        const id = await getMusicTabId();
+        if (id === null) return { ok: true, notified: 0 };
+        try {
+            await chrome.tabs.sendMessage(id, { type: 'MUSIC_LECTURE_STARTED' });
+            return { ok: true, notified: 1 };
+        } catch {
+            // Closed, or not listening yet. Forget it so the next open is clean.
+            await setMusicTabId(null);
+            return { ok: true, notified: 0 };
+        }
+    },
 
     async CLOUD_PULL() {
         return await pullState();

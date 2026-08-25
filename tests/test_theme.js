@@ -131,7 +131,8 @@ console.log('\n=== a re-themed host actually moves every colour ===');
         // Scene tokens paint the extension's own full-screen grounds and are
         // meant to be independent of the host surface.
         const SCENE = ['scrim', 'shadow', 'spark', 'ray', 'burst', 'damage',
-                       'on-type', 'field', 'tint-neutral', 'highlight', 'sheen', 'qr-'];
+                       'on-type', 'field', 'tint-neutral', 'highlight', 'sheen', 'qr-',
+                       'video-ground'];
         if (SCENE.some(k => name.includes(k))) continue;
         // A token pointing at another token inherits whatever that one does.
         if (/var\(--(?:type|flick)-[\w-]+/.test(value)) continue;

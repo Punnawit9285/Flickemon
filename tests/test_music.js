@@ -7,6 +7,18 @@ require(ROOT + 'content/flickemon-playlist.js');
 require(ROOT + 'content/flickemon-music.js');
 const Music = global.window.FlickemonMusic;
 
+/**
+ * Source with comments blanked out.
+ *
+ * Assertions about what the code does must not be satisfied — or defeated — by
+ * prose. Three checks in this suite have been fooled by their own explanatory
+ * comment already: a rule explaining why the frame is not display:none, and a
+ * comment explaining why tabs.query is not called.
+ */
+const code = (rel) => fs.readFileSync(ROOT + rel, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
 let pass = 0, fail = 0;
 const check = (n, c, d = '') => c
     ? (console.log('  PASS  ' + n), pass++)
@@ -67,10 +79,40 @@ console.log('\n=== the playlist file ===');
     check('ships with working examples', Array.isArray(global.window.FlickemonPlaylist)
         && global.window.FlickemonPlaylist.length > 0);
     check('every shipped example parses',
-        global.window.FlickemonPlaylist.every(e => P(typeof e === 'string' ? e : e.url)));
-    check('tells the reader where to paste', /Paste below this line/.test(src));
+        global.window.FlickemonPlaylist.every(e => P(Music.readEntry(e).url)));
+    check('shows the name-and-url shape up front', /\{ name: .*url: /.test(src));
+    check('every shipped line uses that shape',
+        global.window.FlickemonPlaylist.every(e => e && typeof e === 'object' && e.name && e.url));
+    check('tells the reader where to add', /Add your music below/.test(src));
+    check('says what to do after saving', /chrome:\/\/extensions/.test(src));
     check('explains why it is links and not files',
         /piracy|rights holder|pays whoever/i.test(src));
+}
+
+console.log('\n=== the format forgives a hand-edited file ===');
+{
+    // Documented shape is { name, url }, but this is edited by hand at midnight.
+    const cases = [
+        ['documented',    { name: 'A', url: 'https://youtu.be/jfKfPfyJRdk' }, 'A'],
+        ['title instead', { title: 'B', url: 'https://youtu.be/jfKfPfyJRdk' }, 'B'],
+        ['link instead',  { name: 'C', link: 'https://youtu.be/jfKfPfyJRdk' }, 'C'],
+        ['pair',          ['D', 'https://youtu.be/jfKfPfyJRdk'], 'D'],
+        ['pair reversed', ['https://youtu.be/jfKfPfyJRdk', 'E'], 'E'],
+        ['bare url',      'https://youtu.be/jfKfPfyJRdk', ''],
+    ];
+    for (const [label, entry, expectName] of cases) {
+        const r = Music.readEntry(entry);
+        check(`reads a ${label} entry`,
+            P(r.url) && r.name === expectName, JSON.stringify(r));
+    }
+    check('an unnamed entry still plays, just numbered',
+        (() => {
+            const saved = global.window.FlickemonPlaylist;
+            global.window.FlickemonPlaylist = ['https://youtu.be/jfKfPfyJRdk'];
+            const m = new Music();
+            global.window.FlickemonPlaylist = saved;
+            return m.tracks.length === 1 && /^Track 1$/.test(m.tracks[0].title);
+        })());
 }
 
 console.log('\n=== a hand-edited file is never allowed to throw ===');
@@ -81,11 +123,11 @@ console.log('\n=== a hand-edited file is never allowed to throw ===');
         'https://example.com/pirated.mp3',       // wrong host
         'total nonsense',
         null, undefined, 42, {}, { url: null },
-        { url: 'https://youtu.be/4xDzrJKXOOY', title: 'Named' },
+        { name: 'Named', url: 'https://youtu.be/4xDzrJKXOOY' },
     ];
     const m = new Music();
     check('good entries survive', m.tracks.length === 2, JSON.stringify(m.tracks.map(t => t.title)));
-    check('a given title is kept', m.tracks[1].title === 'Named');
+    check('a given name is kept', m.tracks[1].title === 'Named');
     check('an unnamed track is numbered', /^Track \d+$/.test(m.tracks[0].title), m.tracks[0].title);
     check('bad lines are reported, not swallowed', m.badEntries.length >= 3,
         JSON.stringify(m.badEntries));
@@ -113,6 +155,15 @@ console.log('\n=== the embed itself ===');
     // Comments out first: the rule's own explanation mentions display:none.
     const css = fs.readFileSync(ROOT + 'content/styles.css', 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '');
+    check('the dock is a real, visible size',
+        /\.flickemon-music-host[^}]*width:\s*\d{2,}px/.test(css)
+        && !/\.flickemon-music-host[^}]*opacity:\s*0/.test(css)
+        && !/\.flickemon-music-host[^}]*left:\s*-\d{3,}px/.test(css),
+        'Chrome will not autoplay an effectively invisible iframe');
+    check('collapsing keeps the frame non-zero',
+        /collapsed \.music-dock-frame[^}]*height:\s*1px/.test(css),
+        'a zero-height frame stops playing');
+
     check('the frame is not display:none',
         !/\.flickemon-music-host[^}]*display:\s*none/.test(css),
         'a display:none frame gets throttled and may not play');
@@ -185,6 +236,34 @@ console.log('\n=== wiring ===');
     const ui = fs.readFileSync(ROOT + 'content/flickemon-ui.js', 'utf8');
     check('Music is in the menu', ui.includes('music-item') && ui.includes('> Music<'));
     check('and wired up', /music-item'\)\.addEventListener/.test(ui));
+}
+
+console.log('\n=== the tab fallback ===');
+{
+    const src = fs.readFileSync(ROOT + 'content/flickemon-music.js', 'utf8');
+    const sw = fs.readFileSync(ROOT + 'background/service-worker.js', 'utf8');
+    const mf = JSON.parse(fs.readFileSync(ROOT + 'manifest.json', 'utf8'));
+
+    check('the player can be opened as a tab', /MUSIC_OPEN_TAB/.test(src) && /MUSIC_OPEN_TAB/.test(sw));
+    check('the standalone page exists', fs.existsSync(ROOT + 'player/player.html'));
+    check('and its script', fs.existsSync(ROOT + 'player/player.js'));
+    check('it reuses the same player', /flickemon-music\.js/.test(
+        fs.readFileSync(ROOT + 'player/player.html', 'utf8')));
+    check('it opens pinned and in the background', /pinned: true/.test(sw) && /active: false/.test(sw));
+
+    // Finding the tab by URL needs the "tabs" permission, which warns about
+    // browsing history. A music player must not cost that.
+    check('no tabs permission is requested',
+        !(mf.permissions || []).includes('tabs'), JSON.stringify(mf.permissions));
+    check('the tab is remembered instead of queried',
+        /MUSIC_TAB_KEY/.test(sw) && !/tabs\.query\(/.test(code('background/service-worker.js')));
+    check('a closed tab is forgotten', /onRemoved/.test(sw));
+    check('a lecture silences the tab too',
+        /MUSIC_LECTURE_STARTED/.test(sw) && /MUSIC_LECTURE_STARTED/.test(
+            fs.readFileSync(ROOT + 'player/player.js', 'utf8')));
+
+    const build = fs.readFileSync(ROOT + 'build.sh', 'utf8');
+    check('the player page ships', /player\/player\.html/.test(build));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

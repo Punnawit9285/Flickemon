@@ -1438,6 +1438,14 @@ class FlickemonUI {
                             <ul>${st.badEntries.map(b => `<li><code>${b}</code></li>`).join('')}</ul>
                         </div>` : ''}
 
+                    <div class="music-fallback">
+                        <button class="music-btn-wide music-tab">Open the player in its own tab</button>
+                        <p>If the player will not start on this page, run it as a pinned tab
+                        instead. Nothing the lecture site does can reach it there, and a click
+                        inside that tab is the user gesture browsers require before playing
+                        audio. It still stops when a lecture starts.</p>
+                    </div>
+
                     <p class="music-note">Music stops the moment a lecture starts playing, and does
                     not resume on its own. It keeps playing while you browse the site.</p>
                 </div>`;
@@ -1446,6 +1454,10 @@ class FlickemonUI {
             modal.body.querySelector('.music-next')?.addEventListener('click', () => music.next());
             modal.body.querySelector('.music-prev')?.addEventListener('click', () => music.previous());
             modal.body.querySelector('.music-stop')?.addEventListener('click', () => music.stop());
+            modal.body.querySelector('.music-tab')?.addEventListener('click', () => {
+                music.openInTab();
+                this.closeModal(modal.overlay);
+            });
 
             const vol = modal.body.querySelector('.music-volume-input');
             vol?.addEventListener('input', () => {

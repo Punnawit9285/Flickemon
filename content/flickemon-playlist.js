@@ -1,40 +1,43 @@
 /**
- * ╔══════════════════════════════════════════════════════════════════════╗
- * ║  YOUR MUSIC — paste YouTube links between the [ ] below.             ║
- * ╚══════════════════════════════════════════════════════════════════════╝
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                                                                          ║
+ * ║   YOUR MUSIC                                                             ║
+ * ║                                                                          ║
+ * ║   Add a song by copying one line and changing the two bits:              ║
+ * ║                                                                          ║
+ * ║       { name: 'What to call it',  url: 'paste the YouTube link here' },  ║
+ * ║                                                                          ║
+ * ║   That is the whole format. Name, then link, comma at the end.           ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
  *
- * One link per line, each wrapped in 'single quotes' and followed by a comma.
- * Save the file, then reload the extension (chrome://extensions → ↻) and
- * refresh the lecture page.
+ * Where the link comes from:
+ *   On YouTube, press Share and copy — or just copy what is in the address bar.
+ *   A single video, a live stream, or a whole playlist link all work.
  *
- * Any YouTube link works — copy it straight from the address bar:
+ * When you are done:
+ *   1. Save this file.
+ *   2. Go to chrome://extensions and press ↻ on Flickémon.
+ *   3. Refresh the lecture page.
  *
- *     'https://www.youtube.com/watch?v=jfKfPfyJRdk'      a single video
- *     'https://youtu.be/jfKfPfyJRdk'                     the share link
- *     'https://www.youtube.com/playlist?list=PLxxxx'     a whole playlist
+ * If you get a line wrong, nothing breaks — the player skips it and tells you
+ * which one it could not read.
  *
- * To give a track a nicer name than "Track 3", use this form instead:
+ * ── Why links and not music files ──
  *
- *     { url: 'https://youtu.be/jfKfPfyJRdk', title: 'Lofi for revision' },
- *
- * ── Why YouTube and not audio files ──
- *
- * Everything plays through YouTube's own embedded player, which is what makes
- * this legitimate: YouTube serves the audio, shows its ads, and pays whoever
- * owns the music. Nothing is downloaded, re-hosted or stripped. Putting an
- * mp3 in this repo instead would be piracy — a link is not.
- *
- * A link to something that is itself infringing is still a problem, so use
- * official channels and the artist's own uploads where you can.
+ * Everything plays through YouTube's own player, which is what keeps this
+ * legal: YouTube streams the audio, shows its ads, and pays whoever owns the
+ * music. Putting an mp3 in this folder would be piracy. A link is not.
+ * Prefer official channels and artists' own uploads.
  */
 
 window.FlickemonPlaylist = [
 
-    // ── Paste below this line ──────────────────────────────────────────────
+    // ─────────────── Add your music below ───────────────
 
-    { url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk', title: 'Lofi hip hop radio' },
-    { url: 'https://www.youtube.com/watch?v=4xDzrJKXOOY', title: 'Synthwave radio' },
+    { name: 'Lofi hip hop radio',  url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk' },
+    { name: 'Synthwave radio',     url: 'https://www.youtube.com/watch?v=4xDzrJKXOOY' },
 
-    // ── Paste above this line ──────────────────────────────────────────────
+    // ─────────────── Add your music above ───────────────
 
 ];
