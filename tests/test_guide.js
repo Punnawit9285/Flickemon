@@ -157,6 +157,29 @@ console.log('\n=== the hour figures still match the engine ===');
 
             const mf = require('fs').readFileSync(ROOT + 'manifest.json', 'utf8');
             check('the QR is web-accessible', mf.includes('icons/*.png'));
+
+            // The order was chosen deliberately: play, learn, listen, adjust,
+            // and only then the ask.
+            const menuStart = uiSrc.indexOf('options-popover-menu');
+            const menu = uiSrc.slice(menuStart, uiSrc.indexOf('</div>\n                </div>', menuStart));
+            const labels = [...menu.matchAll(/<\/span>\s*([A-Za-z ]+?)<\/div>/g)]
+                .map(m => m[1].trim()).filter(Boolean);
+            check('menu order is Game Hub, How to Play, Music, Settings, Support',
+                labels.join(' | ') === 'Game Hub | How to Play | Music | Settings | Support the Creator',
+                labels.join(' | '));
+
+            // One outlined glyph among filled ones reads as a weight mismatch
+            // rather than a different icon.
+            const icons = ['menuGameControllerSvg', 'bookSvg', 'noteSvg', 'gearSvg', 'heartSvg'];
+            const fills = icons.map(n => {
+                const m = new RegExp(n + " = `<svg[^>]*fill=\"([^\"]+)\"").exec(uiSrc);
+                return m ? m[1] : 'missing';
+            });
+            check('every menu icon is filled the same way',
+                fills.every(f => f === 'currentColor'),
+                icons.map((n, i) => `${n}=${fills[i]}`).join(' '));
+            check('none of them is stroke-only',
+                !icons.some(n => new RegExp(n + " = `<svg[^>]*stroke=").test(uiSrc)));
         }
 
         console.log('\n=== mega is described only where it exists ===');
