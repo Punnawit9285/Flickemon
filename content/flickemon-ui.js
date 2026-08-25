@@ -144,6 +144,7 @@ class FlickemonUI {
         const tradeSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M368 112l64 64-64 64M416 176H208M144 400l-64-64 64-64M96 336h208"/></svg>`;
         const swordsSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M424 64l-56 0-208 208 56 56L424 120zM88 64l56 0 208 208-56 56L88 120z"/><path d="M136 400l40 40M376 400l-40 40"/></svg>`;
         const bookSvg = `<svg viewBox="0 0 512 512" width="18" height="18" fill="none" stroke="currentColor" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M256 160S228 96 112 96a16 16 0 0 0-16 16v256a16 16 0 0 0 16 16c116 0 144 64 144 64s28-64 144-64a16 16 0 0 0 16-16V112a16 16 0 0 0-16-16c-116 0-144 64-144 64zM256 160v288"/></svg>`;
+        const noteSvg = `<svg viewBox="0 0 512 512" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M421.84 37.37a25.86 25.86 0 0 0-22.6-4.63L199 86.86a32.09 32.09 0 0 0-23.6 30.94v210.79A94 94 0 0 0 144 320c-35.3 0-64 21.5-64 48s28.7 48 64 48 64-21.5 64-48V199.62l192-51.2v134.39A94 94 0 0 0 368 272c-35.3 0-64 21.5-64 48s28.7 48 64 48 64-21.5 64-48V58a25.85 25.85 0 0 0-10.16-20.63"/></svg>`;
         const heartSvg = `<svg viewBox="0 0 512 512" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M352.92 80C288 80 256 144 256 144s-32-64-96.92-64c-52.76 0-94.54 44.14-95.08 96.81-1.1 109.33 86.73 187.08 183 252.42a16 16 0 0 0 18 0c96.26-65.34 184.09-143.09 183-252.42-.54-52.67-42.32-96.81-95.08-96.81z"/></svg>`;
         const gearSvg = `<svg viewBox="0 0 512 512" width="18" height="18" fill="currentColor"><path d="M262.29 192.31a64 64 0 1 0 57.4 57.4 64.13 64.13 0 0 0-57.4-57.4zM416.39 256a154.34 154.34 0 0 1-1.53 20.79l45.84 35.76a16.74 16.74 0 0 1 4.33 19.69l-43.7 75.71a16.63 16.63 0 0 1-19.81 7.51l-54-21.78a156.76 156.76 0 0 1-35.93 20.73l-8.34 57.53A16.69 16.69 0 0 1 286.61 480h-87.2a16.69 16.69 0 0 1-16.59-14.36l-8.26-57.34a156 156 0 0 1-35.82-20.7l-54.05 21.77a16.73 16.73 0 0 1-19.77-7.49l-43.7-75.59a16.71 16.71 0 0 1 4.22-19.73l45.89-35.79a154.94 154.94 0 0 1-1.54-20.76c0-6.93.53-13.77 1.54-20.79l-45.89-35.76a16.74 16.74 0 0 1-4.22-19.73l43.7-75.71a16.7 16.7 0 0 1 19.7-7.51l54.06 21.79A155.65 155.65 0 0 1 174.5 125l8.26-57.46A16.69 16.69 0 0 1 199.41 32h87.2a16.69 16.69 0 0 1 16.59 14.36l8.34 57.53a156.47 156.47 0 0 1 35.93 20.73l54-21.78a16.65 16.65 0 0 1 19.81 7.51l43.7 75.71a16.72 16.72 0 0 1-4.33 19.69l-45.84 35.75a155.51 155.51 0 0 1 1.53 20.8zM256 160a96 96 0 1 0 96 96 96.11 96.11 0 0 0-96-96z"/></svg>`;
 
@@ -236,12 +237,14 @@ class FlickemonUI {
                     <div class="options-popover-menu" style="display: none;">
                         <div class="popover-item game-hub-item"><span class="popover-icon">${menuGameControllerSvg}</span> Game Hub</div>
                         <div class="popover-item settings-item"><span class="popover-icon">${gearSvg}</span> Settings</div>
+                        <div class="popover-item music-item"><span class="popover-icon">${noteSvg}</span> Music</div>
                         <div class="popover-item guide-item"><span class="popover-icon">${bookSvg}</span> How to Play</div>
                         <div class="popover-item support-item"><span class="popover-icon">${heartSvg}</span> Support the Creator</div>
                     </div>
                 </div>
             </div>
             <div class="widget-body">
+                <div class="music-bar" hidden></div>
                 ${reward ? `
                     <div class="reward-banner reward-${reward.type}">
                         <span class="reward-icon">${this.config.REWARD_INFO[reward.type].icon}</span>
@@ -342,6 +345,13 @@ class FlickemonUI {
             this.openSettingsModal();
         });
 
+        card.querySelector('.music-item').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.popoverOpen = false;
+            popover.style.display = 'none';
+            this.openMusicModal();
+        });
+
         card.querySelector('.guide-item').addEventListener('click', (e) => {
             e.stopPropagation();
             this.popoverOpen = false;
@@ -370,6 +380,9 @@ class FlickemonUI {
             widgetBody.style.display = this.isCollapsed ? 'none' : 'block';
             collapseBtn.innerHTML = this.isCollapsed ? chevronDownSvg : chevronUpSvg;
         });
+
+        // A rebuild wipes the bar, so redraw it from the player's current state.
+        this.renderMusicBar(card);
     }
 
     /**
@@ -1295,6 +1308,163 @@ class FlickemonUI {
                 await this.engine.adminSetPokemonLevel(lvl);
             }
         });
+    }
+
+    // ────────────────────────── Music ──────────────────────────
+
+    /** One player for the whole page; the modal and the mini-bar both drive it. */
+    getMusic() {
+        if (!this.music && window.FlickemonMusic) {
+            this.music = new window.FlickemonMusic();
+            // Any change repaints the bar, wherever the widget currently is.
+            this.music.onChange(() => this.renderMusicBar());
+        }
+        return this.music;
+    }
+
+    /** The strip inside the widget: what is playing, and enough to control it. */
+    renderMusicBar(card = this.widgetCard) {
+        if (!card || !card.querySelector) return;
+        const bar = card.querySelector('.music-bar');
+        if (!bar) return;
+
+        const music = this.music;           // not getMusic: never create one just to draw
+        const st = music && music.getState();
+        if (!st || (!st.playing && !st.ready && !st.blocked)) {
+            bar.setAttribute('hidden', '');
+            bar.innerHTML = '';
+            return;
+        }
+        bar.removeAttribute('hidden');
+
+        if (st.blocked) {
+            bar.innerHTML = `<span class="music-bar-blocked">Music blocked by this page</span>
+                <button class="music-bar-btn music-bar-open" title="Details">Details</button>`;
+        } else {
+            bar.innerHTML = `
+                <button class="music-bar-btn music-bar-toggle" title="${st.playing ? 'Pause' : 'Play'}">
+                    ${st.playing ? '❚❚' : '▶'}
+                </button>
+                <button class="music-bar-btn music-bar-next" title="Next track">⏭</button>
+                <span class="music-bar-title" title="${st.track ? st.track.title : ''}">${st.track ? st.track.title : ''}</span>
+                <button class="music-bar-btn music-bar-open" title="Open the player">⋯</button>`;
+        }
+
+        bar.querySelector('.music-bar-toggle')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.getMusic().toggle();
+        });
+        bar.querySelector('.music-bar-next')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.getMusic().next();
+        });
+        bar.querySelector('.music-bar-open')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.openMusicModal();
+        });
+    }
+
+    openMusicModal() {
+        const modal = this.createModalOverlay('Music');
+        modal.overlay.classList.add('music-overlay');
+        const music = this.getMusic();
+
+        if (!music) {
+            modal.body.innerHTML = `<div class="music-empty">
+                <p class="music-empty-title">Music unavailable</p>
+                <p>The player did not load. Reload the extension and try again.</p>
+            </div>`;
+            return;
+        }
+
+        const draw = () => {
+            const st = music.getState();
+
+            if (!st.count) {
+                modal.body.innerHTML = `<div class="music-empty">
+                    <p class="music-empty-title">No music yet</p>
+                    <p>Paste YouTube links into <code>content/flickemon-playlist.js</code>,
+                    reload the extension, then refresh this page.</p>
+                    <p class="music-empty-hint">Any YouTube link works — a video, a share link,
+                    or a whole playlist.</p>
+                </div>`;
+                return;
+            }
+
+            modal.body.innerHTML = `
+                <div class="music">
+                    ${st.blocked ? `
+                        <div class="music-blocked">
+                            <p class="music-blocked-title">This page is blocking the player</p>
+                            <p>Flick's own security policy decides which sites may be embedded,
+                            and YouTube is not on its list. Nothing here can override that —
+                            it is the page's call, not the extension's.</p>
+                        </div>` : ''}
+
+                    <div class="music-now">
+                        <span class="music-now-label">Now playing</span>
+                        <h3 class="music-now-title">${st.track ? st.track.title : '—'}</h3>
+                    </div>
+
+                    <div class="music-controls">
+                        <button class="music-btn music-prev" title="Previous">⏮</button>
+                        <button class="music-btn music-play primary" title="${st.playing ? 'Pause' : 'Play'}">
+                            ${st.playing ? '❚❚' : '▶'}
+                        </button>
+                        <button class="music-btn music-next" title="Next">⏭</button>
+                        <button class="music-btn music-stop" title="Stop and unload">■</button>
+                    </div>
+
+                    <label class="music-volume">
+                        <span>Volume</span>
+                        <input type="range" class="music-volume-input" min="0" max="100" value="${st.volume}"/>
+                        <span class="music-volume-value">${st.volume}</span>
+                    </label>
+
+                    <ol class="music-list">
+                        ${music.tracks.map((t, i) => `
+                            <li class="music-track ${i === st.index ? 'current' : ''}" data-i="${i}">
+                                <span class="music-track-n">${i + 1}</span>
+                                <span class="music-track-title">${t.title}</span>
+                                ${t.listId && !t.videoId ? '<span class="music-track-tag">playlist</span>' : ''}
+                                ${i === st.index && st.playing ? '<span class="music-track-eq">♪</span>' : ''}
+                            </li>`).join('')}
+                    </ol>
+
+                    ${st.badEntries.length ? `
+                        <div class="music-bad">
+                            <p><strong>${st.badEntries.length} line${st.badEntries.length > 1 ? 's' : ''}
+                            could not be read</strong> — only YouTube links work here.</p>
+                            <ul>${st.badEntries.map(b => `<li><code>${b}</code></li>`).join('')}</ul>
+                        </div>` : ''}
+
+                    <p class="music-note">Music stops the moment a lecture starts playing, and does
+                    not resume on its own. It keeps playing while you browse the site.</p>
+                </div>`;
+
+            modal.body.querySelector('.music-play')?.addEventListener('click', () => music.toggle());
+            modal.body.querySelector('.music-next')?.addEventListener('click', () => music.next());
+            modal.body.querySelector('.music-prev')?.addEventListener('click', () => music.previous());
+            modal.body.querySelector('.music-stop')?.addEventListener('click', () => music.stop());
+
+            const vol = modal.body.querySelector('.music-volume-input');
+            vol?.addEventListener('input', () => {
+                const v = Number(vol.value);
+                music.volume = v;                                  // no redraw mid-drag
+                music.command('setVolume', [v]);
+                const out = modal.body.querySelector('.music-volume-value');
+                if (out) out.textContent = String(v);
+            });
+            vol?.addEventListener('change', () => music.setVolume(Number(vol.value)));
+
+            modal.body.querySelectorAll('.music-track').forEach(li => {
+                li.addEventListener('click', () => music.play(Number(li.dataset.i)));
+            });
+        };
+
+        draw();
+        // Keep the modal honest while it is open, then stop listening.
+        const off = music.onChange(() => { if (modal.overlay.parentNode) draw(); else off(); });
     }
 
     // ────────────────────────── How to Play ──────────────────────────

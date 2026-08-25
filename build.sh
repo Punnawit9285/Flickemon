@@ -23,6 +23,8 @@ mkdir -p "$OUT"
 cp manifest.json "$OUT/"
 mkdir -p "$OUT/content" "$OUT/background" "$OUT/icons" "$OUT/popup"
 cp content/flickemon-config.js \
+   content/flickemon-playlist.js \
+   content/flickemon-music.js \
    content/flickemon-battle.js \
    content/flickemon-engine.js \
    content/flickemon-pvp.js \

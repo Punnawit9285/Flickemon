@@ -24,6 +24,8 @@
             ],
             "js": [
                 "content/flickemon-config.js",
+                "content/flickemon-playlist.js",
+                "content/flickemon-music.js",
                 "content/flickemon-battle.js",
                 "content/flickemon-engine.js",
                 "content/flickemon-ui.js",

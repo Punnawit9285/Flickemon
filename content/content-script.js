@@ -134,12 +134,23 @@
             for (const evt of ['pause', 'seeking', 'ended', 'waiting', 'stalled']) {
                 video.addEventListener(evt, stopCounting);
             }
+
+            // A lecture always wins over the music. Bound here rather than in
+            // the player because this is the one place that knows when a <video>
+            // appears — the site's router creates them long after load.
+            if (flickemonUI.music) flickemonUI.music.bindLectureVideo(video);
         }
 
         // Cheap by design: one querySelector, and the dataset flag makes every
         // call after the first a no-op. The player is created asynchronously by
         // the site's router, so polling is the only reliable hook point.
-        setInterval(hookVideoPlayer, 1000);
+        setInterval(() => {
+            hookVideoPlayer();
+            // Music can be started after the video was already hooked; the
+            // dataset flag inside bindLectureVideo keeps this idempotent.
+            const video = document.querySelector('video');
+            if (video && flickemonUI.music) flickemonUI.music.bindLectureVideo(video);
+        }, 1000);
         console.log('[Flickémon Extension] Fully initialized and hooked to page.');
     }
 
