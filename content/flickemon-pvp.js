@@ -72,6 +72,7 @@ class FlickemonPvp {
         // Lobby state, kept across re-renders of the lobby screen.
         this.modeId = this.config.DEFAULT_PVP_MODE;
         this.rosterOpen = false;
+        this.megaInfoOpen = false;
         this.rosterFilter = '';
         this.lossRecorded = false;
         this.switchPanelOpen = false;
@@ -324,32 +325,37 @@ class FlickemonPvp {
         const boostPct = Math.round((1 - this.config.MEGA_STONE_CHANCE) / 3 * 100);
         const stonePct = Math.round(this.config.MEGA_STONE_CHANCE * 100);
 
+        const open = this.megaInfoOpen;
+
         return `
             <div class="pvp-prizes">
                 <p class="pvp-8bit small">WIN ONE OF THESE</p>
-                <div class="pvp-prize-row">
-                    ${Object.values(this.config.REWARDS).map(type => {
-                        const info = this.config.REWARD_INFO[type];
-                        return `
-                            <div class="pvp-prize">
-                                <span class="pvp-prize-odds">${boostPct}%</span>
-                                <span class="pvp-prize-icon">${info.icon}</span>
-                                <span class="pvp-prize-label">${info.label}</span>
-                                <span class="pvp-prize-detail">${info.detail}</span>
-                                <span class="pvp-prize-dur">${mode.rewardLabel}</span>
-                            </div>`;
-                    }).join('')}
-                    <div class="pvp-prize is-mega-prize">
-                        <span class="pvp-prize-odds">${stonePct}%</span>
-                        <span class="pvp-prize-icon">◆</span>
-                        <span class="pvp-prize-label">Mega Stone</span>
-                        <span class="pvp-prize-detail">For a random Pokémon in your line-up. Deals 1.3x damage, and never expires.</span>
-                        <span class="pvp-prize-dur">permanent</span>
+                <div class="pvp-prize-board">
+                    <div class="pvp-prize-row">
+                        ${Object.values(this.config.REWARDS).map(type => {
+                            const info = this.config.REWARD_INFO[type];
+                            return `
+                                <div class="pvp-prize">
+                                    <span class="pvp-prize-odds">${boostPct}%</span>
+                                    <span class="pvp-prize-icon">${info.icon}</span>
+                                    <span class="pvp-prize-label">${info.label}</span>
+                                    <span class="pvp-prize-detail">${info.detail}</span>
+                                    <span class="pvp-prize-dur">${mode.rewardLabel}</span>
+                                </div>`;
+                        }).join('')}
                     </div>
+                    <button type="button" class="pvp-mega-bar${open ? ' is-open' : ''}"
+                            aria-expanded="${open}"
+                            title="${open ? 'Hide' : 'Show'} how Mega Stones work">
+                        <span class="pvp-mega-bar-odds">${stonePct}%</span>
+                        <span class="pvp-mega-bar-icon">${this.config.MEGA_STONE_SVG}</span>
+                        <span class="pvp-mega-bar-label">Mega Stone</span>
+                        <span class="pvp-mega-bar-dur">permanent</span>
+                        <span class="pvp-mega-bar-caret">${open ? '▾' : '▸'}</span>
+                    </button>
+                    ${open ? `<div class="pvp-mega-info">${this.renderStoneRules()}</div>` : ''}
                 </div>
-                <p class="pvp-sub">Drawn at random. A stone can land even while a
-                   boost is running — only boosts refuse to stack.</p>
-                ${this.renderStoneOutlook()}
+                <p class="pvp-sub">One prize per win, drawn at random.</p>
                 ${lockMs > 0 ? `
                     <p class="pvp-lock pvp-lock-timer">⛔ You lost recently — wins pay nothing for
                        <span class="pvp-lock-left">${this.config.formatCountdown(lockMs)}</span>.</p>` : ''}
@@ -359,6 +365,31 @@ class FlickemonPvp {
                        (<span class="pvp-boost-left">${this.config.formatCountdown(running.msLeft)}</span> left).
                        Boosts never stack, so a win now earns nothing.</p>` : ''}
             </div>`;
+    }
+
+    /**
+     * How the stone works, revealed on demand.
+     *
+     * This used to sit open under the prize table, five lines of rules for the
+     * one prize in four. That made the board read as mostly-mega when the
+     * common case is a boost. Behind the bar it is one click away for the
+     * player who has just won their first stone and wants to know what it is.
+     */
+    renderStoneRules() {
+        const mult = this.config.MEGA_DAMAGE_MULTIPLIER;
+        return `
+            <ul class="pvp-mega-rules">
+                <li>Binds to one Pokémon in your line-up, picked at random. It never expires.</li>
+                <li>That Pokémon wears its Mega form and deals <b>${mult}x damage</b>
+                    while studying and in PVP. Switch it on and off any time from the Party tab.</li>
+                <li>A stone can land even while a boost is running — only boosts refuse
+                    to stack. A loss lockout still blocks both.</li>
+                <li>Only a fully evolved Pokémon can use one. Won by one that is not,
+                    the stone is kept and waits for it to evolve.</li>
+                <li>Some Pokémon have two Mega forms. Win a second stone for one of them
+                    and you are given the other.</li>
+            </ul>
+            ${this.renderStoneOutlook()}`;
     }
 
     /**
@@ -404,6 +435,11 @@ class FlickemonPvp {
                 this.modeId = btn.dataset.mode;
                 this.renderLobby();
             });
+        });
+
+        body.querySelector('.pvp-mega-bar')?.addEventListener('click', () => {
+            this.megaInfoOpen = !this.megaInfoOpen;
+            this.renderLobby();
         });
 
         body.querySelector('.pvp-roster-btn')?.addEventListener('click', () => {
@@ -928,10 +964,12 @@ class FlickemonPvp {
                 .then(res => {
                     this.rewardResult = res;
                     this.renderBattle();
-                    // A stone that can be used is switched on by the engine, so
-                    // this is a real transformation and earns the scene. A
-                    // dormant one changes nothing yet and gets only the notice.
-                    if (res.granted && res.kind === 'stone' && !res.dormant) {
+                    // `scene` is the engine's answer to "did this win actually
+                    // transform something, for the first time". A dormant stone
+                    // changes nothing yet, and a second stone for a Pokémon
+                    // already wearing its other form changes nothing either;
+                    // both get the notice and no takeover.
+                    if (res.granted && res.kind === 'stone' && res.scene) {
                         const member = this.engine.getParty()
                             .find(p => p.instanceId === res.instanceId);
                         this.ui.showMegaOverlay(res.stone, member);

@@ -1648,13 +1648,17 @@
     letter-spacing: 0.04em;
 }
 
-/* Admin summon extras. */
-.admin-summon-megaform {
-    max-width: 150px; padding: 3px 5px;
-    font-size: 0.72rem;
+/* Admin: hand the active partner a stone. */
+.admin-stone-btn {
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font-weight: 700;
+    border: 1px solid var(--flick-mega);
+    background: var(--flick-card-bg);
+    color: var(--flick-mega);
 }
-.admin-mega-toggle input:disabled + span,
-.admin-mega-toggle:has(input:disabled) { opacity: 0.45; }
+.admin-stone-btn:hover { background: var(--flick-mega); color: var(--flick-on-primary); }
+.admin-stone-result { margin: 2px 0 0; font-size: 0.72rem; }
+.admin-stone-result.good { color: var(--flick-mega); }
+.admin-stone-result.bad { color: var(--flick-danger); }
 
 @media (prefers-reduced-motion: reduce) {
     .partner-big-sprite.is-mega, .pvp-sprite.is-mega,
@@ -2027,7 +2031,11 @@
 
 /* ── Prize board ── */
 .pvp-prizes { margin: 1rem 0 0.5rem; }
-.pvp-prize-row { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; margin: 0.5rem 0; }
+/* 3 cards at their 168px cap plus two 6px gaps. Fixing the board at that width
+   is what lets the stone bar below line up with the row edge-to-edge instead of
+   spanning the whole modal. */
+.pvp-prize-board { max-width: 516px; margin: 0.5rem auto; }
+.pvp-prize-row { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
 .pvp-prize {
     display: flex; flex-direction: column; align-items: center; gap: 2px;
     flex: 1 1 140px; max-width: 168px; padding: 8px 9px;
@@ -2045,13 +2053,57 @@
     margin-top: 2px; font-size: 0.55rem; letter-spacing: 0.06em;
     color: var(--flick-text-muted); text-transform: uppercase;
 }
-.pvp-prize.is-mega-prize {
-    border-color: var(--flick-mega);
+/* The stone is the fourth prize but not a fourth card: as a card it wrapped to
+   a line of its own and read like a second, more important table. A short bar
+   the width of the row keeps it in the same board, visibly the odd one out
+   (permanent, not timed) without dominating it. */
+.pvp-mega-bar {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; margin-top: 6px; padding: 5px 9px;
+    border: 3px solid var(--flick-mega);
+    background: var(--flick-card-bg);
+    box-shadow: 3px 3px 0 rgba(var(--flick-mega-rgb), 0.45);
+    font-family: "Courier New", monospace;
+    color: var(--flick-mega);
+    cursor: pointer;
+    text-align: left;
+}
+.pvp-mega-bar:hover { background: var(--flick-fill-subtle); }
+.pvp-mega-bar-odds { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; }
+.pvp-mega-bar-icon { display: flex; }
+.pvp-mega-bar-label { flex: 1; font-size: 0.7rem; font-weight: 800; }
+.pvp-mega-bar-dur {
+    font-size: 0.55rem; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--flick-text-muted);
+}
+.pvp-mega-bar-caret { font-size: 0.6rem; }
+
+.pvp-mega-info {
+    padding: 8px 10px;
+    border: 3px solid var(--flick-mega);
+    border-top: none;
+    background: var(--flick-card-bg);
     box-shadow: 3px 3px 0 rgba(var(--flick-mega-rgb), 0.45);
 }
-.pvp-prize.is-mega-prize .pvp-prize-icon,
-.pvp-prize.is-mega-prize .pvp-prize-label,
-.pvp-prize.is-mega-prize .pvp-prize-odds { color: var(--flick-mega); }
+.pvp-mega-rules {
+    margin: 0; padding-left: 1.1rem;
+    font-size: 0.62rem; line-height: 1.5; color: var(--flick-text-muted);
+}
+.pvp-mega-rules li + li { margin-top: 4px; }
+.pvp-mega-rules b { color: var(--flick-mega); }
+.pvp-mega-info .pvp-sub, .pvp-mega-info .pvp-lock { margin-bottom: 0; }
+
+/* The stone itself. Two lobes in the two mega colours, so it stays legible in
+   either theme without a single colour literal. */
+.mega-stone-svg { width: 1.3rem; height: 1.3rem; flex: none; display: block; }
+.mega-stone-svg .ms-orb { fill: var(--flick-mega); stroke: var(--flick-text); stroke-width: 2; }
+.mega-stone-svg .ms-swirl { fill: var(--flick-mega-alt); }
+.mega-stone-svg .ms-dot-a { fill: var(--flick-mega-alt); }
+.mega-stone-svg .ms-dot-b { fill: var(--flick-mega); }
+.mega-stone-svg .ms-shine {
+    fill: none; stroke: var(--flick-mega-spark);
+    stroke-width: 2.4; stroke-linecap: round; opacity: 0.8;
+}
 
 .pvp-reward.is-stone .pvp-8bit { color: var(--flick-mega); }
 .pvp-team-chip.is-mega img { filter: drop-shadow(0 0 5px var(--flick-mega-glow)); }

@@ -148,7 +148,9 @@ const REWARD_INFO = {
     [REWARDS.SHINY]: {
         label: 'Shiny Charm',
         detail: 'Shiny encounters become 10x more likely.',
-        icon: '\u2728',
+        // U+2727, not U+2728: the sparkles glyph carries emoji presentation and
+        // rendered in full colour beside two monochrome stars.
+        icon: '\u2727',
     },
 };
 
@@ -2011,6 +2013,20 @@ const MEGA_DAMAGE_MULTIPLIER = 1.30;
 // between the three boosts, so the full table is 30/30/30/10.
 const MEGA_STONE_CHANCE = 0.10;
 
+// The stone itself, drawn rather than borrowed from a font. `\u25c6` is a
+// generic diamond that reads as "some sparkly thing", and the emoji gems all
+// render in a different visual language from the rest of the 8-bit UI. This is
+// the canonical Mega Stone: a sphere split by a swirl, with the two lobes in
+// the two mega colours. No `id` anywhere in it, because the same markup is
+// stamped into the page more than once and duplicate ids would collide.
+const MEGA_STONE_SVG = `<svg class="mega-stone-svg" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+    <circle class="ms-orb" cx="16" cy="16" r="14"/>
+    <path class="ms-swirl" d="M16,2 a14,14 0 0,1 0,28 a7,7 0 0,1 0,-14 a7,7 0 0,0 0,-14 z"/>
+    <circle class="ms-dot-a" cx="16" cy="9" r="2.3"/>
+    <circle class="ms-dot-b" cx="16" cy="23" r="2.3"/>
+    <path class="ms-shine" d="M7.4,12.2 a9.5,9.5 0 0,1 4.8,-4.8"/>
+</svg>`;
+
 /** The mega forms a species can take, or an empty array. */
 function megaFormsFor(speciesId) {
     return MEGA_FORMS[speciesId] || [];
@@ -2135,6 +2151,7 @@ window.FlickemonConfig = {
     MEGA_FORMS,
     MEGA_DAMAGE_MULTIPLIER,
     MEGA_STONE_CHANCE,
+    MEGA_STONE_SVG,
     megaFormsFor,
     isFullyEvolved,
     finalFormOf,

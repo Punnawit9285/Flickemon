@@ -118,8 +118,17 @@ const win=async(sid,lvl,shiny=false)=>{
 
   console.log('\n=== PVP rewards ===');
   {
+    // The same win draws a Mega Stone 10% of the time, and a stone result
+    // carries no `.reward`. Pinning the line-up to a Pokemon with no Mega
+    // anywhere in its line makes the stone branch fall through to a boost every
+    // time, so this block tests the boost path instead of failing one run in
+    // ten. The stone path is covered on its own below.
+    const noMega=add(19,10);              // Rattata -> Raticate, no Mega form
+    e.gameState.pvpTeamIds=[noMega];
+
     e.gameState.activeReward=null;
     const first=await e.grantPvpReward();
+    check('a mega-less line-up always draws a boost', first.kind!=='stone', first.kind);
     check('a win grants a boost', first.granted===true, JSON.stringify(first));
     check('it is one of the three',
           Object.values(cfg.REWARDS).includes(first.reward.type), first.reward.type);
@@ -172,6 +181,273 @@ const win=async(sid,lvl,shiny=false)=>{
       party:[{instanceId:'a',speciesId:1,level:5,totalExp:125}],
       activeReward:{type:'nonsense',expiresAt:Date.now()+60000}});
     check('an unknown boost type is dropped', n2.activeReward===null);
+  }
+
+  console.log('\n=== Mega Stones ===');
+  {
+    // Math.random is pinned to 0 for this block, which makes rollMegaStone()
+    // always fire and chooseStoneRecipient() always take the first candidate.
+    // The odds themselves are not what is under test here -- the branch the
+    // draw leads to is.
+    const realRandom=Math.random;
+    Math.random=()=>0;
+
+    e.gameState.party=[]; seq=0;
+    e.gameState.activeReward=null;
+    e.gameState.rewardLockUntil=0;
+    const zard=add(6,60);                 // Charizard: fully evolved, two Megas
+    e.gameState.activeInstanceId=zard;
+    e.gameState.pvpTeamIds=[zard];
+    const holder=()=>e.gameState.party.find(p=>p.instanceId===zard);
+
+    const one=await e.grantPvpReward();
+    check('a win can grant a stone', one.kind==='stone', JSON.stringify(one));
+    check('it is not dormant on a fully evolved holder', one.dormant===false);
+    check('the holder now owns it', holder().megaStones.includes(one.stone.key));
+    check('and it is switched on', holder().megaActive===one.stone.key);
+    check('activeMegaForm resolves it',
+          e.activeMegaForm(holder())?.key===one.stone.key);
+
+    // Charizard has X and Y: a repeat win must not re-grant the one held.
+    const two=await e.grantPvpReward();
+    check('a second stone is the other form',
+          two.kind==='stone' && two.stone.key!==one.stone.key, JSON.stringify(two));
+    check('both are held now', holder().megaStones.length===2);
+    check('the stone list is sorted',
+          JSON.stringify(holder().megaStones)===JSON.stringify([...holder().megaStones].sort()));
+
+    // Nothing left to win: the 10% has to pay something rather than nothing.
+    e.gameState.activeReward=null;
+    const maxed=await e.grantPvpReward();
+    check('a maxed-out line-up re-rolls into a boost',
+          maxed.granted===true && maxed.kind!=='stone', JSON.stringify(maxed));
+
+    // A stone is an item, not a timer, so the no-stacking rule does not apply.
+    e.gameState.party=[]; seq=0;
+    const zard2=add(6,60);
+    e.gameState.activeInstanceId=zard2; e.gameState.pvpTeamIds=[zard2];
+    e.gameState.activeReward={type:cfg.REWARDS.EXP,expiresAt:Date.now()+60000};
+    const during=await e.grantPvpReward();
+    check('a stone lands even while a boost runs', during.kind==='stone',
+          JSON.stringify(during));
+    check('and the running boost is untouched',
+          e.getActiveReward().type===cfg.REWARDS.EXP);
+
+    // Dormant: owned, but the holder cannot use it yet.
+    e.gameState.party=[]; seq=0;
+    e.gameState.activeReward=null;
+    const mander=add(4,10);               // Charmander -> Charizard has the Mega
+    e.gameState.activeInstanceId=mander; e.gameState.pvpTeamIds=[mander];
+    const early=await e.grantPvpReward();
+    const m=()=>e.gameState.party.find(p=>p.instanceId===mander);
+    check('an unevolved holder still wins the stone', early.kind==='stone',
+          JSON.stringify(early));
+    check('but it is dormant', early.dormant===true);
+    check('and is not switched on', !m().megaActive, String(m().megaActive));
+    check('activeMegaForm reports nothing', !e.activeMegaForm(m()));
+    check('evolving wakes it', (()=>{
+        m().speciesId=6;                  // as the evolution path leaves it
+        const woke=e.wakeDormantMega(m());
+        return woke && m().megaActive===woke.key;
+    })());
+
+    // The lockout outranks everything, stones included.
+    e.gameState.party=[]; seq=0;
+    e.gameState.activeReward=null;
+    const zard3=add(6,60);
+    e.gameState.activeInstanceId=zard3; e.gameState.pvpTeamIds=[zard3];
+    await e.recordPvpLoss();
+    const locked=await e.grantPvpReward();
+    check('a loss lockout blocks stones too',
+          locked.granted===false && locked.reason==='locked', JSON.stringify(locked));
+    check('and nothing was handed out',
+          (e.gameState.party.find(p=>p.instanceId===zard3).megaStones||[]).length===0);
+    e.gameState.rewardLockUntil=0;
+
+    Math.random=realRandom;
+
+    // The admin tool grants through the same applyMegaStone, so it is the
+    // cheapest way to reproduce every stone state on a test account.
+    e.gameState.party=[]; seq=0;
+    const gift=add(6,60);
+    e.gameState.activeInstanceId=gift;
+    const g1=await e.adminGrantMegaStone();
+    check('admin can hand the partner a stone', g1.ok===true, JSON.stringify(g1));
+    check('it is live on a fully evolved partner', g1.dormant===false);
+    check('and switched on',
+          e.gameState.party[0].megaActive===g1.form.key);
+    const g2=await e.adminGrantMegaStone();
+    check('a second press gives the other form',
+          g2.ok===true && g2.form.key!==g1.form.key, JSON.stringify(g2));
+    const g3=await e.adminGrantMegaStone();
+    check('a third has nothing left to give',
+          g3.ok===false && g3.reason==='maxed', JSON.stringify(g3));
+
+    e.gameState.party=[]; seq=0;
+    e.gameState.activeInstanceId=add(19,10);          // Rattata: no Mega anywhere
+    const none=await e.adminGrantMegaStone();
+    check('a mega-less partner is refused',
+          none.ok===false && none.reason==='no-mega', JSON.stringify(none));
+
+    e.gameState.party=[]; seq=0;
+    e.gameState.activeInstanceId=add(4,10);           // Charmander
+    const soon=await e.adminGrantMegaStone();
+    check('an unevolved partner gets a dormant stone',
+          soon.ok===true && soon.dormant===true, JSON.stringify(soon));
+    check('which is not switched on', !e.gameState.party[0].megaActive);
+  }
+
+  console.log('\n=== Mega: dormant until the final form ===');
+  {
+    e.gameState.party=[]; seq=0;
+    const id=add(4,10);                                  // Charmander
+    e.gameState.activeInstanceId=id;
+    const m=()=>e.gameState.party.find(p=>p.instanceId===id);
+
+    const g=await e.adminGrantMegaStone();
+    check('it holds a Charizardite', m().megaStones.length===1, JSON.stringify(m().megaStones));
+
+    // The whole point: owning the stone changes nothing until it can be used.
+    check('it cannot Mega Evolve', e.activeMegaForm(m())===null);
+    check('it has no form to switch to', e.availableMegaForms(m()).length===0);
+    check('and the stone reads as dormant', e.dormantMegaStones(m()).length===1);
+    check('it deals ordinary damage', e.megaMultiplierFor(m())===1);
+    check('it wears its ordinary sprite', e.spriteIdFor(m())===4);
+    const refused=await e.toggleMega(id);
+    check('the toggle refuses it', refused.ok===false && refused.reason==='dormant',
+          JSON.stringify(refused));
+    // Even a save that somehow carries megaActive for a form this stage cannot
+    // use -- a hand-edited file, a sync from a device further along the line --
+    // must not buy a damage bonus. toCombatant re-checks the species itself.
+    m().megaActive=m().megaStones[0];
+    const forced=window.FlickemonBattle.toCombatant(m(), cfg.getSpeciesById(m().speciesId), cfg);
+    check('PVP refuses a dormant form too',
+          forced.damageMult===1 && forced.megaForm===null, JSON.stringify(forced.megaForm));
+    check('and so does the study multiplier', e.megaMultiplierFor(m())===1);
+    m().megaActive=null;
+
+    // Evolution is NOT blocked -- only the Mega is.
+    const seen=[];
+    const off=e.onEvolution(ev=>seen.push(ev.kind==='mega'?'mega:'+ev.form.key:'evo:'+ev.to.id));
+    await e.adminSetPokemonLevel(16);
+    check('it evolves normally to Charmeleon', m().speciesId===5, String(m().speciesId));
+    check('still no Mega at the middle stage', e.activeMegaForm(m())===null);
+    check('and no scene was played yet', seen.join()==='evo:5', seen.join());
+
+    await e.adminSetPokemonLevel(36);
+    check('it reaches Charizard', m().speciesId===6);
+    check('the Mega scene follows the evolution scene',
+          seen.join()==='evo:5,evo:6,mega:'+g.form.key, seen.join());
+    check('and it is now Mega Evolved', e.activeMegaForm(m())?.key===g.form.key);
+    check('dealing 1.3x', e.megaMultiplierFor(m())===cfg.MEGA_DAMAGE_MULTIPLIER);
+    off();
+
+    // Toggling is free, and silent, forever after.
+    const offRes=await e.toggleMega(id);
+    check('it can be switched back off', offRes.ok===true && offRes.form===null);
+    check('back to the plain final form', e.spriteIdFor(m())===6);
+    check('with no damage bonus', e.megaMultiplierFor(m())===1);
+    const onRes=await e.toggleMega(id);
+    check('and switched on again', e.activeMegaForm(m())?.key===g.form.key);
+    check('but the scene does not replay', onRes.scene===null, JSON.stringify(onRes.scene));
+    check('the seen list remembers it', m().megaSeen.includes(g.form.key));
+  }
+
+  console.log('\n=== Mega: the scene plays exactly once ===');
+  {
+    // A stone won while the holder is already wearing its other form is not a
+    // transformation, and must not take the screen for 8.5 seconds.
+    e.gameState.party=[]; seq=0;
+    e.gameState.activeReward=null; e.gameState.rewardLockUntil=0;
+    const id=add(6,60);
+    e.gameState.activeInstanceId=id; e.gameState.pvpTeamIds=[id];
+    const m=()=>e.gameState.party.find(p=>p.instanceId===id);
+
+    const realRandom=Math.random; Math.random=()=>0;
+    const first=await e.grantPvpReward();
+    check('the first stone earns a scene', first.scene===true, JSON.stringify(first));
+    e.gameState.activeReward=null;
+    const second=await e.grantPvpReward();
+    check('the second is a different form', second.stone.key!==first.stone.key);
+    check('but earns no scene', second.scene===false, JSON.stringify(second));
+    Math.random=realRandom;
+
+    // The second form has still never been seen, so switching to it does play.
+    const toY=await e.toggleMega(id, second.stone.key);
+    check('switching to the unseen form plays it',
+          toY.scene && toY.scene.key===second.stone.key, JSON.stringify(toY.scene));
+    const again=await e.toggleMega(id, second.stone.key);   // off
+    const back=await e.toggleMega(id, second.stone.key);    // on
+    check('and never again', back.scene===null, JSON.stringify(back.scene));
+    check('both forms are recorded as seen', m().megaSeen.length===2,
+          JSON.stringify(m().megaSeen));
+  }
+
+  console.log('\n=== Mega: a bench member evolving ===');
+  {
+    e.gameState.party=[]; seq=0;
+    const partner=add(25,50);
+    const bench=add(4,15);                               // Charmander on the team
+    e.gameState.activeInstanceId=partner;
+    e.gameState.teamIds=[partner,bench];
+    const m=()=>e.gameState.party.find(p=>p.instanceId===bench);
+    m().megaStones=['charizard-mega-x']; m().megaSeen=[];
+
+    const seen=[];
+    const off=e.onEvolution(ev=>seen.push(
+        (ev.kind==='mega'?'mega:'+ev.form.key:'evo:'+ev.to.id)+(ev.benched?'/bench':'')));
+
+    // shareExpWithTeam applies at most one evolution per call, so a single
+    // enormous grant would stop at Charmeleon. Nudge it over each threshold.
+    const nudge=(toLevel)=>{
+      m().totalExp=cfg.expForLevel(toLevel)-1;
+      m().level=cfg.levelFromExp(m().totalExp);
+      e.shareExpWithTeam(Math.ceil(1/cfg.TEAM_EXP_SHARE)+1, partner);
+    };
+    nudge(16);
+    check('the bench member evolves to Charmeleon', m().speciesId===5, String(m().speciesId));
+    check('its stone is still dormant there', e.activeMegaForm(m())===null);
+    nudge(36);
+    off();
+
+    check('and on to Charizard', m().speciesId===6, String(m().speciesId));
+    check('its dormant stone woke on the bench',
+          e.activeMegaForm(m())?.key==='charizard-mega-x', JSON.stringify(seen));
+    check('with a scene of its own, marked as benched',
+          seen.includes('mega:charizard-mega-x/bench'), seen.join());
+    check('after the evolution scene, not before',
+          seen.indexOf('mega:charizard-mega-x/bench')===seen.indexOf('evo:6/bench')+1,
+          seen.join());
+  }
+
+  console.log('\n=== Mega: megaSeen persistence ===');
+  {
+    const n=e.normalizeState({hasStarted:true,activeInstanceId:'a',party:[
+      {instanceId:'a',speciesId:6,level:60,totalExp:cfg.expForLevel(60),
+       megaStones:['charizard-mega-y','charizard-mega-x'],
+       megaSeen:['charizard-mega-y','charizard-mega-x','charizard-mega-y'],
+       megaActive:'charizard-mega-x',megaActiveAt:5}]});
+    check('megaSeen survives a reload',
+          JSON.stringify(n.party[0].megaSeen)==='["charizard-mega-x","charizard-mega-y"]',
+          JSON.stringify(n.party[0].megaSeen));
+    const n2=e.normalizeState({hasStarted:true,activeInstanceId:'a',party:[
+      {instanceId:'a',speciesId:6,level:60,totalExp:cfg.expForLevel(60)}]});
+    check('and defaults to empty', JSON.stringify(n2.party[0].megaSeen)==='[]');
+
+    // A scene watched on one device must not replay on another.
+    e.gameState=e.normalizeState({hasStarted:true,activeInstanceId:'a',party:[
+      {instanceId:'a',speciesId:6,level:60,totalExp:cfg.expForLevel(60),
+       megaStones:['charizard-mega-x'],megaSeen:[],megaActive:null,megaActiveAt:0}],
+      pokedex:[],releasedIds:[],schemaVersion:2,lastSyncedAt:1});
+    e.mergeCloudState({schemaVersion:2,lastSyncedAt:2,pokedex:[],releasedIds:[],party:[
+      {instanceId:'a',speciesId:6,level:60,totalExp:cfg.expForLevel(60),
+       megaStones:['charizard-mega-x'],megaSeen:['charizard-mega-x']}]});
+    check('a seen scene unions in from the cloud',
+          e.gameState.party[0].megaSeen.includes('charizard-mega-x'),
+          JSON.stringify(e.gameState.party[0].megaSeen));
+    const t=await e.toggleMega('a');
+    check('so the other device does not replay it', t.ok===true && t.scene===null,
+          JSON.stringify(t));
   }
 
   console.log('\n=== admin summon ===');

@@ -49,6 +49,7 @@ class FlickemonMusic {
         this.frame = null;
         this.host = null;
         this.listeners = [];
+        this.lastSnapshot = null;   // see emit(): drops YouTube's 4Hz position pings
         this.blocked = false;
         // Whether the <iframe> itself fired `load`. This is the only honest
         // signal that the page did NOT refuse the frame — see the block check
@@ -473,8 +474,19 @@ class FlickemonMusic {
         return () => { this.listeners = this.listeners.filter(l => l !== cb); };
     }
 
+    /**
+     * YouTube sends `infoDelivery` about four times a second while a track is
+     * playing -- it is a playback-position ping, not a state change. Forwarding
+     * every one of them made each listener redraw at 4Hz, and in the player
+     * modal a redraw is an `innerHTML` rebuild: the playlist reset its scroll
+     * to the top continuously, so it could not be scrolled at all while music
+     * was on. Emit only when the snapshot listeners actually read has changed.
+     */
     emit() {
         const snapshot = this.getState();
+        const key = JSON.stringify(snapshot);
+        if (key === this.lastSnapshot) return;
+        this.lastSnapshot = key;
         this.listeners.forEach(cb => cb(snapshot));
     }
 

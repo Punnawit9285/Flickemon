@@ -957,7 +957,8 @@ class FlickemonUI {
                     btn.addEventListener('click', async (e) => {
                         e.stopPropagation();
                         if (btn.disabled) return;
-                        const res = await this.engine.toggleMega(btn.dataset.instance);
+                        const instanceId = btn.dataset.instance;
+                        const res = await this.engine.toggleMega(instanceId);
                         if (!res.ok) {
                             if (res.reason === 'dormant') {
                                 alert('That Pokémon holds a Mega Stone but has not reached '
@@ -965,12 +966,16 @@ class FlickemonUI {
                             }
                             return;
                         }
-                        // Deliberately silent. The scene belongs to the first
-                        // transformation — winning the stone, or evolving into a
-                        // form that can finally use one it was already carrying.
-                        // Replaying it on every flick of this button would wear
-                        // out the one moment it exists for.
                         renderTab('party');
+                        // The engine hands back a form here only the first time
+                        // this Pokémon takes it. Every later flick of the button
+                        // is silent: replaying an 8.5-second takeover on a
+                        // toggle would wear out the one moment it exists for.
+                        if (res.scene) {
+                            const member = this.engine.getParty()
+                                .find(pk => pk.instanceId === instanceId);
+                            this.showMegaOverlay(res.scene, member);
+                        }
                     });
                 });
                 content.querySelectorAll('.team-btn').forEach(btn => {
@@ -1016,19 +1021,31 @@ class FlickemonUI {
                     </div>
                 `;
             } else if (tab === 'stats') {
+                // The clock behind this is minutes of lecture watched, but that
+                // is the last thing the panel should say. Every label here is
+                // the adventure's, not the timetable's: "3h 12m on the road"
+                // reads like a save file, "5.2 hours watched" reads like a
+                // compliance report.
+                const mins = Math.round(this.engine.getGameState().totalMinutesWatched);
+                const playTime = mins < 60
+                    ? `${mins}m`
+                    : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+                const caught = this.engine.getCaughtCount();
+                const total = this.config.POKEMON_REGISTRY.length;
+
                 content.innerHTML = `
                     <div class="flickemon-list-card">
                         <div class="flickemon-list-item">
-                            <span class="flickemon-list-item-title">Total Watch Time</span>
-                            <span class="flickemon-list-item-sub">${(this.engine.getGameState().totalMinutesWatched / 60).toFixed(1)} hours</span>
+                            <span class="flickemon-list-item-title">Total Play Time</span>
+                            <span class="flickemon-list-item-sub">${playTime} on the road</span>
                         </div>
                         <div class="flickemon-list-item">
                             <span class="flickemon-list-item-title">Pokémon Caught</span>
-                            <span class="flickemon-list-item-sub">${this.engine.getCaughtCount()} / ${this.config.POKEMON_REGISTRY.length}</span>
+                            <span class="flickemon-list-item-sub">${caught} / ${total} in the Pokédex</span>
                         </div>
                         <div class="flickemon-list-item">
-                            <span class="flickemon-list-item-title">Party Size</span>
-                            <span class="flickemon-list-item-sub">${party.length}</span>
+                            <span class="flickemon-list-item-title">Team on Hand</span>
+                            <span class="flickemon-list-item-sub">${party.length} ${party.length === 1 ? 'partner' : 'partners'}</span>
                         </div>
                     </div>
                 `;
@@ -1101,13 +1118,15 @@ class FlickemonUI {
                             <label class="admin-shiny-toggle">
                                 <input type="checkbox" class="admin-summon-shiny"/> Shiny
                             </label>
-                            <label class="admin-shiny-toggle admin-mega-toggle">
-                                <input type="checkbox" class="admin-summon-mega"/> Mega
-                            </label>
-                            <select class="admin-summon-megaform" title="Which Mega form" hidden></select>
                             <button class="admin-summon-btn">Summon</button>
                         </div>
                         <p class="admin-summon-result"></p>
+
+                        <div class="admin-summon-row">
+                            <span class="admin-field-label">Mega Stone:</span>
+                            <button class="admin-stone-btn">Give to partner</button>
+                        </div>
+                        <p class="admin-stone-result"></p>
 
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="font-size:0.85rem; font-weight:600;">Set Level:</span>
@@ -1334,39 +1353,12 @@ class FlickemonUI {
                 .map(sp => `<option value="${sp.name}">#${sp.id}</option>`).join('');
         }
 
-        // The form picker only appears for a species that has more than one
-        // Mega, so the common case stays a single checkbox.
-        const megaBox  = adminPanel.querySelector('.admin-summon-mega');
-        const megaSel  = adminPanel.querySelector('.admin-summon-megaform');
-        const speciesInput = adminPanel.querySelector('.admin-summon-input');
-        const syncMegaPicker = () => {
-            const raw = (speciesInput.value || '').trim();
-            const byNumber = Number(raw.replace(/^#/, ''));
-            const sp = Number.isFinite(byNumber) && byNumber > 0
-                ? this.config.getSpeciesById(byNumber)
-                : this.config.POKEMON_REGISTRY.find(x => x.name.toLowerCase() === raw.toLowerCase());
-            const forms = sp ? this.config.megaFormsFor(sp.id) : [];
-            megaBox.disabled = forms.length === 0;
-            if (forms.length === 0) megaBox.checked = false;
-            const show = megaBox.checked && forms.length > 1;
-            megaSel.hidden = !show;
-            if (show) {
-                megaSel.innerHTML = forms.map(f =>
-                    `<option value="${f.key}">${f.name}</option>`).join('');
-            }
-        };
-        speciesInput?.addEventListener('input', syncMegaPicker);
-        megaBox?.addEventListener('change', syncMegaPicker);
-        syncMegaPicker();
-
         const summonBtn = adminPanel.querySelector('.admin-summon-btn');
         const summonResult = adminPanel.querySelector('.admin-summon-result');
         summonBtn?.addEventListener('click', async () => {
             const raw = (adminPanel.querySelector('.admin-summon-input').value || '').trim();
             const lvlRaw = adminPanel.querySelector('.admin-summon-lvl').value;
             const shiny = adminPanel.querySelector('.admin-summon-shiny').checked;
-            const wantMega = adminPanel.querySelector('.admin-summon-mega').checked;
-            const formSel = adminPanel.querySelector('.admin-summon-megaform');
             if (!raw) return;
 
             // Accept a dex number, "#25", or a name in any casing.
@@ -1382,30 +1374,43 @@ class FlickemonUI {
                 return;
             }
 
-            const forms = this.config.megaFormsFor(species.id);
-            if (wantMega && forms.length === 0) {
-                summonResult.textContent = `${species.name} has no Mega form.`;
-                summonResult.className = 'admin-summon-result bad';
-                return;
-            }
-            // With two or three forms the picker decides; with one there is
-            // nothing to pick and the checkbox is the whole choice.
-            const megaForm = wantMega
-                ? (forms.find(f => f.key === formSel.value) || forms[0]).key
-                : null;
-
             const res = await this.engine.adminSummonOpponent(species.id, {
                 shiny,
                 level: lvlRaw ? Number(lvlRaw) : undefined,
-                megaForm,
             });
             summonResult.textContent = res.ok
-                ? `${res.mega ? res.mega.name : `${res.shiny ? 'Shiny ' : ''}${res.species.name}`} (Lv.${res.level}) is now the opponent.`
+                ? `${res.shiny ? 'Shiny ' : ''}${res.species.name} (Lv.${res.level}) is now the opponent.`
                 : 'Could not summon that.';
             summonResult.className = `admin-summon-result ${res.ok ? 'good' : 'bad'}`;
-            // Summoning a mega shows the transformation, same as winning one.
-            if (res.ok && res.mega) {
-                this.showMegaOverlay(res.mega, { speciesId: res.species.id, shiny: res.shiny });
+        });
+
+        // Gives the active partner the next stone its line can hold, and plays
+        // the transformation when the stone is one it can actually use — the
+        // same scene a 10% PVP win produces.
+        const stoneBtn = adminPanel.querySelector('.admin-stone-btn');
+        const stoneResult = adminPanel.querySelector('.admin-stone-result');
+        stoneBtn?.addEventListener('click', async () => {
+            const before = this.engine.getActivePokemon();
+            const res = await this.engine.adminGrantMegaStone();
+
+            if (!res.ok) {
+                stoneResult.textContent =
+                    res.reason === 'nobody' ? 'No active partner to give it to.'
+                    : res.reason === 'maxed' ? 'Your partner already holds every stone its line can.'
+                    : 'Nothing in your partner\'s line has a Mega form.';
+                stoneResult.className = 'admin-stone-result bad';
+                return;
+            }
+
+            stoneResult.textContent = res.dormant
+                ? `${res.holder} received ${res.form.stone} — dormant until it fully evolves.`
+                : `${res.holder} received ${res.form.stone}.`;
+            stoneResult.className = 'admin-stone-result good';
+
+            if (res.scene && before) {
+                this.showMegaOverlay(res.form, {
+                    speciesId: before.speciesId, shiny: before.shiny === true,
+                });
             }
         });
 
@@ -1487,6 +1492,12 @@ class FlickemonUI {
         const draw = () => {
             const st = music.getState();
 
+            // A redraw replaces the whole body, which would send the playlist
+            // back to the top mid-scroll when a track changes. Carry the
+            // scroll position across.
+            const before = modal.body.querySelector('.music-list');
+            const listTop = before ? before.scrollTop : 0;
+
             if (!st.count) {
                 modal.body.innerHTML = `<div class="music-empty">
                     <p class="music-empty-title">No music yet</p>
@@ -1556,6 +1567,9 @@ class FlickemonUI {
                     <p class="music-note">Music stops the moment a lecture starts playing, and does
                     not resume on its own. It keeps playing while you browse the site.</p>
                 </div>`;
+
+            const list = modal.body.querySelector('.music-list');
+            if (list) list.scrollTop = listTop;
 
             modal.body.querySelector('.music-play')?.addEventListener('click', () => music.toggle());
             modal.body.querySelector('.music-next')?.addEventListener('click', () => music.next());

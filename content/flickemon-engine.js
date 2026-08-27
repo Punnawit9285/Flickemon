@@ -141,7 +141,7 @@ class FlickemonEngine {
                 // here. It rides the same listener, so the queue plays the mega
                 // scene directly after the evolution scene rather than at once.
                 const woke = this.wakeDormantMega(active);
-                if (woke) {
+                if (woke && this.claimMegaScene(active, woke.key)) {
                     this.evolutionListeners.forEach(cb => cb({
                         kind: 'mega', form: woke, species: toSpecies,
                         shiny: active.shiny === true,
@@ -286,6 +286,14 @@ class FlickemonEngine {
                 p.megaActive = null;
             }
             if (!Number.isFinite(p.megaActiveAt)) p.megaActiveAt = 0;
+            // Which transformations this Pokemon has already been given a scene
+            // for. Unfiltered against MEGA_FORMS for the same reason as
+            // megaStones above: an older client must not forget that a newer
+            // one already played something, or the scene replays on every
+            // device that has not seen it.
+            p.megaSeen = Array.isArray(p.megaSeen)
+                ? [...new Set(p.megaSeen.filter(k => typeof k === 'string'))].sort()
+                : [];
         });
 
         if (s.battleMode !== this.config.BATTLE_MODES.EXP) s.battleMode = this.config.BATTLE_MODES.CAPTURE;
@@ -723,6 +731,17 @@ class FlickemonEngine {
                     ])].sort();
                 }
 
+                // Seen-scenes union for the same reason, and because the
+                // alternative is worse in an obvious way: a transformation
+                // watched on a laptop replaying on a phone is exactly the
+                // repetition the once-only rule exists to prevent.
+                if (Array.isArray(remote.megaSeen) && remote.megaSeen.length) {
+                    local.megaSeen = [...new Set([
+                        ...(local.megaSeen || []),
+                        ...remote.megaSeen.filter(k => typeof k === 'string'),
+                    ])].sort();
+                }
+
                 // The toggle is a preference, so last writer wins — but per
                 // member, on its own timestamp, not on the save-wide
                 // lastSyncedAt used for battleMode and the team lists. A device
@@ -970,6 +989,7 @@ class FlickemonEngine {
             level: 5,
             totalExp: this.config.expForLevel(5),
             megaStones: [],
+            megaSeen: [],
             megaActive: null,
             megaActiveAt: 0,
         };
@@ -1176,9 +1196,18 @@ class FlickemonEngine {
 
         member.megaActive = next;
         member.megaActiveAt = Date.now();
+        const form = this.activeMegaForm(member);
+
+        // Switching a form on for the first time is a first transformation and
+        // earns the scene, wherever the stone came from. Without this, a stone
+        // that arrived while its holder could not use it -- a trade, a bench
+        // member's evolution, a cloud sync -- would never be shown at all.
+        // Every later flick of the toggle is silent.
+        const scene = form && this.claimMegaScene(member, form.key) ? form : null;
+
         this.emitState();
         await this.saveGameState();
-        return { ok: true, form: this.activeMegaForm(member) };
+        return { ok: true, form, scene };
     }
 
     /** Grants a stone to one member. Idempotent — owning it twice is owning it once. */
@@ -1232,17 +1261,83 @@ class FlickemonEngine {
     }
 
     /**
-     * Starts the no-reward window after a defeat.
+     * Claims the right to play one Pokemon's transformation scene, once.
      *
-     * Extends rather than replaces, so losing twice in a row cannot shorten the
-     * lockout the first loss started.
+     * The scene is an 8.5-second takeover. It earns that length by being the
+     * moment a Pokemon becomes something else -- which happens once per form,
+     * not once per time the toggle is flicked. Every path that could play it
+     * asks here first, and the answer is persisted on the member and synced, so
+     * a scene watched on one device does not replay on another.
+     *
+     * Keyed by form, not by member: Mega Charizard Y is a creature the player
+     * has genuinely never seen, even on a Charizard that has been wearing X for
+     * a week.
      */
-    async recordPvpLoss() {
-        const until = Date.now() + this.config.PVP_LOSS_LOCKOUT_MS;
-        this.gameState.rewardLockUntil = Math.max(this.gameState.rewardLockUntil || 0, until);
+    claimMegaScene(member, formKey) {
+        if (!member || typeof formKey !== 'string') return false;
+        const seen = member.megaSeen || [];
+        if (seen.includes(formKey)) return false;
+        member.megaSeen = [...new Set([...seen, formKey])].sort();
+        return true;
+    }
+
+    /**
+     * Writes one stone onto one party member and reports whether it is dormant.
+     *
+     * The PVP draw and the admin tool both come through here, so "held stones
+     * stay sorted and unique" and "switch it on the moment it can be used" are
+     * decided once. Sorted matters beyond tidiness: mergeCloudState decides
+     * whether anything changed by comparing serialised state, and an unstable
+     * order would force a Firestore write on every merge.
+     *
+     * Switching on immediately is deliberate — winning the stone is what plays
+     * the transformation scene, and a scene showing a change that had not
+     * happened yet would be a lie. It stays a toggle: the party page turns the
+     * ordinary form back on.
+     */
+    applyMegaStone(member, form) {
+        member.megaStones = [...new Set([...(member.megaStones || []), form.key])].sort();
+        const usable = this.config.megaFormsFor(member.speciesId).some(f => f.key === form.key);
+        let scene = null;
+        if (usable && !member.megaActive) {
+            member.megaActive = form.key;
+            member.megaActiveAt = Date.now();
+            if (this.claimMegaScene(member, form.key)) scene = form;
+        }
+        return { dormant: !usable, scene };
+    }
+
+    /**
+     * Admin: hands the active partner the next Mega Stone in its line.
+     *
+     * This replaced a summon-a-mega checkbox, which only ever produced a wild
+     * opponent wearing the form — something to look at, not something to test.
+     * A stone is the part worth having on a test account: it persists, it
+     * toggles, it travels in a trade, and it is granted through the same
+     * applyMegaStone the 10% PVP draw uses, so the tool exercises the real path.
+     *
+     * Repeated use walks the forms: an X first, then the Y, then nothing left.
+     * A partner that is not yet fully evolved still receives the stone its line
+     * ends in, which is exactly how a dormant stone is meant to be reproduced.
+     */
+    async adminGrantMegaStone() {
+        const member = this.getActivePokemon();
+        if (!member) return { ok: false, reason: 'nobody' };
+
+        const source = this.config.megaSourceFor(member.speciesId);
+        if (source === null) return { ok: false, reason: 'no-mega' };
+
+        const held = member.megaStones || [];
+        const form = this.config.megaFormsFor(source).find(f => !held.includes(f.key));
+        if (!form) return { ok: false, reason: 'maxed' };
+
+        const { dormant, scene } = this.applyMegaStone(member, form);
         this.emitState();
         await this.saveGameState({ immediate: true });
-        return { lockedForMs: this.getRewardLock() };
+
+        const species = this.config.getSpeciesById(member.speciesId);
+        return { ok: true, form, dormant, scene: scene !== null,
+                 holder: species ? species.name : '' };
     }
 
     /**
@@ -1316,20 +1411,8 @@ class FlickemonEngine {
             const pick = this.chooseStoneRecipient();
             if (pick) {
                 const member = this.gameState.party.find(p => p.instanceId === pick.instanceId);
-                member.megaStones = [...new Set([...(member.megaStones || []), pick.form.key])].sort();
                 const species = this.config.getSpeciesById(member.speciesId);
-                const usable = this.config.megaFormsFor(member.speciesId)
-                    .some(f => f.key === pick.form.key);
-
-                // Switch it on straight away when it can be used. The request
-                // was that winning the stone is what plays the transformation,
-                // and a scene showing a change that had not happened yet would
-                // be a lie — so the change happens. It is a toggle: anyone who
-                // wants the ordinary form back turns it off in the party page.
-                if (usable && !member.megaActive) {
-                    member.megaActive = pick.form.key;
-                    member.megaActiveAt = Date.now();
-                }
+                const { dormant, scene } = this.applyMegaStone(member, pick.form);
                 this.emitState();
                 await this.saveGameState({ immediate: true });
                 return {
@@ -1339,7 +1422,11 @@ class FlickemonEngine {
                     holder: species ? species.name : '',
                     // Dormant means the stone is owned but the holder has not
                     // evolved far enough to use it yet.
-                    dormant: !usable,
+                    dormant,
+                    // Whether this win earned the transformation scene. Not the
+                    // same as !dormant: a Charizard already wearing X wins Y
+                    // without transforming into it.
+                    scene: scene !== null,
                 };
             }
             // Nobody could take one — fall through to an even 1-of-3 boost.
@@ -1490,8 +1577,11 @@ class FlickemonEngine {
             // myself every stone" a one-line forgery. Same reasoning as the
             // durationMs clamp in grantPvpReward.
             megaStones: this.sanitizeTradedStones(received),
-            // The toggle does NOT travel: the receiver opts in, so no
-            // inconsistent active/unowned pair can arrive.
+            // Neither the toggle nor the seen-scene list travels. The receiver
+            // opts in, so no inconsistent active/unowned pair can arrive -- and
+            // they have never watched this Pokemon transform, so the first time
+            // they switch it on is a first time.
+            megaSeen: [],
             megaActive: null,
             megaActiveAt: 0,
         };
@@ -1670,6 +1760,7 @@ class FlickemonEngine {
                             // already transformed. Anything else would make the
                             // tool produce a mega you cannot keep.
                             megaStones: this.wildOpponent.megaForm ? [this.wildOpponent.megaForm] : [],
+                            megaSeen: [],
                             megaActive: this.wildOpponent.megaForm || null,
                             megaActiveAt: this.wildOpponent.megaForm ? Date.now() : 0,
                         });
@@ -1816,7 +1907,7 @@ class FlickemonEngine {
                 // here. It rides the same listener, so the queue plays the mega
                 // scene directly after the evolution scene rather than at once.
                 const woke = this.wakeDormantMega(active);
-                if (woke) {
+                if (woke && this.claimMegaScene(active, woke.key)) {
                     this.evolutionListeners.forEach(cb => cb({
                         kind: 'mega', form: woke, species: toSpecies,
                         shiny: active.shiny === true,
@@ -1875,6 +1966,18 @@ class FlickemonEngine {
                     this.evolutionListeners.forEach(cb => cb({
                         from, to, shiny: member.shiny === true, benched: true,
                     }));
+                    // A dormant stone on the bench wakes here too. This used to
+                    // be the partner's privilege only, which meant a Charmander
+                    // that evolved while training on the team reached Charizard
+                    // still switched off, and its one transformation scene was
+                    // never played at all.
+                    const woke = this.wakeDormantMega(member);
+                    if (woke && this.claimMegaScene(member, woke.key)) {
+                        this.evolutionListeners.forEach(cb => cb({
+                            kind: 'mega', form: woke, species: to,
+                            shiny: member.shiny === true, benched: true,
+                        }));
+                    }
                 }
             }
         }
