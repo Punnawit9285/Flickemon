@@ -61,7 +61,8 @@ changes the project's exposure, so treat each as a rule rather than a habit:
 
 If you represent Nintendo, Creatures Inc., GAME FREAK inc., The Pokémon Company,
 or any other rights holder and want material removed, open an issue on this
-repository or contact the maintainer ([@Punnawit9285](https://github.com/Punnawit9285)).
+repository or contact the maintainer ([@Punnawit9285](https://github.com/Punnawit9285))
+or by email at <punnawit.wsr@docchula.com>.
 
 **We will comply promptly and in full — no argument, no delay.** The intended
 response to a complaint is to take the project down or strip the material, not

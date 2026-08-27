@@ -31,6 +31,11 @@ const MUSIC_HOST_ID = 'flickemon-music-host';
 const MUSIC_ORIGIN = 'https://www.youtube-nocookie.com';
 const MUSIC_STATE_KEY = 'flickemon_music_v1';
 
+// Names this player in the IFrame API handshake. The value is arbitrary — it
+// only has to be the same in the `listening` message and in every command, so
+// the embed knows both are us.
+const MUSIC_PLAYER_ID = 'flickemon-music';
+
 /** Player states reported by the embed, from the IFrame API's vocabulary. */
 const YT_STATE = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 };
 
@@ -45,6 +50,12 @@ class FlickemonMusic {
         this.host = null;
         this.listeners = [];
         this.blocked = false;
+        // Whether the <iframe> itself fired `load`. This is the only honest
+        // signal that the page did NOT refuse the frame — see the block check
+        // in load().
+        this.frameLoaded = false;
+        this.handshakeTimer = null;
+        this.handshakeTries = 0;
 
         this.loadTracks();
         this.bindPlayerMessages();
@@ -204,6 +215,7 @@ class FlickemonMusic {
         this.index = index;
         this.ready = false;
         this.blocked = false;
+        this.stopHandshake();
         const host = this.ensureHost();
 
         const params = new URLSearchParams({
@@ -237,19 +249,74 @@ class FlickemonMusic {
 
         this.frame = slot.querySelector('.flickemon-music-frame');
         this.playing = Boolean(autoplay);
+        this.frameLoaded = false;
         this.emit();
 
+        // The embed stays silent until it is asked to talk — see startHandshake.
+        this.frame.addEventListener('load', () => {
+            this.frameLoaded = true;
+            this.startHandshake();
+        });
+
         // The host page's CSP can refuse the frame outright. Nothing throws
-        // when that happens, so the only signal is that the player never
-        // reports readiness — say so rather than looking silently broken.
+        // when that happens, so the signal is that the frame never loads at all.
+        //
+        // Deliberately NOT keyed on `ready`: a refused frame and a frame that
+        // simply has not answered us yet look identical from there, and the
+        // second one is playing music. Reporting "blocked" over audible audio
+        // was exactly the bug this replaced — the check now asks the only
+        // question that distinguishes the two.
         clearTimeout(this.blockTimer);
         this.blockTimer = setTimeout(() => {
-            if (!this.ready) {
+            if (!this.frameLoaded && !this.ready) {
                 this.blocked = true;
                 this.playing = false;
                 this.emit();
             }
         }, 6000);
+    }
+
+    /**
+     * Asks the embed to start reporting.
+     *
+     * The IFrame API is a two-way protocol: the player sends nothing to its
+     * parent until the parent posts a `listening` message on the widget
+     * channel. Without this the embed plays perfectly and never says so, which
+     * left `ready` false forever — so the block timer fired over music the
+     * student could plainly hear, and neither the play/pause state nor
+     * advancing at the end of a track ever worked either.
+     *
+     * Repeated rather than sent once: `load` can fire marginally before the
+     * player attaches its own message listener, and an unheard handshake is
+     * silence again. Cheap, bounded, and stops the moment it is answered.
+     */
+    startHandshake() {
+        this.stopHandshake();
+        this.handshakeTries = 0;
+
+        const knock = () => {
+            if (this.ready || !this.frame || !this.frame.contentWindow) {
+                this.stopHandshake();
+                return;
+            }
+            if (this.handshakeTries++ >= 12) {      // ~6s, matching the block timer
+                this.stopHandshake();
+                return;
+            }
+            this.frame.contentWindow.postMessage(JSON.stringify({
+                event: 'listening',
+                id: MUSIC_PLAYER_ID,
+                channel: 'widget',
+            }), MUSIC_ORIGIN);
+        };
+
+        knock();
+        this.handshakeTimer = setInterval(knock, 500);
+    }
+
+    stopHandshake() {
+        if (this.handshakeTimer) clearInterval(this.handshakeTimer);
+        this.handshakeTimer = null;
     }
 
     /**
@@ -259,8 +326,10 @@ class FlickemonMusic {
      */
     command(func, args = []) {
         if (!this.frame || !this.frame.contentWindow) return;
-        this.frame.contentWindow.postMessage(
-            JSON.stringify({ event: 'command', func, args }), MUSIC_ORIGIN);
+        this.frame.contentWindow.postMessage(JSON.stringify({
+            event: 'command', func, args,
+            id: MUSIC_PLAYER_ID, channel: 'widget',
+        }), MUSIC_ORIGIN);
     }
 
     /** Subscribes to the frame's state so our controls reflect reality. */
@@ -276,11 +345,19 @@ class FlickemonMusic {
             }
             if (!data) return;
 
-            if (data.event === 'onReady' || data.event === 'initialDelivery') {
+            // Any of these three proves the embed is alive and talking to us.
+            // `infoDelivery` is the one it sends most, and treating only
+            // onReady as proof of life would leave the old false "blocked"
+            // showing whenever that first message was missed.
+            if (data.event === 'onReady'
+                || data.event === 'initialDelivery'
+                || data.event === 'infoDelivery') {
+                const firstContact = !this.ready;
                 this.ready = true;
                 this.blocked = false;
                 clearTimeout(this.blockTimer);
-                this.command('setVolume', [this.volume]);
+                this.stopHandshake();
+                if (firstContact) this.command('setVolume', [this.volume]);
                 this.emit();
             }
 
@@ -337,6 +414,7 @@ class FlickemonMusic {
     /** Tears the player down entirely, freeing the frame. */
     stop() {
         clearTimeout(this.blockTimer);
+        this.stopHandshake();
         this.command('pauseVideo');
         if (this.host) {
             this.host.remove();
@@ -344,6 +422,7 @@ class FlickemonMusic {
         }
         this.frame = null;
         this.ready = false;
+        this.frameLoaded = false;
         this.playing = false;
         this.emit();
     }

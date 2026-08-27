@@ -31,12 +31,25 @@
  * Prefer official channels and artists' own uploads.
  */
 
+//live stream links aren't supported !!
+
 window.FlickemonPlaylist = [
 
     // ─────────────── Add your music below ───────────────
 
-    { name: 'Lofi hip hop radio',  url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk' },
+    { name: 'Lofi hip hop radio',  url: 'https://www.youtube.com/watch?v=lTRiuFIWV54&list=RDlTRiuFIWV54&start_radio=1' },
     { name: 'Synthwave radio',     url: 'https://www.youtube.com/watch?v=4xDzrJKXOOY' },
+    { name: 'Relaxing Anime Piano Music ft. RADWIMPS',     url: 'https://youtu.be/0kfdim-wLds?si=BwgBbxwYCdugMRdK' },
+    { name: 'Relaxing Anime Piano Music ft. Ghibli',     url: 'https://youtu.be/ASCMw-UCafA?si=j2S48qHirtCnRQBB' },
+    { name: 'Pokemon Theme Song',     url: 'https://youtu.be/_tWM-S8CJrE?si=Q0IDcYZzl-4aOLXu' },
+    { name: 'Pokemon Battle Music',     url: 'https://www.youtube.com/watch?v=jjM5mUXc3Lk&list=PLsWUM3Sz8ORyKKz2gvoFRLV8w0a2Lf7BT' },
+    { name: 'Pokemon Center Theme',     url: 'https://www.youtube.com/watch?v=WjigZM-ONEQ&list=RDWjigZM-ONEQ&start_radio=1' },
+    { name: 'สุดฟ้า : Pokemon XY Opening',     url: 'https://youtu.be/nFOXxlLE22A?si=ej4_CMEvyq5XttkG' },
+    { name: 'ไปไหนไปกัน : Pokemon XY Ending',     url: 'https://youtu.be/em4x-IswZjY?si=p4bDWOFFt1nLaxP-' },
+    { name: 'Around The World : Pokemon BW Opening',     url: 'https://youtu.be/WHgKKaBQ7yc?si=fkSxdSUvGFbCxxUv' },
+    { name: 'เเบมือ : Pokemon BW Ending',     url: 'https://youtu.be/16EgnjwHEfg?si=DMJz5BULe3VhijjV' },
+    { name: 'นาน นาน : Pokemon XY The Movie OP',     url: 'https://youtu.be/g1xdxUtH_R0?si=O4d9fLqzOq32Kyqe' },
+
 
     // ─────────────── Add your music above ───────────────
 
