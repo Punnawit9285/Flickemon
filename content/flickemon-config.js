@@ -187,8 +187,12 @@ const DEFAULT_PVP_MODE = '3v3';
  *
  * Version 2 introduced multi-Pokémon formats and the forced-switch phase, which
  * a version 1 client would resolve as "first faint ends the match".
+ *
+ * Version 3 introduced the mega damage multiplier. The multiplier itself rides
+ * in the battle document, but computeDamage had to change to read it, and a
+ * version 2 client would ignore the field and diverge on the first hit.
  */
-const PVP_RULES_VERSION = 2;
+const PVP_RULES_VERSION = 3;
 
 /** The named format, or the default when a document predates modes. */
 function getPvpMode(id) {
@@ -1854,6 +1858,206 @@ const STARTER_OPTIONS = [
     906, 909, 912,
 ];
 
+// ─────────────────────────── Mega Evolution ───────────────────────────
+//
+// A mega is a skin plus one number: the sprite changes and the Pokémon deals
+// MEGA_DAMAGE_MULTIPLIER times its usual damage. Types and base stats are
+// deliberately untouched — those feed the type chart and the EXP curve, the two
+// systems it would be most expensive to destabilise, and the request was for
+// something that "works like shiny".
+//
+// Keyed by BASE species id, because every read is "given a speciesId, what
+// megas?" — O(1) here, a full-array scan per party row otherwise.
+//
+//   key      the PokeAPI form slug. Unique, legible in a save file, and
+//            verifiable against PokeAPI's own data — which is what makes a
+//            stone unambiguous between Charizard X and Y.
+//   spriteId the PokeAPI form id. Sprite filenames are bare integers, so these
+//            live in the SAME four directories as every other sprite and need
+//            no manifest or build.sh change. See sprites/PROVENANCE.md.
+//   stone    what the player is told they won.
+//   name     display name, used on nameplates and in battle logs.
+//
+// 96 forms across 86 species: the Gen 6 (X/Y + ORAS) wave plus the Legends Z-A
+// wave. Nine species have more than one form and Tatsugiri has three, so
+// nothing here may assume a form array of length 1 or 2.
+//
+// Stone names for the Gen 6 wave are canonical. The Z-A wave has no established
+// stone names, so those are derived from the species name and are ours, not
+// Nintendo's.
+const MEGA_FORMS = {
+       3: [{ key:'venusaur-mega', spriteId:10033, stone:'Venusaurite', name:'Mega Venusaur' }],
+       6: [
+        { key:'charizard-mega-x', spriteId:10034, stone:'Charizardite X', name:'Mega Charizard X' },
+        { key:'charizard-mega-y', spriteId:10035, stone:'Charizardite Y', name:'Mega Charizard Y' }
+    ],
+       9: [{ key:'blastoise-mega', spriteId:10036, stone:'Blastoisinite', name:'Mega Blastoise' }],
+      15: [{ key:'beedrill-mega', spriteId:10090, stone:'Beedrillite', name:'Mega Beedrill' }],
+      18: [{ key:'pidgeot-mega', spriteId:10073, stone:'Pidgeotite', name:'Mega Pidgeot' }],
+      26: [
+        { key:'raichu-mega-x', spriteId:10304, stone:'Raichuite X', name:'Mega Raichu X' },
+        { key:'raichu-mega-y', spriteId:10305, stone:'Raichuite Y', name:'Mega Raichu Y' }
+    ],
+      36: [{ key:'clefable-mega', spriteId:10278, stone:'Clefablite', name:'Mega Clefable' }],
+      65: [{ key:'alakazam-mega', spriteId:10037, stone:'Alakazite', name:'Mega Alakazam' }],
+      71: [{ key:'victreebel-mega', spriteId:10279, stone:'Victreebelite', name:'Mega Victreebel' }],
+      80: [{ key:'slowbro-mega', spriteId:10071, stone:'Slowbronite', name:'Mega Slowbro' }],
+      94: [{ key:'gengar-mega', spriteId:10038, stone:'Gengarite', name:'Mega Gengar' }],
+     115: [{ key:'kangaskhan-mega', spriteId:10039, stone:'Kangaskhanite', name:'Mega Kangaskhan' }],
+     121: [{ key:'starmie-mega', spriteId:10280, stone:'Starmite', name:'Mega Starmie' }],
+     127: [{ key:'pinsir-mega', spriteId:10040, stone:'Pinsirite', name:'Mega Pinsir' }],
+     130: [{ key:'gyarados-mega', spriteId:10041, stone:'Gyaradosite', name:'Mega Gyarados' }],
+     142: [{ key:'aerodactyl-mega', spriteId:10042, stone:'Aerodactylite', name:'Mega Aerodactyl' }],
+     149: [{ key:'dragonite-mega', spriteId:10281, stone:'Dragonitite', name:'Mega Dragonite' }],
+     150: [
+        { key:'mewtwo-mega-x', spriteId:10043, stone:'Mewtwonite X', name:'Mega Mewtwo X' },
+        { key:'mewtwo-mega-y', spriteId:10044, stone:'Mewtwonite Y', name:'Mega Mewtwo Y' }
+    ],
+     154: [{ key:'meganium-mega', spriteId:10282, stone:'Meganite', name:'Mega Meganium' }],
+     160: [{ key:'feraligatr-mega', spriteId:10283, stone:'Feraligite', name:'Mega Feraligatr' }],
+     181: [{ key:'ampharos-mega', spriteId:10045, stone:'Ampharosite', name:'Mega Ampharos' }],
+     208: [{ key:'steelix-mega', spriteId:10072, stone:'Steelixite', name:'Mega Steelix' }],
+     212: [{ key:'scizor-mega', spriteId:10046, stone:'Scizorite', name:'Mega Scizor' }],
+     214: [{ key:'heracross-mega', spriteId:10047, stone:'Heracronite', name:'Mega Heracross' }],
+     227: [{ key:'skarmory-mega', spriteId:10284, stone:'Skarmoryite', name:'Mega Skarmory' }],
+     229: [{ key:'houndoom-mega', spriteId:10048, stone:'Houndoominite', name:'Mega Houndoom' }],
+     248: [{ key:'tyranitar-mega', spriteId:10049, stone:'Tyranitarite', name:'Mega Tyranitar' }],
+     254: [{ key:'sceptile-mega', spriteId:10065, stone:'Sceptilite', name:'Mega Sceptile' }],
+     257: [{ key:'blaziken-mega', spriteId:10050, stone:'Blazikenite', name:'Mega Blaziken' }],
+     260: [{ key:'swampert-mega', spriteId:10064, stone:'Swampertite', name:'Mega Swampert' }],
+     282: [{ key:'gardevoir-mega', spriteId:10051, stone:'Gardevoirite', name:'Mega Gardevoir' }],
+     302: [{ key:'sableye-mega', spriteId:10066, stone:'Sablenite', name:'Mega Sableye' }],
+     303: [{ key:'mawile-mega', spriteId:10052, stone:'Mawilite', name:'Mega Mawile' }],
+     306: [{ key:'aggron-mega', spriteId:10053, stone:'Aggronite', name:'Mega Aggron' }],
+     308: [{ key:'medicham-mega', spriteId:10054, stone:'Medichamite', name:'Mega Medicham' }],
+     310: [{ key:'manectric-mega', spriteId:10055, stone:'Manectite', name:'Mega Manectric' }],
+     319: [{ key:'sharpedo-mega', spriteId:10070, stone:'Sharpedonite', name:'Mega Sharpedo' }],
+     323: [{ key:'camerupt-mega', spriteId:10087, stone:'Cameruptite', name:'Mega Camerupt' }],
+     334: [{ key:'altaria-mega', spriteId:10067, stone:'Altarianite', name:'Mega Altaria' }],
+     354: [{ key:'banette-mega', spriteId:10056, stone:'Banettite', name:'Mega Banette' }],
+     358: [{ key:'chimecho-mega', spriteId:10306, stone:'Chimechoite', name:'Mega Chimecho' }],
+     359: [
+        { key:'absol-mega', spriteId:10057, stone:'Absolite', name:'Mega Absol' },
+        { key:'absol-mega-z', spriteId:10307, stone:'Absolite Z', name:'Mega Absol Z' }
+    ],
+     362: [{ key:'glalie-mega', spriteId:10074, stone:'Glalitite', name:'Mega Glalie' }],
+     373: [{ key:'salamence-mega', spriteId:10089, stone:'Salamencite', name:'Mega Salamence' }],
+     376: [{ key:'metagross-mega', spriteId:10076, stone:'Metagrossite', name:'Mega Metagross' }],
+     380: [{ key:'latias-mega', spriteId:10062, stone:'Latiasite', name:'Mega Latias' }],
+     381: [{ key:'latios-mega', spriteId:10063, stone:'Latiosite', name:'Mega Latios' }],
+     384: [{ key:'rayquaza-mega', spriteId:10079, stone:'Dragon Ascent', name:'Mega Rayquaza' }],
+     398: [{ key:'staraptor-mega', spriteId:10308, stone:'Staraptorite', name:'Mega Staraptor' }],
+     428: [{ key:'lopunny-mega', spriteId:10088, stone:'Lopunnite', name:'Mega Lopunny' }],
+     445: [
+        { key:'garchomp-mega', spriteId:10058, stone:'Garchompite', name:'Mega Garchomp' },
+        { key:'garchomp-mega-z', spriteId:10309, stone:'Garchompite Z', name:'Mega Garchomp Z' }
+    ],
+     448: [
+        { key:'lucario-mega', spriteId:10059, stone:'Lucarionite', name:'Mega Lucario' },
+        { key:'lucario-mega-z', spriteId:10310, stone:'Lucarionite Z', name:'Mega Lucario Z' }
+    ],
+     460: [{ key:'abomasnow-mega', spriteId:10060, stone:'Abomasite', name:'Mega Abomasnow' }],
+     475: [{ key:'gallade-mega', spriteId:10068, stone:'Galladite', name:'Mega Gallade' }],
+     478: [{ key:'froslass-mega', spriteId:10285, stone:'Froslassite', name:'Mega Froslass' }],
+     485: [{ key:'heatran-mega', spriteId:10311, stone:'Heatranite', name:'Mega Heatran' }],
+     491: [{ key:'darkrai-mega', spriteId:10312, stone:'Darkraiite', name:'Mega Darkrai' }],
+     500: [{ key:'emboar-mega', spriteId:10286, stone:'Emborite', name:'Mega Emboar' }],
+     530: [{ key:'excadrill-mega', spriteId:10287, stone:'Excadrillite', name:'Mega Excadrill' }],
+     531: [{ key:'audino-mega', spriteId:10069, stone:'Audinite', name:'Mega Audino' }],
+     545: [{ key:'scolipede-mega', spriteId:10288, stone:'Scolipedite', name:'Mega Scolipede' }],
+     560: [{ key:'scrafty-mega', spriteId:10289, stone:'Scraftyite', name:'Mega Scrafty' }],
+     604: [{ key:'eelektross-mega', spriteId:10290, stone:'Eelektrite', name:'Mega Eelektross' }],
+     609: [{ key:'chandelure-mega', spriteId:10291, stone:'Chandelurite', name:'Mega Chandelure' }],
+     623: [{ key:'golurk-mega', spriteId:10313, stone:'Golurkite', name:'Mega Golurk' }],
+     652: [{ key:'chesnaught-mega', spriteId:10292, stone:'Chesnaughtite', name:'Mega Chesnaught' }],
+     655: [{ key:'delphox-mega', spriteId:10293, stone:'Delphoxite', name:'Mega Delphox' }],
+     658: [{ key:'greninja-mega', spriteId:10294, stone:'Greninjaite', name:'Mega Greninja' }],
+     668: [{ key:'pyroar-mega', spriteId:10295, stone:'Pyroarite', name:'Mega Pyroar' }],
+     670: [{ key:'floette-mega', spriteId:10296, stone:'Floettite', name:'Mega Floette' }],
+     678: [
+        { key:'meowstic-male-mega', spriteId:10314, stone:'Meowsticite ♂', name:'Mega Meowstic ♂' },
+        { key:'meowstic-female-mega', spriteId:10326, stone:'Meowsticite ♀', name:'Mega Meowstic ♀' }
+    ],
+     687: [{ key:'malamar-mega', spriteId:10297, stone:'Malamarite', name:'Mega Malamar' }],
+     689: [{ key:'barbaracle-mega', spriteId:10298, stone:'Barbaraclite', name:'Mega Barbaracle' }],
+     691: [{ key:'dragalge-mega', spriteId:10299, stone:'Dragalgite', name:'Mega Dragalge' }],
+     701: [{ key:'hawlucha-mega', spriteId:10300, stone:'Hawluchaite', name:'Mega Hawlucha' }],
+     719: [{ key:'diancie-mega', spriteId:10075, stone:'Diancite', name:'Mega Diancie' }],
+     740: [{ key:'crabominable-mega', spriteId:10315, stone:'Crabominablite', name:'Mega Crabominable' }],
+     768: [{ key:'golisopod-mega', spriteId:10316, stone:'Golisopodite', name:'Mega Golisopod' }],
+     780: [{ key:'drampa-mega', spriteId:10302, stone:'Drampaite', name:'Mega Drampa' }],
+     801: [
+        { key:'magearna-mega', spriteId:10317, stone:'Magearnaite', name:'Mega Magearna' },
+        { key:'magearna-original-mega', spriteId:10318, stone:'Magearnaite Original', name:'Mega Magearna (Original)' }
+    ],
+     807: [{ key:'zeraora-mega', spriteId:10319, stone:'Zeraoraite', name:'Mega Zeraora' }],
+     870: [{ key:'falinks-mega', spriteId:10303, stone:'Falinksite', name:'Mega Falinks' }],
+     952: [{ key:'scovillain-mega', spriteId:10320, stone:'Scovillainite', name:'Mega Scovillain' }],
+     970: [{ key:'glimmora-mega', spriteId:10321, stone:'Glimmoraite', name:'Mega Glimmora' }],
+     978: [
+        { key:'tatsugiri-curly-mega', spriteId:10322, stone:'Tatsugirite Curly', name:'Mega Tatsugiri (Curly)' },
+        { key:'tatsugiri-droopy-mega', spriteId:10323, stone:'Tatsugirite Droopy', name:'Mega Tatsugiri (Droopy)' },
+        { key:'tatsugiri-stretchy-mega', spriteId:10324, stone:'Tatsugirite Stretchy', name:'Mega Tatsugiri (Stretchy)' }
+    ],
+     998: [{ key:'baxcalibur-mega', spriteId:10325, stone:'Baxcaliburite', name:'Mega Baxcalibur' }],
+};
+
+// Mega damage. Applied to the wild-battle damage rate while a mega is the
+// active partner, and inside computeDamage in PVP. Deliberately one number in
+// one place, so the two paths cannot drift apart.
+const MEGA_DAMAGE_MULTIPLIER = 1.30;
+
+// A PVP win draws a mega stone this often. The remaining 90% is split evenly
+// between the three boosts, so the full table is 30/30/30/10.
+const MEGA_STONE_CHANCE = 0.10;
+
+/** The mega forms a species can take, or an empty array. */
+function megaFormsFor(speciesId) {
+    return MEGA_FORMS[speciesId] || [];
+}
+
+/**
+ * Whether a species is the end of its line.
+ *
+ * NOT the same predicate as evolutionStage === 3, which is a hand-authored
+ * field used only for encounter weighting: Raticate is stage 2 and has no
+ * outgoing edge, so it is fully evolved while reporting stage 2. The edge list
+ * is the truth.
+ */
+function isFullyEvolved(speciesId) {
+    return !getEvolution(speciesId);
+}
+
+/** The form this species will actually reach, following the branch the game plays. */
+function finalFormOf(speciesId) {
+    const line = getEvolutionLine(speciesId);
+    const last = line[line.length - 1];
+    return last ? last.species.id : speciesId;
+}
+
+/**
+ * Which species' mega stone this Pokémon is in line for, or null.
+ *
+ * Its own species wins over its final form, and that ordering is the whole
+ * point: Floette has a mega but is NOT fully evolved, and its final form
+ * (Florges) has none. Keying purely off finalFormOf would make a Floette
+ * ineligible for the mega it can actually use. Returning the species that owns
+ * the forms also gives the caller its answer for free — a stone is usable now
+ * exactly when the source is the Pokémon's current species, and dormant when it
+ * is something further down the line.
+ */
+function megaSourceFor(speciesId) {
+    if (megaFormsFor(speciesId).length > 0) return speciesId;
+    const final = finalFormOf(speciesId);
+    if (final !== speciesId && megaFormsFor(final).length > 0) return final;
+    return null;
+}
+
+/** Does this PVP win pay a stone rather than a boost? */
+function rollMegaStone() {
+    return Math.random() < MEGA_STONE_CHANCE;
+}
+
 // ─────────────────────────── Helper Utilities ───────────────────────────
 
 function getSpeciesById(id) {
@@ -1928,6 +2132,14 @@ window.FlickemonConfig = {
     BALANCE_REFERENCE,
     REWARD_DURATION_MS,
     PVP_LOSS_LOCKOUT_MS,
+    MEGA_FORMS,
+    MEGA_DAMAGE_MULTIPLIER,
+    MEGA_STONE_CHANCE,
+    megaFormsFor,
+    isFullyEvolved,
+    finalFormOf,
+    megaSourceFor,
+    rollMegaStone,
     REWARDS,
     REWARD_INFO,
     REWARD_EXP_MULTIPLIER,

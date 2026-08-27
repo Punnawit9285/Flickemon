@@ -256,6 +256,10 @@ console.log('\n=== re-injecting the widget must not duplicate the overlay ===');
             getGameState: () => ({ hasStarted: true }),
             getActivePokemon: () => ({ instanceId: 'a1', speciesId: 1, level: 10, totalExp: 1000 }),
             getSpeciesForPokemon: () => species,
+            // Mega Evolution: this stub owns no stones, so the widget draws
+            // the ordinary sprite.
+            activeMegaForm: () => null,
+            spriteIdFor: (pk) => pk.speciesId,
             getExpProgress: () => ({ current: 100, needed: 331, percent: 30 }),
             isCaptureMode: () => true,
             onStateChange(cb) { chans.state.push(cb); cb({ hasStarted: true });

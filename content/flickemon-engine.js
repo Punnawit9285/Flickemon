@@ -84,9 +84,14 @@ class FlickemonEngine {
      * is added to the party until the student actually wins the battle, so a
      * summon still has to be earned.
      */
-    async adminSummonOpponent(speciesId, { shiny = false, level } = {}) {
+    async adminSummonOpponent(speciesId, { shiny = false, level, megaForm = null } = {}) {
         const species = this.config.getSpeciesById(Number(speciesId));
         if (!species) return { ok: false, reason: 'unknown-species' };
+
+        // A mega can only be summoned for a species that actually has that form.
+        const forms = this.config.megaFormsFor(species.id);
+        const mega = megaForm ? forms.find(f => f.key === megaForm) : null;
+        if (megaForm && !mega) return { ok: false, reason: 'unknown-mega' };
 
         const active = this.getActivePokemon();
         const wildLevel = Number.isFinite(level) && level > 0
@@ -104,13 +109,14 @@ class FlickemonEngine {
             status: 'fighting',
             fightDurationSeconds: 0,
             shiny: shiny === true,
+            megaForm: mega ? mega.key : null,
         };
 
         this.gameState.wildOpponent = this.wildOpponent;
         this.updatePokedex(species.id, false);
         this.emitWild();
         await this.saveGameState();
-        return { ok: true, species, level: wildLevel, shiny: shiny === true };
+        return { ok: true, species, level: wildLevel, shiny: shiny === true, mega: mega || null };
     }
 
     async adminSetPokemonLevel(level) {
@@ -131,6 +137,16 @@ class FlickemonEngine {
                 this.evolutionListeners.forEach(cb => cb({
                     from: fromSpecies, to: toSpecies, shiny: active.shiny === true,
                 }));
+                // A stone carried since before this form could use it wakes up
+                // here. It rides the same listener, so the queue plays the mega
+                // scene directly after the evolution scene rather than at once.
+                const woke = this.wakeDormantMega(active);
+                if (woke) {
+                    this.evolutionListeners.forEach(cb => cb({
+                        kind: 'mega', form: woke, species: toSpecies,
+                        shiny: active.shiny === true,
+                    }));
+                }
             }
         }
 
@@ -247,6 +263,29 @@ class FlickemonEngine {
             if (!Number.isFinite(p.totalExp)) p.totalExp = this.config.expForLevel(p.level);
             // Saves from before shinies existed have no flag; absent means no.
             p.shiny = p.shiny === true;
+
+            // Mega stones this individual owns, as form keys.
+            //
+            // Sorted, because mergeCloudState decides "did anything change" by
+            // comparing JSON of the whole payload — an unstable array order
+            // would report a change on every merge and spend a Firestore write
+            // on nothing.
+            //
+            // Deliberately NOT filtered against MEGA_FORMS. An older client
+            // opening a save written by a newer one with a larger roster would
+            // otherwise delete stones it merely does not recognise. Unknown
+            // keys round-trip untouched and are ignored only at the point of
+            // use, by activeMegaForm.
+            p.megaStones = Array.isArray(p.megaStones)
+                ? [...new Set(p.megaStones.filter(k => typeof k === 'string'))].sort()
+                : [];
+            // Nulled only when the stone is not owned — never because the
+            // current species has no such form, or a dormant stone held by a
+            // pre-evolution would be destroyed on the next load.
+            if (typeof p.megaActive !== 'string' || !p.megaStones.includes(p.megaActive)) {
+                p.megaActive = null;
+            }
+            if (!Number.isFinite(p.megaActiveAt)) p.megaActiveAt = 0;
         });
 
         if (s.battleMode !== this.config.BATTLE_MODES.EXP) s.battleMode = this.config.BATTLE_MODES.CAPTURE;
@@ -664,12 +703,37 @@ class FlickemonEngine {
                     const copy = { ...remote };
                     this.gameState.party.push(copy);
                     byInstance.set(copy.instanceId, copy);
-                } else if ((remote.totalExp || 0) > (local.totalExp || 0)) {
+                    continue;
+                }
+                if ((remote.totalExp || 0) > (local.totalExp || 0)) {
                     local.level = remote.level;
                     local.totalExp = remote.totalExp;
                     // Evolution is a species change on a stable instance, so the
                     // further-along copy also carries the newer form.
                     if (Number.isFinite(remote.speciesId)) local.speciesId = remote.speciesId;
+                }
+
+                // Stones union UNCONDITIONALLY — outside the totalExp check
+                // above. A stone won on a device that has not studied since is
+                // still a stone, and gating it on progress would throw it away.
+                if (Array.isArray(remote.megaStones) && remote.megaStones.length) {
+                    local.megaStones = [...new Set([
+                        ...(local.megaStones || []),
+                        ...remote.megaStones.filter(k => typeof k === 'string'),
+                    ])].sort();
+                }
+
+                // The toggle is a preference, so last writer wins — but per
+                // member, on its own timestamp, not on the save-wide
+                // lastSyncedAt used for battleMode and the team lists. A device
+                // syncing later for an unrelated reason must not silently
+                // revert a mega it never touched.
+                if ((remote.megaActiveAt || 0) > (local.megaActiveAt || 0)) {
+                    local.megaActive = typeof remote.megaActive === 'string' ? remote.megaActive : null;
+                    local.megaActiveAt = remote.megaActiveAt || 0;
+                }
+                if (local.megaActive && !(local.megaStones || []).includes(local.megaActive)) {
+                    local.megaActive = null;
                 }
             }
         } else {
@@ -905,6 +969,9 @@ class FlickemonEngine {
             shiny: this.config.rollShiny(),
             level: 5,
             totalExp: this.config.expForLevel(5),
+            megaStones: [],
+            megaActive: null,
+            megaActiveAt: 0,
         };
 
         this.gameState.hasStarted = true;
@@ -1030,6 +1097,117 @@ class FlickemonEngine {
         return out.slice(0, Math.max(1, size));
     }
 
+    // ─────────────────────────── Mega Evolution ───────────────────────────
+    //
+    // A stone belongs to one party member, forever. Mega is a persistent toggle
+    // on that member rather than a per-battle activation: once switched on it
+    // stays on until the trainer switches it off, which is what the request
+    // asked for and what keeps it feeling like a permanent upgrade rather than
+    // a consumable.
+
+    /**
+     * The form a member is currently transformed into, or null.
+     *
+     * The single gate everything reads — sprite, display name, badges, damage.
+     * Three conditions, all required: a form is selected, its stone is actually
+     * owned, and the member's CURRENT species is the one that has that form.
+     * The last is what makes a dormant stone dormant: a Charmander holding
+     * Charizardite X owns it, keeps it through evolution, and starts using it
+     * the moment it becomes a Charizard, with no separate bookkeeping.
+     */
+    activeMegaForm(member) {
+        if (!member || !member.megaActive) return null;
+        if (!(member.megaStones || []).includes(member.megaActive)) return null;
+        return this.config.megaFormsFor(member.speciesId)
+            .find(f => f.key === member.megaActive) || null;
+    }
+
+    /** Every form this member could switch to right now, in roster order. */
+    availableMegaForms(member) {
+        if (!member) return [];
+        return this.config.megaFormsFor(member.speciesId)
+            .filter(f => (member.megaStones || []).includes(f.key));
+    }
+
+    /** Stones owned but not yet usable, because the member has not evolved far enough. */
+    dormantMegaStones(member) {
+        if (!member) return [];
+        const usable = new Set(this.config.megaFormsFor(member.speciesId).map(f => f.key));
+        const source = this.config.megaSourceFor(member.speciesId);
+        const forms = source === null ? [] : this.config.megaFormsFor(source);
+        return (member.megaStones || [])
+            .filter(k => !usable.has(k))
+            .map(k => forms.find(f => f.key === k) || { key: k, stone: k, name: k });
+    }
+
+    /** The sprite id to draw for a member — the mega form's, or its own species'. */
+    spriteIdFor(member) {
+        const form = this.activeMegaForm(member);
+        return form ? form.spriteId : (member ? member.speciesId : null);
+    }
+
+    /**
+     * Cycles a member through its owned forms and then back to normal.
+     *
+     * A cycle rather than a switch because nine species have more than one form
+     * and Tatsugiri has three: off -> first -> second -> ... -> off. Passing an
+     * explicit key jumps straight to it instead, which is what the admin tool
+     * and the first-time grant use.
+     */
+    async toggleMega(instanceId, formKey) {
+        const member = this.gameState.party.find(p => p.instanceId === instanceId);
+        if (!member) return { ok: false, reason: 'unknown' };
+
+        const forms = this.availableMegaForms(member);
+        if (forms.length === 0) {
+            // Owning a stone the current form cannot use is a real state, and
+            // it needs its own answer — "you have no stone" would be a lie.
+            return { ok: false, reason: this.dormantMegaStones(member).length ? 'dormant' : 'no-stone' };
+        }
+
+        let next;
+        if (formKey === null || formKey === undefined) {
+            const i = forms.findIndex(f => f.key === member.megaActive);
+            next = i < 0 ? forms[0].key : (i + 1 < forms.length ? forms[i + 1].key : null);
+        } else {
+            if (!forms.some(f => f.key === formKey)) return { ok: false, reason: 'not-owned' };
+            next = member.megaActive === formKey ? null : formKey;
+        }
+
+        member.megaActive = next;
+        member.megaActiveAt = Date.now();
+        this.emitState();
+        await this.saveGameState();
+        return { ok: true, form: this.activeMegaForm(member) };
+    }
+
+    /** Grants a stone to one member. Idempotent — owning it twice is owning it once. */
+    async grantMegaStone(instanceId, formKey) {
+        const member = this.gameState.party.find(p => p.instanceId === instanceId);
+        if (!member) return { ok: false, reason: 'unknown' };
+        if ((member.megaStones || []).includes(formKey)) return { ok: false, reason: 'owned' };
+
+        member.megaStones = [...new Set([...(member.megaStones || []), formKey])].sort();
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+        return { ok: true };
+    }
+
+    /** Damage multiplier for one member: 1.30 while megaed, 1 otherwise. */
+    megaMultiplierFor(member) {
+        return this.activeMegaForm(member) ? this.config.MEGA_DAMAGE_MULTIPLIER : 1;
+    }
+
+    /**
+     * The multiplier applied to wild-battle damage.
+     *
+     * Keys off the ACTIVE PARTNER only — that is the Pokémon actually fighting.
+     * Team members share EXP, not the battle.
+     */
+    activeMegaMultiplier() {
+        return this.megaMultiplierFor(this.getActivePokemon());
+    }
+
     // ─────────────────────── PVP victory rewards ───────────────────────
 
     /** The running boost, or null. Expiry is checked on read, never on a timer. */
@@ -1068,20 +1246,107 @@ class FlickemonEngine {
     }
 
     /**
-     * Grants a random boost for winning a PVP battle.
+     * Switches on a stone that has just become usable, and reports it.
      *
-     * Refuses while one is already running, and that refusal is the feature: it
-     * caps what battling can be worth per hour, so the way to benefit from a
-     * reward is to spend the hour watching lectures rather than queueing for
-     * another match.
+     * Called after an evolution: a Charmander that has been carrying
+     * Charizardite X since before it could use it should transform on arrival,
+     * not sit there needing to be told. Returns the form so the caller can play
+     * the scene, or null when there was nothing waiting.
+     */
+    wakeDormantMega(member) {
+        if (!member || member.megaActive) return null;
+        const form = this.config.megaFormsFor(member.speciesId)
+            .find(f => (member.megaStones || []).includes(f.key));
+        if (!form) return null;
+        member.megaActive = form.key;
+        member.megaActiveAt = Date.now();
+        return form;
+    }
+
+    /** Milliseconds left on the post-loss lockout, or 0 when there is none. */
+    getRewardLock() {
+        const until = this.gameState.rewardLockUntil || 0;
+        if (until <= Date.now()) {
+            if (until) this.gameState.rewardLockUntil = 0;
+            return 0;
+        }
+        return until - Date.now();
+    }
+
+    /**
+     * Starts the no-reward window after a defeat.
+     *
+     * Extends rather than replaces, so losing twice in a row cannot shorten the
+     * lockout the first loss started.
+     */
+    async recordPvpLoss() {
+        const until = Date.now() + this.config.PVP_LOSS_LOCKOUT_MS;
+        this.gameState.rewardLockUntil = Math.max(this.gameState.rewardLockUntil || 0, until);
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+        return { lockedForMs: this.getRewardLock() };
+    }
+
+    /**
+     * Grants a win reward: a mega stone 10% of the time, otherwise one of the
+     * three boosts.
+     *
+     * A boost refuses while one is already running, and that refusal is the
+     * feature: it caps what battling can be worth per hour, so the way to
+     * benefit from a reward is to spend the hour watching lectures rather than
+     * queueing for another match. A stone is a permanent item rather than a
+     * timer, so it is drawn before that gate and ignores it.
      */
     async grantPvpReward(durationMs = this.config.REWARD_DURATION_MS) {
-        const running = this.getActiveReward();
-        if (running) return { granted: false, reason: 'active', reward: running };
-
-        // A recent loss pays nothing, however the next match went.
+        // The lockout is checked FIRST, ahead of the running-boost check it used
+        // to follow. A defeat has to block everything including stones, and the
+        // stone branch below runs before the boost branch. The visible effect is
+        // that someone both locked out and mid-boost is now told 'locked' rather
+        // than 'active'; both are refusals, only the wording changes.
         const lockMsLeft = this.getRewardLock();
         if (lockMsLeft > 0) return { granted: false, reason: 'locked', msLeft: lockMsLeft };
+
+        // ── Stones, 10% ──
+        //
+        // Deliberately ahead of the no-stacking gate. A boost is a timer and
+        // only one may run; a stone is a permanent item and stacks with
+        // everything. Were this below the gate, every win during an active boost
+        // would silently forfeit its stone chance too.
+        if (this.config.rollMegaStone()) {
+            const pick = this.chooseStoneRecipient();
+            if (pick) {
+                const member = this.gameState.party.find(p => p.instanceId === pick.instanceId);
+                member.megaStones = [...new Set([...(member.megaStones || []), pick.form.key])].sort();
+                const species = this.config.getSpeciesById(member.speciesId);
+                const usable = this.config.megaFormsFor(member.speciesId)
+                    .some(f => f.key === pick.form.key);
+
+                // Switch it on straight away when it can be used. The request
+                // was that winning the stone is what plays the transformation,
+                // and a scene showing a change that had not happened yet would
+                // be a lie — so the change happens. It is a toggle: anyone who
+                // wants the ordinary form back turns it off in the party page.
+                if (usable && !member.megaActive) {
+                    member.megaActive = pick.form.key;
+                    member.megaActiveAt = Date.now();
+                }
+                this.emitState();
+                await this.saveGameState({ immediate: true });
+                return {
+                    granted: true, kind: 'stone',
+                    stone: pick.form,
+                    instanceId: pick.instanceId,
+                    holder: species ? species.name : '',
+                    // Dormant means the stone is owned but the holder has not
+                    // evolved far enough to use it yet.
+                    dormant: !usable,
+                };
+            }
+            // Nobody could take one — fall through to an even 1-of-3 boost.
+        }
+
+        const running = this.getActiveReward();
+        if (running) return { granted: false, reason: 'active', reward: running };
 
         // The caller passes the format's duration. Clamped rather than trusted:
         // this figure decides how long a boost runs, and it arrives from the
@@ -1095,7 +1360,50 @@ class FlickemonEngine {
         this.gameState.activeReward = { type, expiresAt: Date.now() + ms, durationMs: ms };
         this.emitState();
         await this.saveGameState({ immediate: true });
-        return { granted: true, reward: this.getActiveReward() };
+        return { granted: true, kind: 'boost', reward: this.getActiveReward() };
+    }
+
+    /**
+     * Which Pokémon on the PVP line-up should receive a stone, or null.
+     *
+     * The pool is the whole saved line-up rather than only the members a given
+     * format actually fielded, so a 1v1 is no worse a way to collect stones
+     * than a 6v6 — which already pays four times the boost.
+     *
+     * Two tiers. A member whose CURRENT species has the mega can use the stone
+     * the moment it lands, and those are preferred. A member whose stone belongs
+     * to a form further down its line still qualifies, but only when nobody in
+     * the first tier does — that is the "give it anyway, dormant until it
+     * evolves" rule.
+     *
+     * Candidacy reads megaStones and never megaActive. Reading the toggle would
+     * make "switch mega off, win, win the same stone again" an endless loop that
+     * also starves every other member of the line-up.
+     */
+    chooseStoneRecipient() {
+        const preferred = [];
+        const fallback = [];
+
+        for (const instanceId of this.getPvpTeam()) {
+            const member = this.gameState.party.find(p => p.instanceId === instanceId);
+            if (!member) continue;
+
+            const source = this.config.megaSourceFor(member.speciesId);
+            if (source === null) continue;                    // no mega anywhere in this line
+
+            const missing = this.config.megaFormsFor(source)
+                .filter(f => !(member.megaStones || []).includes(f.key));
+            if (missing.length === 0) continue;               // already owns every form
+
+            // Taking the first missing form is what satisfies the second-stone
+            // rule for free: a Charizard already holding X has only Y left.
+            const entry = { instanceId, form: missing[0] };
+            (source === member.speciesId ? preferred : fallback).push(entry);
+        }
+
+        const tier = preferred.length ? preferred : fallback;
+        if (tier.length === 0) return null;                   // caller re-rolls into a boost
+        return tier[Math.floor(Math.random() * tier.length)];
     }
 
     /** Multiplier applied to every EXP gain while the EXP boost is running. */
@@ -1117,6 +1425,21 @@ class FlickemonEngine {
     }
 
     // ─────────────────────────── Trading ───────────────────────────
+
+    /**
+     * The stones an incoming traded Pokémon is allowed to keep.
+     *
+     * Only forms that genuinely belong to the species being received, and only
+     * as many as that species has. The sender writes this payload, so it is
+     * treated as a claim rather than a fact.
+     */
+    sanitizeTradedStones(received) {
+        if (!received || !Array.isArray(received.megaStones)) return [];
+        const source = this.config.megaSourceFor(Number(received.speciesId));
+        if (source === null) return [];
+        const legal = new Set(this.config.megaFormsFor(source).map(f => f.key));
+        return [...new Set(received.megaStones.filter(k => typeof k === 'string' && legal.has(k)))].sort();
+    }
 
     /** Party members this account may put up for trade. */
     tradableParty() {
@@ -1158,6 +1481,19 @@ class FlickemonEngine {
                 ? received.totalExp
                 : this.config.expForLevel(Number(received.level) || 1),
             shiny: received.shiny === true,
+            // Stones travel with the Pokémon: destroying them would make trading
+            // a mega a silent downgrade that neither side can see in the
+            // preview, and the receiver should get exactly what was shown.
+            //
+            // Sanitised on arrival, unlike a local load — this payload is
+            // written by the other trainer, so an unfiltered copy makes "give
+            // myself every stone" a one-line forgery. Same reasoning as the
+            // durationMs clamp in grantPvpReward.
+            megaStones: this.sanitizeTradedStones(received),
+            // The toggle does NOT travel: the receiver opts in, so no
+            // inconsistent active/unowned pair can arrive.
+            megaActive: null,
+            megaActiveAt: 0,
         };
 
         this.gameState.party = this.gameState.party.filter(p => p.instanceId !== givenId);
@@ -1294,7 +1630,9 @@ class FlickemonEngine {
 
             // Damage calculation (~150 seconds / 2.5 mins to defeat)
             const TARGET_BATTLE_SECONDS = 150;
-            const damagePerSec = (this.wildOpponent.maxHp / TARGET_BATTLE_SECONDS) * this.adminDamageMultiplier;
+            const damagePerSec = (this.wildOpponent.maxHp / TARGET_BATTLE_SECONDS)
+                           * this.adminDamageMultiplier
+                           * this.activeMegaMultiplier();
             this.wildHpAcc -= secondsWatched * damagePerSec;
             this.wildOpponent.currentHp = Math.max(0, Math.ceil(this.wildHpAcc));
 
@@ -1328,6 +1666,12 @@ class FlickemonEngine {
                             level: this.wildOpponent.wildLevel,
                             totalExp: this.config.expForLevel(this.wildOpponent.wildLevel),
                             shiny: this.wildOpponent.shiny === true,
+                            // An admin-summoned mega arrives holding its stone,
+                            // already transformed. Anything else would make the
+                            // tool produce a mega you cannot keep.
+                            megaStones: this.wildOpponent.megaForm ? [this.wildOpponent.megaForm] : [],
+                            megaActive: this.wildOpponent.megaForm || null,
+                            megaActiveAt: this.wildOpponent.megaForm ? Date.now() : 0,
                         });
                     }
                     this.updatePokedex(this.wildOpponent.wildSpecies.id, true,
@@ -1468,6 +1812,16 @@ class FlickemonEngine {
                 this.evolutionListeners.forEach(cb => cb({
                     from: fromSpecies, to: toSpecies, shiny: active.shiny === true,
                 }));
+                // A stone carried since before this form could use it wakes up
+                // here. It rides the same listener, so the queue plays the mega
+                // scene directly after the evolution scene rather than at once.
+                const woke = this.wakeDormantMega(active);
+                if (woke) {
+                    this.evolutionListeners.forEach(cb => cb({
+                        kind: 'mega', form: woke, species: toSpecies,
+                        shiny: active.shiny === true,
+                    }));
+                }
                 this.emitState();
                 return toSpecies;
             }

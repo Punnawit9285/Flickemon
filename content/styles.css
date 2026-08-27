@@ -92,6 +92,20 @@
     --flick-spark:          rgba(255, 236, 150, 0.95);
     --flick-sheen:          rgba(255, 255, 255, 0.15);
 
+    /* Mega. Its own palette, deliberately not the shiny gold: the two are
+     * independent and a Pokémon can be both, so they must never be mistaken for
+     * each other at a glance. Magenta-into-cyan reads as "charged" rather than
+     * "rare", which is the distinction being drawn. */
+    --flick-mega:          var(--ion-color-tertiary, #e935c8);
+    --flick-mega-rgb:      var(--ion-color-tertiary-rgb, 233, 53, 200);
+    --flick-mega-alt:      var(--ion-color-primary, #35e0e9);
+    --flick-mega-alt-rgb:  var(--ion-color-primary-rgb, 53, 224, 233);
+    --flick-mega-glow:     rgba(var(--flick-mega-rgb), 0.95);
+    /* Scene-side only: the overlay's own ground and its shard particles, which
+       paint over the extension's scrim rather than the host's surface. */
+    --flick-mega-scrim:    rgba(46, 12, 52, 0.92);
+    --flick-mega-spark:    rgba(255, 190, 245, 0.95);
+
     /* Shiny. The alternate palette is on the sprite itself; this is the framing
      * that tells you it is deliberate and not a rendering fault. */
     --flick-shiny: var(--ion-color-warning, #f5b301);
@@ -986,6 +1000,216 @@
     .evo-desc { animation: none; opacity: 1; }
 }
 
+/* ─────────────────────── Mega Evolution scene ───────────────────────
+   Longer and louder than an evolution because it happens once per Pokémon
+   rather than every few levels. Timeline (delays live on the rules below, so
+   there is exactly one JS timer — MEGA_OVERLAY_MS in flickemon-ui.js):
+
+     0.00s  overlay fades up, vortex begins turning
+     0.40s  "X is reacting to Charizardite X!"
+     1.00s  the stone falls in and starts to orbit
+     2.20s  rings converge; the stone accelerates
+     3.00s  the stone shatters — shockwave, shards outward
+     3.30s  morph: white-out and form flicker (2.6s)
+     6.10s  burst + screen flash
+     6.70s  new form named, with its types and the damage line
+     8.50s  auto-dismiss
+*/
+
+.mega-overlay-screen {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(circle at 50% 45%, var(--flick-mega-scrim) 0%, var(--flick-scrim-deep) 72%);
+    backdrop-filter: blur(7px);
+    z-index: 20001;                      /* above the evolution scene's 20000 */
+    display: flex; align-items: center; justify-content: center;
+    color: var(--flick-on-scrim);
+    text-align: center;
+    font-family: inherit;
+    cursor: pointer;
+    overflow: hidden;
+    animation: evo-overlay-in 0.35s ease both;
+}
+
+.mega-box { position: relative; padding: 1rem; max-width: 460px; }
+
+.mega-flash {
+    position: absolute; inset: 0;
+    background: var(--flick-on-scrim);
+    opacity: 0; pointer-events: none;
+    animation: mega-flash 0.6s ease-out 6.05s both;
+}
+@keyframes mega-flash { 0% { opacity: 0; } 22% { opacity: 0.92; } 100% { opacity: 0; } }
+
+.mega-lead {
+    margin: 0 0 0.75rem; font-size: 1rem; font-weight: 700;
+    color: var(--flick-on-scrim);
+    animation: mega-lead 5.6s ease both 0.4s;
+}
+.mega-lead b { color: var(--flick-mega); }
+@keyframes mega-lead {
+    0% { opacity: 0; transform: translateY(6px); }
+    8%, 88% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; }
+}
+
+.mega-stage {
+    position: relative;
+    width: 240px; height: 240px;
+    margin: 0 auto;
+    display: flex; align-items: center; justify-content: center;
+}
+
+/* A slow counter-rotating field, so the scene is never completely still. */
+.mega-vortex {
+    position: absolute; inset: -30px;
+    background: conic-gradient(from 0deg,
+        rgba(var(--flick-mega-rgb), 0) 0deg,
+        rgba(var(--flick-mega-rgb), 0.35) 90deg,
+        rgba(var(--flick-mega-alt-rgb), 0.3) 180deg,
+        rgba(var(--flick-mega-rgb), 0) 270deg);
+    border-radius: 50%;
+    opacity: 0;
+    animation: mega-vortex 6.3s linear 0.2s both;
+}
+@keyframes mega-vortex {
+    0%   { opacity: 0; transform: rotate(0deg) scale(0.7); }
+    12%  { opacity: 0.5; }
+    52%  { opacity: 0.9; transform: rotate(520deg) scale(1.06); }
+    62%  { opacity: 0.25; transform: rotate(640deg) scale(1.3); }
+    100% { opacity: 0; transform: rotate(900deg) scale(1.4); }
+}
+
+.mega-ring {
+    position: absolute;
+    border: 3px solid var(--flick-mega);
+    border-radius: 50%;
+    opacity: 0;
+    animation: mega-ring 1.05s ease-in both;
+}
+.mega-ring-1 { width: 250px; height: 250px; animation-delay: 2.20s; }
+.mega-ring-2 { width: 210px; height: 210px; animation-delay: 2.45s; border-color: var(--flick-mega-alt); }
+.mega-ring-3 { width: 170px; height: 170px; animation-delay: 2.70s; }
+@keyframes mega-ring {
+    0%   { opacity: 0; transform: scale(1.5) rotate(0deg); }
+    35%  { opacity: 0.9; }
+    100% { opacity: 0; transform: scale(0.25) rotate(180deg); }
+}
+
+/* The stone: falls in, orbits, then accelerates into the Pokémon. This beat is
+   what the ordinary evolution scene has no equivalent of. */
+.mega-stone-orbit {
+    position: absolute; width: 150px; height: 150px;
+    animation: mega-orbit 2.4s cubic-bezier(0.4, 0, 0.8, 1) 1.0s both;
+}
+.mega-stone {
+    position: absolute; top: -7px; left: 50%;
+    width: 15px; height: 15px; margin-left: -7px;
+    background: linear-gradient(145deg, var(--flick-mega) 0%, var(--flick-mega-alt) 100%);
+    box-shadow: 0 0 14px 4px var(--flick-mega-glow);
+    clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%);
+    animation: mega-stone-spin 1.2s linear 1.0s infinite;
+}
+@keyframes mega-orbit {
+    0%   { opacity: 0; transform: rotate(0deg) scale(2.2) translateY(-70px); }
+    14%  { opacity: 1; transform: rotate(60deg) scale(1.35) translateY(0); }
+    62%  { opacity: 1; transform: rotate(560deg) scale(1); }
+    92%  { opacity: 1; transform: rotate(1080deg) scale(0.18); }
+    100% { opacity: 0; transform: rotate(1140deg) scale(0); }
+}
+@keyframes mega-stone-spin { to { transform: rotate(360deg); } }
+
+/* The shockwave the stone leaves when it breaks. */
+.mega-shock {
+    position: absolute; width: 40px; height: 40px;
+    border: 4px solid var(--flick-mega-alt);
+    border-radius: 50%;
+    opacity: 0;
+    animation: mega-shock 0.85s cubic-bezier(0.1, 0.7, 0.3, 1) 3.0s both;
+}
+@keyframes mega-shock {
+    0%   { opacity: 0.95; transform: scale(0.2); border-width: 6px; }
+    100% { opacity: 0; transform: scale(7); border-width: 1px; }
+}
+
+/* The filter lives on .mega-morph, NOT on .mega-stage — a filter cascades to
+   descendants, and invert(1) here would blacken the burst and the shards. The
+   evolution scene has the same trap; see the note above its .evo-morph rule. */
+.mega-morph { position: relative; width: 150px; height: 150px; animation: mega-glow 2.6s ease-in-out 3.3s both; }
+.mega-morph img {
+    position: absolute; inset: 0;
+    width: 150px; height: 150px;
+    image-rendering: pixelated;
+}
+.mega-morph .old-sprite { animation: evo-flicker-out 2.6s steps(1, end) 3.3s both; }
+.mega-morph .new-sprite { animation: evo-flicker-in  2.6s steps(1, end) 3.3s both; }
+
+@keyframes mega-glow {
+    0%   { filter: brightness(1) invert(0) drop-shadow(0 0 0 transparent); transform: scale(1); }
+    6%   { filter: brightness(1.3) invert(0) drop-shadow(0 0 10px var(--flick-mega-glow)); transform: scale(0.9); }
+    14%  { filter: brightness(1.7) invert(1) drop-shadow(0 0 18px var(--flick-mega-glow)); transform: scale(1.08); }
+    78%  { filter: brightness(1.7) invert(1) drop-shadow(0 0 40px var(--flick-mega-glow)); transform: scale(1.2); }
+    91%  { filter: brightness(2.1) invert(1) drop-shadow(0 0 74px var(--flick-on-scrim)); transform: scale(1.42); }
+    97%  { filter: brightness(1) invert(0) drop-shadow(0 0 20px var(--flick-mega-glow)); transform: scale(0.95); }
+    100% { filter: brightness(1) invert(0) drop-shadow(0 0 0 transparent); transform: scale(1); }
+}
+
+.mega-burst {
+    position: absolute; width: 260px; height: 260px;
+    background: var(--flick-burst);
+    opacity: 0; pointer-events: none;
+    animation: mega-burst 1s ease-out 5.98s both;
+}
+@keyframes mega-burst {
+    0%   { opacity: 0; transform: scale(0.25); }
+    30%  { opacity: 1; transform: scale(1.05); }
+    100% { opacity: 0; transform: scale(1.5); }
+}
+
+/* Two rings of shards, inner fast and outer slow — debris, not a starburst. */
+.mega-shards { position: absolute; inset: 0; pointer-events: none; }
+.mega-shards i {
+    position: absolute; top: 50%; left: 50%;
+    width: 7px; height: 11px; margin: -5px 0 0 -3px;
+    background: var(--flick-mega-spark);
+    clip-path: polygon(50% 0%, 100% 45%, 62% 100%, 12% 72%);
+    opacity: 0;
+    transform-origin: 50% 50%;
+    animation: mega-shard 1.25s ease-out both;
+    animation-delay: calc(3.02s + var(--delay, 0s));
+}
+@keyframes mega-shard {
+    0%   { opacity: 0; transform: rotate(var(--angle, 0deg)) translateY(0) scale(0.3); }
+    14%  { opacity: 1; }
+    100% { opacity: 0; transform: rotate(var(--angle, 0deg)) translateY(calc(-1 * var(--reach, 180px))) scale(1); }
+}
+
+.mega-outcome { animation: evo-text-in 0.5s ease 6.7s both; }
+.mega-desc { margin: 0.9rem 0 0.4rem; font-size: 1.02rem; font-weight: 700; }
+.mega-desc b { color: var(--flick-mega); }
+.mega-boon {
+    margin: 0.5rem 0 0; font-size: 0.8rem; font-weight: 700;
+    color: var(--flick-mega-alt);
+}
+
+@media (max-width: 460px) {
+    .mega-stage { width: 190px; height: 190px; }
+    .mega-morph, .mega-morph img { width: 118px; height: 118px; }
+    .mega-box { max-width: 92vw; }
+}
+
+/* As with the evolution scene: everything above is decoration, and what has to
+   survive motion being off is that the trainer learns what their Pokémon became. */
+@media (prefers-reduced-motion: reduce) {
+    .mega-overlay-screen { animation: none; }
+    .mega-flash, .mega-vortex, .mega-ring, .mega-stone-orbit,
+    .mega-shock, .mega-burst, .mega-shards { display: none; }
+    .mega-morph { animation: none; }
+    .mega-morph .old-sprite { display: none; }
+    .mega-morph .new-sprite { animation: none; opacity: 1; }
+    .mega-lead, .mega-outcome, .mega-desc { animation: none; opacity: 1; }
+}
+
 /* ====================================================
    Flickemon Vanilla JS Modals (Chrome Extension)
    ==================================================== */
@@ -1379,6 +1603,63 @@
     background: var(--flick-shiny);
     color: var(--flick-on-type-dark);
 }
+
+/* ── Mega ──
+   Independent of shiny and legendary — a Pokémon can be all three, so the
+   badges sit side by side and the auras are different colours. The mega aura is
+   stronger than the shiny one on purpose: shiny is a repaint the sprite already
+   announces, mega is a different sprite AND a damage bonus. */
+.badge-mega {
+    background: var(--flick-mega);
+    color: var(--flick-on-primary);
+    letter-spacing: 0.06em;
+}
+.is-mega { filter: drop-shadow(0 0 6px var(--flick-mega-glow)); }
+@keyframes mega-pulse {
+    0%, 100% { filter: drop-shadow(0 0 4px var(--flick-mega-glow)); }
+    50%      { filter: drop-shadow(0 0 13px var(--flick-mega-glow)); }
+}
+.partner-big-sprite.is-mega,
+.pvp-sprite.is-mega { animation: mega-pulse 2.2s ease-in-out infinite; }
+
+/* A shiny mega gets the mega treatment: two competing drop-shadows read as a
+   rendering fault, and mega is the rarer statement of the two. */
+.partner-big-sprite.is-shiny.is-mega,
+.pvp-sprite.is-shiny.is-mega { animation: mega-pulse 2.2s ease-in-out infinite; }
+
+.pvp-rarity.mega { color: var(--flick-mega); }
+
+/* Stones held, listed under the level on a party row. */
+.party-row-stones {
+    display: block;
+    margin-top: 1px;
+    font-size: 0.62rem;
+    color: var(--flick-mega);
+    opacity: 0.9;
+}
+
+.row-btn.mega-btn { color: var(--flick-mega); border-color: var(--flick-mega); }
+.row-btn.mega-btn.on { background: var(--flick-mega); color: var(--flick-on-primary); }
+
+/* Widget flag, matching .shiny-flag / .legendary-flag. */
+.mega-flag {
+    font-size: 0.62rem; font-weight: 800;
+    color: var(--flick-mega);
+    letter-spacing: 0.04em;
+}
+
+/* Admin summon extras. */
+.admin-summon-megaform {
+    max-width: 150px; padding: 3px 5px;
+    font-size: 0.72rem;
+}
+.admin-mega-toggle input:disabled + span,
+.admin-mega-toggle:has(input:disabled) { opacity: 0.45; }
+
+@media (prefers-reduced-motion: reduce) {
+    .partner-big-sprite.is-mega, .pvp-sprite.is-mega,
+    .partner-big-sprite.is-shiny.is-mega, .pvp-sprite.is-shiny.is-mega { animation: none; }
+}
 /* Legendary and shiny are independent, and a Pokémon can be both — the two
    badges sit side by side rather than one replacing the other. */
 .badge-legendary {
@@ -1755,7 +2036,27 @@
     box-shadow: 3px 3px 0 var(--flick-shadow-strong);
     font-family: "Courier New", monospace;
 }
+.pvp-prize-odds {
+    font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em;
+    color: var(--flick-text-muted);
+}
 .pvp-prize-icon { font-size: 1.15rem; line-height: 1.2; }
+.pvp-prize-dur {
+    margin-top: 2px; font-size: 0.55rem; letter-spacing: 0.06em;
+    color: var(--flick-text-muted); text-transform: uppercase;
+}
+.pvp-prize.is-mega-prize {
+    border-color: var(--flick-mega);
+    box-shadow: 3px 3px 0 rgba(var(--flick-mega-rgb), 0.45);
+}
+.pvp-prize.is-mega-prize .pvp-prize-icon,
+.pvp-prize.is-mega-prize .pvp-prize-label,
+.pvp-prize.is-mega-prize .pvp-prize-odds { color: var(--flick-mega); }
+
+.pvp-reward.is-stone .pvp-8bit { color: var(--flick-mega); }
+.pvp-team-chip.is-mega img { filter: drop-shadow(0 0 5px var(--flick-mega-glow)); }
+.pvp-roster-sprite.is-mega { filter: drop-shadow(0 0 5px var(--flick-mega-glow)); }
+.pvp-bench-mon.is-mega { border-color: var(--flick-mega); }
 .pvp-prize-label { font-size: 0.7rem; font-weight: 800; color: var(--flick-text); text-align: center; }
 .pvp-prize-detail { font-size: 0.58rem; color: var(--flick-text-muted); text-align: center; line-height: 1.35; }
 

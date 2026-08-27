@@ -188,9 +188,11 @@ class FlickemonPvp {
         const fielded = team.slice(0, mode.size);
         const benched = team.slice(mode.size);
 
+        // `spriteId` is the mega form when one is active and equals speciesId
+        // otherwise, so the fallback covers documents written before megas.
         const chip = (c, out) => `
-            <div class="pvp-team-chip ${out ? 'benched' : ''}" title="${esc(c.name)} Lv${c.level}${out ? ' — benched in this format' : ''}">
-                <img src="${this.config.getSpriteUrl(c.speciesId, c.shiny)}" alt="${esc(c.name)}"/>
+            <div class="pvp-team-chip ${out ? 'benched' : ''} ${c.megaForm ? 'is-mega' : ''}" title="${esc(c.name)} Lv${c.level}${out ? ' — benched in this format' : ''}">
+                <img src="${this.config.getSpriteUrl(c.spriteId ?? c.speciesId, c.shiny)}" alt="${esc(c.name)}"/>
                 <span>Lv${c.level}</span>
             </div>`;
 
@@ -279,13 +281,14 @@ class FlickemonPvp {
                         <div class="pvp-roster-row ${onTeam ? 'on-team' : ''} ${benched ? 'benched' : ''}"
                              data-instance="${esc(pk.instanceId)}">
                             <span class="pvp-roster-slot">${onTeam ? slot + 1 : '·'}</span>
-                            <img src="${this.config.getSpriteUrl(sp.id, pk.shiny)}" alt="${esc(sp.name)}"
+                            <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(pk), pk.shiny)}" alt="${esc(sp.name)}"
                                  loading="lazy"
-                                 class="pvp-roster-sprite${pk.shiny ? ' is-shiny' : ''}"/>
+                                 class="pvp-roster-sprite${pk.shiny ? ' is-shiny' : ''}${this.engine.activeMegaForm(pk) ? ' is-mega' : ''}"/>
                             <span class="pvp-roster-name">
                                 ${esc(sp.name)}${dupe}
                                 ${sp.isLegendary ? '<span class="pvp-rarity legendary" title="Legendary">★</span>' : ''}
                                 ${pk.shiny ? '<span class="pvp-rarity shiny" title="Shiny">✦</span>' : ''}
+                                ${this.engine.activeMegaForm(pk) ? `<span class="pvp-rarity mega" title="${esc(this.engine.activeMegaForm(pk).name)}">◆</span>` : ''}
                                 <span class="pvp-roster-lv">Lv${pk.level}</span>
                                 ${onExpTeam ? '<span class="pvp-roster-tag" title="Also on your EXP team">EXP</span>' : ''}
                             </span>
@@ -318,21 +321,35 @@ class FlickemonPvp {
         const lockMs = this.engine.getRewardLock();
         const running = this.engine.getActiveReward();
 
+        const boostPct = Math.round((1 - this.config.MEGA_STONE_CHANCE) / 3 * 100);
+        const stonePct = Math.round(this.config.MEGA_STONE_CHANCE * 100);
+
         return `
             <div class="pvp-prizes">
-                <p class="pvp-8bit small">WIN ONE OF THESE — ${mode.rewardLabel.toUpperCase()}</p>
+                <p class="pvp-8bit small">WIN ONE OF THESE</p>
                 <div class="pvp-prize-row">
                     ${Object.values(this.config.REWARDS).map(type => {
                         const info = this.config.REWARD_INFO[type];
                         return `
                             <div class="pvp-prize">
+                                <span class="pvp-prize-odds">${boostPct}%</span>
                                 <span class="pvp-prize-icon">${info.icon}</span>
                                 <span class="pvp-prize-label">${info.label}</span>
                                 <span class="pvp-prize-detail">${info.detail}</span>
+                                <span class="pvp-prize-dur">${mode.rewardLabel}</span>
                             </div>`;
                     }).join('')}
+                    <div class="pvp-prize is-mega-prize">
+                        <span class="pvp-prize-odds">${stonePct}%</span>
+                        <span class="pvp-prize-icon">◆</span>
+                        <span class="pvp-prize-label">Mega Stone</span>
+                        <span class="pvp-prize-detail">For a random Pokémon in your line-up. Deals 1.3x damage, and never expires.</span>
+                        <span class="pvp-prize-dur">permanent</span>
+                    </div>
                 </div>
-                <p class="pvp-sub">Drawn at random, one third each.</p>
+                <p class="pvp-sub">Drawn at random. A stone can land even while a
+                   boost is running — only boosts refuse to stack.</p>
+                ${this.renderStoneOutlook()}
                 ${lockMs > 0 ? `
                     <p class="pvp-lock pvp-lock-timer">⛔ You lost recently — wins pay nothing for
                        <span class="pvp-lock-left">${this.config.formatCountdown(lockMs)}</span>.</p>` : ''}
@@ -342,6 +359,39 @@ class FlickemonPvp {
                        (<span class="pvp-boost-left">${this.config.formatCountdown(running.msLeft)}</span> left).
                        Boosts never stack, so a win now earns nothing.</p>` : ''}
             </div>`;
+    }
+
+    /**
+     * Whether the 10% can actually pay out, and to whom.
+     *
+     * A line-up of Pokémon with no mega anywhere in their lines re-rolls into a
+     * boost, and a line-up that already holds every stone does the same. Both
+     * are invisible without saying so — the player would just see the stone
+     * chance never landing and assume it was bad luck.
+     */
+    renderStoneOutlook() {
+        const party = this.engine.getParty();
+        let eligible = 0, maxed = 0, noMega = 0;
+        for (const id of this.engine.getPvpTeam()) {
+            const m = party.find(p => p.instanceId === id);
+            if (!m) continue;
+            const source = this.config.megaSourceFor(m.speciesId);
+            if (source === null) { noMega++; continue; }
+            const missing = this.config.megaFormsFor(source)
+                .filter(f => !(m.megaStones || []).includes(f.key));
+            if (missing.length) eligible++; else maxed++;
+        }
+        if (eligible > 0) {
+            return `<p class="pvp-sub">${eligible} of your line-up
+                    ${eligible === 1 ? 'is' : 'are'} still in line for a stone.</p>`;
+        }
+        if (maxed > 0) {
+            return `<p class="pvp-lock">Your whole line-up already holds every stone
+                    it can — the 10% will pay a boost instead.</p>`;
+        }
+        return `<p class="pvp-lock">None of your ${noMega} line-up
+                ${noMega === 1 ? 'member has' : 'members have'} a Mega form in
+                ${noMega === 1 ? 'its' : 'their'} line — the 10% will pay a boost instead.</p>`;
     }
 
     bindLobby(mode) {
@@ -450,8 +500,8 @@ class FlickemonPvp {
                 <p class="pvp-sub">${mode.blurb} A win is worth one ${mode.rewardLabel} boost.</p>
                 <div class="pvp-team-strip">
                     ${team.map(c => `
-                        <div class="pvp-team-chip">
-                            <img src="${this.config.getSpriteUrl(c.speciesId, c.shiny)}" alt="${esc(c.name)}"/>
+                        <div class="pvp-team-chip ${c.megaForm ? 'is-mega' : ''}">
+                            <img src="${this.config.getSpriteUrl(c.spriteId ?? c.speciesId, c.shiny)}" alt="${esc(c.name)}"/>
                             <span>Lv${c.level}</span>
                         </div>`).join('')}
                 </div>
@@ -863,7 +913,8 @@ class FlickemonPvp {
             ? `<span class="pvp-status ${c.status}">${this.B.STATUS_LABEL[c.status]}</span>` : '';
         // Worth knowing what you are up against before choosing a move.
         const rarity = c => `${c.legendary ? '<span class="pvp-rarity legendary" title="Legendary">★</span>' : ''}`
-                          + `${c.shiny ? '<span class="pvp-rarity shiny" title="Shiny">✦</span>' : ''}`;
+                          + `${c.shiny ? '<span class="pvp-rarity shiny" title="Shiny">✦</span>' : ''}`
+                          + `${c.megaForm ? '<span class="pvp-rarity mega" title="Mega — deals 1.3x damage">◆</span>' : ''}`;
 
         const over = phase === 'over';
         const iWon = over && ((st.winner === 'host') === (this.role === 'host'));
@@ -874,7 +925,18 @@ class FlickemonPvp {
         if (iWon && !this.rewardClaimed) {
             this.rewardClaimed = true;
             this.engine.grantPvpReward(mode.rewardMs)
-                .then(res => { this.rewardResult = res; this.renderBattle(); })
+                .then(res => {
+                    this.rewardResult = res;
+                    this.renderBattle();
+                    // A stone that can be used is switched on by the engine, so
+                    // this is a real transformation and earns the scene. A
+                    // dormant one changes nothing yet and gets only the notice.
+                    if (res.granted && res.kind === 'stone' && !res.dormant) {
+                        const member = this.engine.getParty()
+                            .find(p => p.instanceId === res.instanceId);
+                        this.ui.showMegaOverlay(res.stone, member);
+                    }
+                })
                 .catch(() => {});
         }
 
@@ -899,11 +961,11 @@ class FlickemonPvp {
                             <span class="pvp-mon-lv">Lv${foe.level}</span>${rarity(foe)}${badge(foe)}
                             <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(foe))}" style="width:${hpPct(foe)}%"></div></div>
                         </div>
-                        <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}" src="${this.config.getSpriteUrl(foe.speciesId, foe.shiny)}" alt="${esc(foe.name)}"/>
+                        <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}${foe.megaForm ? ' is-mega' : ''}" src="${this.config.getSpriteUrl(foe.spriteId ?? foe.speciesId, foe.shiny)}" alt="${esc(foe.name)}"/>
                     </div>
                     <div class="pvp-side mine">
-                        <img class="pvp-sprite my-sprite${me.shiny ? ' is-shiny' : ''}" src="${this.config.getBackSpriteUrl(me.speciesId, me.shiny)}"
-                             onerror="this.src='${this.config.getSpriteUrl(me.speciesId, me.shiny)}'" alt="${esc(me.name)}"/>
+                        <img class="pvp-sprite my-sprite${me.shiny ? ' is-shiny' : ''}${me.megaForm ? ' is-mega' : ''}" src="${this.config.getBackSpriteUrl(me.spriteId ?? me.speciesId, me.shiny)}"
+                             onerror="this.src='${this.config.getSpriteUrl(me.spriteId ?? me.speciesId, me.shiny)}'" alt="${esc(me.name)}"/>
                         <div class="pvp-nameplate">
                             ${this.renderBalls(myTeam, myIndex)}
                             <span class="pvp-mon-name">${esc(me.name)}</span>
@@ -982,8 +1044,8 @@ class FlickemonPvp {
         if (bench.length === 0) return `<p class="pvp-turn">Nobody left to send out.</p>`;
         return `<div class="pvp-bench">
             ${bench.map(({ c, i }) => `
-                <button class="pvp-bench-mon ${btnClass}" data-index="${i}" ${this.pendingAction ? 'disabled' : ''}>
-                    <img src="${this.config.getSpriteUrl(c.speciesId, c.shiny)}" alt="${esc(c.name)}"/>
+                <button class="pvp-bench-mon ${btnClass} ${c.megaForm ? 'is-mega' : ''}" data-index="${i}" ${this.pendingAction ? 'disabled' : ''}>
+                    <img src="${this.config.getSpriteUrl(c.spriteId ?? c.speciesId, c.shiny)}" alt="${esc(c.name)}"/>
                     <span class="pvp-bench-name">${esc(c.name)}</span>
                     <span class="pvp-bench-hp">${c.hp}/${c.maxHp}</span>
                 </button>`).join('')}
@@ -1056,6 +1118,19 @@ class FlickemonPvp {
                 ${Math.round(this.config.PVP_LOSS_LOCKOUT_MS / 60000)} minutes of prizes, and
                 <span class="pvp-lock-left">${this.config.formatCountdown(res.msLeft || 0)}</span>
                 of that is left. Win again after that and the draw pays as normal.</p>
+            </div>`;
+        }
+
+        // A stone is not a REWARD_INFO type, so it is handled before that lookup.
+        if (res.granted && res.kind === 'stone') {
+            return `<div class="pvp-reward won is-stone">
+                <p class="pvp-8bit small">◆ ${esc(res.stone.stone)}</p>
+                <p class="pvp-sub">${esc(res.holder)} won ${esc(res.stone.stone)}.
+                ${res.dormant
+                    ? `It cannot be used until ${esc(res.holder)} reaches its final form —
+                       the stone keeps waiting until then.`
+                    : `Turn it on in Game Hub → Party to become
+                       <b>${esc(res.stone.name)}</b> and deal 1.3x damage.`}</p>
             </div>`;
         }
 

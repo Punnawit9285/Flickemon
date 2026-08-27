@@ -145,6 +145,7 @@ console.log('\n=== the manifest actually exposes them ===');
 
 console.log('\n=== the build ships them ===');
 (() => {
+    const cfg = loadConfig(undefined);
     const build = fs.readFileSync(R + 'build.sh', 'utf8');
     check('build.sh copies every sprite variant',
         ['cp sprites/*.png', 'cp sprites/back/*.png',
@@ -172,7 +173,12 @@ console.log('\n=== the build ships them ===');
     check('dist carries back sprites', fs.existsSync(distBack));
     if (fs.existsSync(R + 'dist/sprites')) {
         const n = fs.readdirSync(R + 'dist/sprites').filter(f => f.endsWith('.png')).length;
-        check('dist has the full front set', n === 1025, String(n));
+        // Derived, not hardcoded: the bundle is one file per species plus one
+        // per Mega form, and a literal here would have to be edited by hand
+        // every time either set grows.
+        const expected = cfg.POKEMON_REGISTRY.length
+            + Object.values(cfg.MEGA_FORMS).reduce((t, forms) => t + forms.length, 0);
+        check('dist has the full front set', n === expected, `${n}, expected ${expected}`);
     }
 
     // Packaging strips the dev key for the Web Store, but dist/ must stay
