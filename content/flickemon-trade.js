@@ -259,7 +259,7 @@ class FlickemonTrade {
             return `<div class="trade-slot">
                 <img src="${this.config.getSpriteUrl(offer.speciesId, offer.shiny)}"
                      class="${offer.shiny ? 'is-shiny' : ''}" alt="${sp ? sp.name : ''}"/>
-                <span class="trade-slot-name">${sp ? sp.name : '???'}${sp && sp.isLegendary ? ' ★' : ''}${offer.shiny ? ' ✦' : ''}</span>
+                <span class="trade-slot-name">${sp ? sp.name : '???'}${sp && sp.isCustom ? ` ${this.config.CUSTOM_MARK}` : ''}${sp && sp.isLegendary ? ' ★' : ''}${offer.shiny ? ' ✦' : ''}</span>
                 <span class="trade-slot-lv">Lv${offer.level}</span>
                 <span class="trade-slot-who">${who}</span>
             </div>`;
@@ -303,7 +303,7 @@ class FlickemonTrade {
                             title="${sp.name} Lv.${pk.level}">
                 <img src="${this.config.getSpriteUrl(pk.speciesId, pk.shiny)}"
                      class="${pk.shiny ? 'is-shiny' : ''}" alt="${sp.name}"/>
-                <span>Lv${pk.level}${sp.isLegendary ? ' ★' : ''}${pk.shiny ? ' ✦' : ''}</span>
+                <span>Lv${pk.level}${sp.isCustom ? ` ${this.config.CUSTOM_MARK}` : ''}${sp.isLegendary ? ' ★' : ''}${pk.shiny ? ' ✦' : ''}</span>
             </button>`;
         }).join('');
 
@@ -350,7 +350,7 @@ class FlickemonTrade {
                         <div class="trade-slot">
                             <img src="${this.config.getSpriteUrl(received.speciesId, received.shiny)}"
                                  class="${received.shiny ? 'is-shiny' : ''}" alt=""/>
-                            <span class="trade-slot-name">${rs ? rs.name : '???'}${rs && rs.isLegendary ? ' ★' : ''}${received.shiny ? ' ✦' : ''}</span>
+                            <span class="trade-slot-name">${rs ? rs.name : '???'}${rs && rs.isCustom ? ` ${this.config.CUSTOM_MARK}` : ''}${rs && rs.isLegendary ? ' ★' : ''}${received.shiny ? ' ✦' : ''}</span>
                             <span class="trade-slot-lv">Lv${received.level}</span>
                         </div>
                     </div>

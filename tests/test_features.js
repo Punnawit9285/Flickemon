@@ -14,10 +14,28 @@ const check=(n,c,d='')=>c?(console.log('  PASS  '+n),pass++):(console.log('  FAI
 let seq=0;
 const add=(sid,lvl,shiny=false)=>{const i='t'+(++seq);
   e.gameState.party.push({instanceId:i,speciesId:sid,level:lvl,totalExp:cfg.expForLevel(lvl),shiny});return i;};
-const win=async(sid,lvl,shiny=false)=>{
+// Capture is a 40% roll now, and these tests are about what happens AFTER a
+// catch. Pin the roll rather than let one run in three fail for a reason that
+// has nothing to do with what is under test. 0.2 clears the capture threshold
+// without also forcing a shiny (1/512) or a legendary (1%), which are drawn
+// from the same Math.random.
+// Walks a narrow band rather than returning a constant: generateId() draws
+// from this same Math.random, and a flat value hands two Pokemon caught in the
+// same millisecond the same instanceId. Every value in the band lands on the
+// same side of the capture threshold, which is the part that must be pinned.
+let rollStep=0;   // module-level: two separate calls must not repeat a value
+const withRoll=async(v,fn)=>{
+  const r=Math.random;
+  Math.random=()=>v + ((rollStep++) % 90) * 1e-4;
+  try { return await fn(); } finally { Math.random=r; }
+};
+const battle=async(sid,lvl,shiny=false)=>{
   e.wildOpponent={wildSpecies:cfg.getSpeciesById(sid),wildLevel:lvl,maxHp:100,currentHp:1,status:'fighting',shiny};
   e.wildHpAcc=1; await e.onVideoProgress(60);
 };
+const win=async(sid,lvl,shiny=false)=>withRoll(0.2,()=>battle(sid,lvl,shiny));
+// The other 60%: beaten, not caught.
+const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,shiny));
 
 (async()=>{
   e.isLoaded=true;
@@ -114,6 +132,317 @@ const win=async(sid,lvl,shiny=false)=>{
           !e.gameState.party.some(p=>p.instanceId===mine),
           JSON.stringify(e.gameState.party.map(p=>p.instanceId)));
     check('tombstones sync outward', e.buildCloudPayload().releasedIds.includes(mine));
+  }
+
+  console.log('\n=== capture is a 40% roll ===');
+  {
+    e.gameState.party=[]; seq=0;
+    e.gameState.expDebt=0;
+    e.gameState.pokedex=[];         // earlier blocks already caught some of these
+    e.gameState.activeInstanceId=add(1,50);
+    e.gameState.battleMode='capture';
+
+    // setTimeout runs synchronously in this harness, so the respawn has already
+    // replaced e.wildOpponent by the time a call returns. The encounter payload
+    // is what the widget reads anyway, so read that.
+    let last=null;
+    const offEnc=e.onEncounter(ev=>{ last=ev; });
+
+    // The roll happens once, when the battle ends.
+    await winNoCatch(133,20);
+    check('a lost roll does not add it to the party',
+          !e.gameState.party.some(p=>p.speciesId===133),
+          JSON.stringify(e.gameState.party.map(p=>p.speciesId)));
+    check('it is still recorded as seen',
+          !!e.gameState.pokedex.find(x=>x.speciesId===133));
+    check('but not as caught',
+          e.gameState.pokedex.find(x=>x.speciesId===133).caught!==true);
+    check('the encounter reports the miss',
+          last.won===true && last.captured===false && last.brokeFree===true,
+          JSON.stringify(last));
+
+    await win(133,20);
+    check('a won roll does add it', e.gameState.party.some(p=>p.speciesId===133));
+    check('and marks it caught',
+          e.gameState.pokedex.find(x=>x.speciesId===133).caught===true);
+
+    // A miss is still a win: same EXP, and the widget must be able to tell the
+    // student which of the two happened.
+    const before=e.getActivePokemon().totalExp;
+    await winNoCatch(129,20);
+    const missExp=e.getActivePokemon().totalExp-before;
+    const before2=e.getActivePokemon().totalExp;
+    await win(129,20);
+    const hitExp=e.getActivePokemon().totalExp-before2;
+    check('a miss pays the same EXP as a catch', missExp===hitExp, `${missExp} vs ${hitExp}`);
+    check('and that EXP is real', missExp>0, String(missExp));
+    offEnc();
+
+    // Roughly 40% over a large sample. Wide bounds -- this is a smoke test for
+    // "the constant is actually wired in", not a statistics exam.
+    e.gameState.party=[]; seq=0;
+    e.gameState.activeInstanceId=add(1,50);
+    let caught=0;
+    const N=400;
+    for (let i=0;i<N;i++) {
+      const n=e.gameState.party.length;
+      await battle(19,5);                       // Rattata, never at capacity
+      if (e.gameState.party.length>n) caught++;
+      if (e.gameState.party.length>=cfg.MAX_PARTY_SIZE) e.gameState.party.length=1;
+    }
+    const rate=caught/N;
+    check('the rate is near the configured chance',
+          Math.abs(rate-cfg.CAPTURE_CHANCE)<0.08,
+          `${(rate*100).toFixed(1)}% over ${N}, want ${cfg.CAPTURE_CHANCE*100}%`);
+  }
+
+  console.log('\n=== legendaries catch themselves ===');
+  {
+    e.gameState.party=[]; seq=0;
+    e.gameState.pokedex=[];
+    e.gameState.expDebt=0;
+    e.gameState.battleMode='capture';
+    e.gameState.activeInstanceId=add(1,50);
+    const legend=cfg.POKEMON_REGISTRY.find(sp=>sp.isLegendary);
+
+    // Lose the roll ten times over. An ordinary Pokemon would get away every
+    // time; a legendary must not.
+    let caught=0;
+    for (let i=0;i<10;i++) {
+      const n=e.gameState.party.length;
+      await winNoCatch(legend.id,45);
+      if (e.gameState.party.length>n) caught++;
+      e.gameState.party.length=1;                 // keep room, keep it a duplicate
+    }
+    check('a legendary is caught every time', caught===10, `${caught}/10`);
+    check('and marked caught in the dex',
+          e.gameState.pokedex.find(x=>x.speciesId===legend.id).caught===true);
+
+    // The guarantee crosses the mode line: EXP mode gives up the ORDINARY
+    // catches, not the once-a-month ones.
+    e.gameState.battleMode='exp';
+    e.gameState.party.length=1;
+    let n=e.gameState.party.length;
+    await winNoCatch(legend.id,45);
+    check('EXP mode still catches a legendary', e.gameState.party.length===n+1);
+
+    n=e.gameState.party.length;
+    await winNoCatch(19,20);
+    check('but nothing ordinary', e.gameState.party.length===n);
+    e.gameState.battleMode='capture';
+  }
+
+  console.log('\n=== shinies catch themselves too ===');
+  {
+    e.gameState.party=[]; seq=0;
+    e.gameState.pokedex=[];
+    e.gameState.expDebt=0;
+    e.gameState.battleMode='capture';
+    e.gameState.activeInstanceId=add(1,50);
+
+    let caught=0;
+    for (let i=0;i<10;i++) {
+      const n=e.gameState.party.length;
+      await winNoCatch(129,20,true);              // shiny Magikarp, roll lost
+      if (e.gameState.party.length>n) caught++;
+      e.gameState.party.length=1;
+    }
+    check('a shiny is caught every time', caught===10, `${caught}/10`);
+    check('and it arrives shiny',
+          e.gameState.party.slice(1).every(p=>p.shiny===true) || caught===0);
+    check('the dex records the shiny',
+          e.gameState.pokedex.find(x=>x.speciesId===129).shiny===true);
+
+    // Same across the mode line.
+    e.gameState.battleMode='exp';
+    e.gameState.party.length=1;
+    let n=e.gameState.party.length;
+    await winNoCatch(129,20,true);
+    check('EXP mode catches a shiny too', e.gameState.party.length===n+1);
+    e.gameState.battleMode='capture';
+
+    // An ordinary one of the same species is still a 40% roll.
+    e.gameState.party.length=1;
+    n=e.gameState.party.length;
+    await winNoCatch(129,20,false);
+    check('an ordinary one of the same species still rolls',
+          e.gameState.party.length===n);
+
+    // The guarantee has to survive the escape rule, or it is a lie in exactly
+    // the case it matters most: rollWildLevel can put a wild well past the +4
+    // threshold that makes one flee at 90 seconds.
+    let last=null;
+    const offEnc=e.onEncounter(ev=>{ last=ev; });
+    e.gameState.party=[]; seq=0;
+    e.gameState.activeInstanceId=add(1,10);
+    e.wildOpponent={wildSpecies:cfg.getSpeciesById(129),wildLevel:40,maxHp:100,
+                    currentHp:100,status:'fighting',shiny:true,fightDurationSeconds:0};
+    e.wildHpAcc=100;
+    await e.onVideoProgress(120);                  // well past the 90s flee point
+    check('a shiny far above your level does not flee',
+          last===null || last.won!==false, JSON.stringify(last));
+
+    // ...while an ordinary one still does.
+    last=null;
+    e.wildOpponent={wildSpecies:cfg.getSpeciesById(129),wildLevel:40,maxHp:100,
+                    currentHp:100,status:'fighting',shiny:false,fightDurationSeconds:0};
+    e.wildHpAcc=100;
+    await e.onVideoProgress(120);
+    check('an ordinary one still flees',
+          last && last.won===false, JSON.stringify(last));
+    offEnc();
+
+    check('the predicate covers both, and nothing else',
+          e.isGuaranteedCatch({wildSpecies:{isLegendary:true},shiny:false})===true
+       && e.isGuaranteedCatch({wildSpecies:{isLegendary:false},shiny:true})===true
+       && e.isGuaranteedCatch({wildSpecies:{isLegendary:false},shiny:false})===false
+       && e.isGuaranteedCatch(null)===false);
+  }
+
+  console.log('\n=== who you meet depends on your partner ===');
+  {
+    e.gameState.party=[]; seq=0;
+    e.gameState.battleMode='capture';
+
+    const stageOf=sp=>sp.evolutionStage;
+    const sample=(speciesId,n)=>{
+      e.gameState.party=[]; seq=0;
+      e.gameState.activeInstanceId=add(speciesId,20);   // under 40: no legendaries
+      const seen={1:0,2:0,3:0};
+      for (let i=0;i<n;i++) seen[stageOf(e.rollWildPokemon())]++;
+      return { 1:seen[1]/n, 2:seen[2]/n, 3:seen[3]/n };
+    };
+    const near=(a,b,tol=0.05)=>Math.abs(a-b)<=tol;
+    const N=3000;
+
+    const basic=sample(4,N);            // Charmander
+    check('a first-form partner meets first forms only',
+          basic[1]===1, JSON.stringify(basic));
+
+    const middle=sample(5,N);           // Charmeleon
+    check('a middle-form partner meets 90% first forms',
+          near(middle[1],0.90), `${(middle[1]*100).toFixed(1)}%`);
+    check('and 10% middle forms', near(middle[2],0.10), `${(middle[2]*100).toFixed(1)}%`);
+    check('and never a final form', middle[3]===0, `${(middle[3]*100).toFixed(1)}%`);
+
+    const final=sample(6,N);            // Charizard
+    check('a fully evolved partner meets 50% first forms',
+          near(final[1],0.50), `${(final[1]*100).toFixed(1)}%`);
+    check('40% middle forms', near(final[2],0.40), `${(final[2]*100).toFixed(1)}%`);
+    check('10% final forms', near(final[3],0.10), `${(final[3]*100).toFixed(1)}%`);
+
+    // A two-stage line is finished at its second form, and gets the finished
+    // partner's world -- the old "stage 3 unlocks at Lv.30" rule would have
+    // denied a Lv.20 Raticate the 10% this promises it.
+    const rat=sample(20,N);             // Raticate: stage 2, but fully evolved
+    check('a two-stage final form counts as fully evolved',
+          near(rat[3],0.10), `${(rat[3]*100).toFixed(1)}%`);
+    // And a species that never evolves at all is likewise "done".
+    check('so does one that never evolves',
+          cfg.encounterTierFor(128)===cfg.ENCOUNTER_TIERS.FINAL);
+    check('a first form that can still evolve is not',
+          cfg.encounterTierFor(19)===cfg.ENCOUNTER_TIERS.BASIC);
+    check('nor is a middle form that can',
+          cfg.encounterTierFor(5)===cfg.ENCOUNTER_TIERS.MIDDLE);
+
+    // Every draw must be a real, catchable species.
+    e.gameState.party=[]; seq=0;
+    e.gameState.activeInstanceId=add(6,20);
+    for (let i=0;i<200;i++) {
+      const w=e.rollWildPokemon();
+      if (!w || !cfg.getSpeciesById(w.id)) { check('every draw is a real species', false, String(i)); break; }
+    }
+    check('every draw is a real species', true);
+  }
+
+  console.log('\n=== instant capture ===');
+  {
+    e.gameState.party=[]; seq=0;
+    e.gameState.expDebt=0;
+    e.gameState.battleMode='capture';
+    e.gameState.activeInstanceId=add(1,50);
+
+    let last=null;
+    const offEnc=e.onEncounter(ev=>{ last=ev; });
+
+    e.wildOpponent={wildSpecies:cfg.getSpeciesById(150),wildLevel:40,maxHp:100,
+                    currentHp:100,status:'fighting',shiny:true};
+    e.wildHpAcc=100;
+    const target=e.wildOpponent;      // the respawn replaces e.wildOpponent
+    const res=await e.instantCapture();
+    check('it captures on the spot', res.ok===true, JSON.stringify(res));
+    check('the Pokémon joined', e.gameState.party.some(p=>p.speciesId===150));
+    check('keeping its shininess',
+          e.gameState.party.find(p=>p.speciesId===150).shiny===true);
+    check('the dex marks it caught',
+          e.gameState.pokedex.find(x=>x.speciesId===150).caught===true);
+    check('the battle is over', target.status==='captured', target.status);
+    check('and it awarded no EXP itself', target.expGained===0);
+    check('the encounter is flagged instant',
+          last.instant===true && last.captured===true && last.expGained===0,
+          JSON.stringify(last));
+    check('the debt is booked', e.getExpDebt()===cfg.INSTANT_CAPTURE_EXP_DEBT,
+          String(e.getExpDebt()));
+
+    // The next N wins pay nothing, and each one pays down one.
+    const start=e.getActivePokemon().totalExp;
+    for (let i=0;i<cfg.INSTANT_CAPTURE_EXP_DEBT;i++) {
+      const owed=e.getExpDebt();
+      await winNoCatch(19,5);
+      check(`win ${i+1} pays down the debt`, e.getExpDebt()===owed-1,
+            `${owed} -> ${e.getExpDebt()}`);
+    }
+    check('none of them gave EXP', e.getActivePokemon().totalExp===start,
+          `+${e.getActivePokemon().totalExp-start}`);
+    check('the debt is clear', e.getExpDebt()===0);
+
+    await winNoCatch(19,5);
+    check('the next win pays again', e.getActivePokemon().totalExp>start);
+
+    // Capturing must keep working throughout -- the debt costs levels, not
+    // Pokémon. This is the part the request was explicit about.
+    e.gameState.expDebt=cfg.INSTANT_CAPTURE_EXP_DEBT;
+    const n=e.gameState.party.length;
+    await win(147,10);
+    check('catching still works while in debt', e.gameState.party.length===n+1);
+    check('and that win still paid no EXP', last.expGained===0, JSON.stringify(last));
+    check('while the debt keeps counting down',
+          last.expDebtLeft===cfg.INSTANT_CAPTURE_EXP_DEBT-1, String(last.expDebtLeft));
+    offEnc();
+
+    // Uses stack, or the second press would be free.
+    e.gameState.expDebt=4;
+    e.wildOpponent={wildSpecies:cfg.getSpeciesById(129),wildLevel:5,maxHp:100,
+                    currentHp:100,status:'fighting',shiny:false};
+    e.wildHpAcc=100;
+    await e.instantCapture();
+    check('a second instant capture stacks',
+          e.getExpDebt()===4+cfg.INSTANT_CAPTURE_EXP_DEBT, String(e.getExpDebt()));
+
+    // Refusals.
+    e.wildOpponent.status='captured';
+    check('it refuses when no battle is running',
+          (await e.instantCapture()).reason==='no-battle');
+    e.gameState.battleMode='exp';
+    e.wildOpponent={wildSpecies:cfg.getSpeciesById(129),wildLevel:5,maxHp:100,
+                    currentHp:100,status:'fighting',shiny:false};
+    check('and in EXP mode', (await e.instantCapture()).reason==='mode');
+    e.gameState.battleMode='capture';
+
+    // Persistence and sync.
+    const norm=e.normalizeState({hasStarted:true,activeInstanceId:'a',
+      party:[{instanceId:'a',speciesId:1,level:5,totalExp:125}],expDebt:7});
+    check('the debt survives a reload', norm.expDebt===7);
+    check('nonsense is dropped',
+          e.normalizeState({hasStarted:true,activeInstanceId:'a',
+            party:[{instanceId:'a',speciesId:1,level:5,totalExp:125}],
+            expDebt:-3}).expDebt===0);
+    check('and it is bounded',
+          e.normalizeState({hasStarted:true,activeInstanceId:'a',
+            party:[{instanceId:'a',speciesId:1,level:5,totalExp:125}],
+            expDebt:1e9}).expDebt===cfg.INSTANT_CAPTURE_EXP_DEBT*10);
+    check('it rides the cloud payload',
+          typeof e.buildCloudPayload().expDebt==='number');
   }
 
   console.log('\n=== PVP rewards ===');
@@ -562,10 +891,10 @@ const win=async(sid,lvl,shiny=false)=>{
     check('the widget flags a legendary encounter', ui.includes('legendary-flag'));
     check('party rows carry a badge', ui.includes('badge-legendary'));
     check('the Game Hub partner shows it',
-          /partner-big-name[\s\S]{0,220}badge-legendary/.test(ui));
+          /partner-big-name[\s\S]{0,420}badge-legendary/.test(ui));
     check('the dex marks caught legendaries', /pokedex-num[^`]*isLegendary/.test(ui));
     check('PVP nameplates show it', pvp.includes('pvp-rarity') && pvp.includes('rarity(foe)'));
-    check('a trade offer shows it', /trade-slot-name[^`]*isLegendary/.test(trade));
+    check('a trade offer shows it', /trade-slot-name[\s\S]{0,220}isLegendary/.test(trade));
 
     // Two independent conditionals in the party row, not one ternary choosing
     // between them: a shiny legendary must show both.
@@ -621,6 +950,49 @@ const win=async(sid,lvl,shiny=false)=>{
     off2();
     const sb=seen2.find(x=>x.benched);
     check('a shiny bench evolution stays shiny', sb && sb.shiny===true, JSON.stringify(sb&&sb.shiny));
+  }
+
+  console.log('\n=== admin: clearing instant-capture EXP debt ===');
+  {
+    e.gameState.party=[]; seq=0;
+    const me=add(1,30); e.gameState.activeInstanceId=me;
+    e.gameState.expDebt=0;
+
+    check('nothing owed by default', e.getExpDebt()===0);
+    check('clearing nothing is honest about it',
+          (await e.adminClearExpDebt()).cleared===0);
+
+    e.gameState.expDebt=cfg.INSTANT_CAPTURE_EXP_DEBT;
+    check('an instant capture leaves a debt',
+          e.getExpDebt()===cfg.INSTANT_CAPTURE_EXP_DEBT);
+    check('a win under debt pays no EXP', e.consumeWinExp(40)===0);
+    check('and pays off exactly one win',
+          e.getExpDebt()===cfg.INSTANT_CAPTURE_EXP_DEBT-1);
+
+    const res=await e.adminClearExpDebt();
+    check('admin can clear it', res.ok===true);
+    check('and reports how much it wrote off',
+          res.cleared===cfg.INSTANT_CAPTURE_EXP_DEBT-1, JSON.stringify(res));
+    check('nothing is owed afterwards', e.getExpDebt()===0);
+    check('wins pay again', e.consumeWinExp(40)>0);
+
+    // The debt is the entire cost of the instant-capture button, so clearing
+    // it must not quietly hand out anything else.
+    const before=e.getActivePokemon().totalExp;
+    e.gameState.expDebt=5;
+    await e.adminClearExpDebt();
+    check('clearing grants no EXP of its own',
+          e.getActivePokemon().totalExp===before);
+
+    // A corrupt value must not become a negative debt that pays EXP forever.
+    e.gameState.expDebt=-5;
+    check('a negative debt reads as none', e.getExpDebt()===0);
+    check('and clearing it is a no-op', (await e.adminClearExpDebt()).cleared===0);
+
+    const ui=require('fs').readFileSync(ROOT+'content/flickemon-ui.js','utf8');
+    check('the panel shows the outstanding count', ui.includes('admin-debt-state'));
+    check('the button is disabled with nothing owed', /debtBtn\.disabled = owed === 0/.test(ui));
+    check('the count refreshes after clearing', /refreshDebt\(\);/.test(ui));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

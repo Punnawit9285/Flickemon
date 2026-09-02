@@ -23,6 +23,7 @@ mkdir -p "$OUT"
 cp manifest.json "$OUT/"
 mkdir -p "$OUT/content" "$OUT/background" "$OUT/icons" "$OUT/popup" "$OUT/player"
 cp content/flickemon-config.js \
+   content/flickemon-custom.js \
    content/flickemon-playlist.js \
    content/flickemon-music.js \
    content/flickemon-battle.js \
@@ -53,11 +54,14 @@ cp LEGAL.md LICENSE "$OUT/"
 # Bundled so the extension never reaches out to a third-party host to draw a
 # Pokémon. PNGs only: PROVENANCE.md documents the set for this repo, not for
 # the shipped package.
-mkdir -p "$OUT/sprites/back/shiny" "$OUT/sprites/shiny"
+mkdir -p "$OUT/sprites/back/shiny" "$OUT/sprites/shiny" "$OUT/sprites/custom"
 cp sprites/*.png            "$OUT/sprites/"
 cp sprites/back/*.png       "$OUT/sprites/back/"
 cp sprites/shiny/*.png      "$OUT/sprites/shiny/"
 cp sprites/back/shiny/*.png "$OUT/sprites/back/shiny/"
+# Player-drawn art from flickemon-custom.js. Optional by nature: an empty
+# folder is the normal case, so a missing match must not fail the build.
+cp sprites/custom/*.png     "$OUT/sprites/custom/" 2>/dev/null || true
 
 echo "Built $OUT/ — $(du -sh "$OUT" | cut -f1)"
 

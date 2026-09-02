@@ -287,6 +287,7 @@ class FlickemonPvp {
                                  class="pvp-roster-sprite${pk.shiny ? ' is-shiny' : ''}${this.engine.activeMegaForm(pk) ? ' is-mega' : ''}"/>
                             <span class="pvp-roster-name">
                                 ${esc(sp.name)}${dupe}
+                                ${sp.isCustom ? `<span class="pvp-rarity custom" title="${esc(this.config.CUSTOM_LABEL)}">${this.config.CUSTOM_MARK}</span>` : ''}
                                 ${sp.isLegendary ? '<span class="pvp-rarity legendary" title="Legendary">★</span>' : ''}
                                 ${pk.shiny ? '<span class="pvp-rarity shiny" title="Shiny">✦</span>' : ''}
                                 ${this.engine.activeMegaForm(pk) ? `<span class="pvp-rarity mega" title="${esc(this.engine.activeMegaForm(pk).name)}">◆</span>` : ''}
@@ -949,6 +950,7 @@ class FlickemonPvp {
             ? `<span class="pvp-status ${c.status}">${this.B.STATUS_LABEL[c.status]}</span>` : '';
         // Worth knowing what you are up against before choosing a move.
         const rarity = c => `${c.legendary ? '<span class="pvp-rarity legendary" title="Legendary">★</span>' : ''}`
+                          + `${c.custom ? `<span class="pvp-rarity custom" title="${esc(this.config.CUSTOM_LABEL)}">${this.config.CUSTOM_MARK}</span>` : ''}`
                           + `${c.shiny ? '<span class="pvp-rarity shiny" title="Shiny">✦</span>' : ''}`
                           + `${c.megaForm ? '<span class="pvp-rarity mega" title="Mega — deals 1.3x damage">◆</span>' : ''}`;
 
@@ -999,7 +1001,9 @@ class FlickemonPvp {
                             <span class="pvp-mon-lv">Lv${foe.level}</span>${rarity(foe)}${badge(foe)}
                             <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(foe))}" style="width:${hpPct(foe)}%"></div></div>
                         </div>
-                        <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}${foe.megaForm ? ' is-mega' : ''}" src="${this.config.getSpriteUrl(foe.spriteId ?? foe.speciesId, foe.shiny)}" alt="${esc(foe.name)}"/>
+                        <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}${foe.megaForm ? ' is-mega' : ''}" src="${this.config.getSpriteUrl(foe.spriteId ?? foe.speciesId, foe.shiny)}"
+                             onerror="this.classList.add('sprite-missing'); this.removeAttribute('src');"
+                             alt="${esc(foe.name)}"/>
                     </div>
                     <div class="pvp-side mine">
                         <img class="pvp-sprite my-sprite${me.shiny ? ' is-shiny' : ''}${me.megaForm ? ' is-mega' : ''}" src="${this.config.getBackSpriteUrl(me.spriteId ?? me.speciesId, me.shiny)}"

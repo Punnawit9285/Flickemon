@@ -119,6 +119,27 @@ class FlickemonEngine {
         return { ok: true, species, level: wildLevel, shiny: shiny === true, mega: mega || null };
     }
 
+    /**
+     * Writes off the EXP debt an instant capture ran up.
+     *
+     * The debt is the whole cost of that button, so clearing it is the one
+     * admin tool that hands out something the game charges for. It is here for
+     * testing the instant-capture path without then having to win ten battles
+     * to get back to a normal state.
+     *
+     * Reports what it cleared rather than just succeeding, so an admin can see
+     * whether there was anything to clear at all.
+     */
+    async adminClearExpDebt() {
+        const cleared = this.getExpDebt();
+        if (cleared === 0) return { ok: true, cleared: 0 };
+
+        this.gameState.expDebt = 0;
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+        return { ok: true, cleared };
+    }
+
     async adminSetPokemonLevel(level) {
         const active = this.getActivePokemon();
         if (!active) return;
@@ -198,6 +219,9 @@ class FlickemonEngine {
             // Set on a PVP loss; wins earn nothing until it passes. See
             // PVP_LOSS_LOCKOUT_MS in flickemon-config.js.
             rewardLockUntil: 0,
+            // Wins still owed to an instant capture. Counts DOWN, one per win.
+            // See INSTANT_CAPTURE_EXP_DEBT in flickemon-config.js.
+            expDebt: 0,
             pokedex: [],
             // Derived — the sum of studyMinutes below. Kept as a field because
             // the admin portal queries it as a column, and because every older
@@ -297,6 +321,13 @@ class FlickemonEngine {
         });
 
         if (s.battleMode !== this.config.BATTLE_MODES.EXP) s.battleMode = this.config.BATTLE_MODES.CAPTURE;
+
+        // Whole, non-negative, and not unbounded: the debt stacks, so a save
+        // that has been round-tripped through something that mangled it should
+        // not be able to owe a thousand wins.
+        s.expDebt = Number.isFinite(s.expDebt) && s.expDebt > 0
+            ? Math.min(Math.floor(s.expDebt), this.config.INSTANT_CAPTURE_EXP_DEBT * 10)
+            : 0;
 
         // Anything traded away is gone, whichever list it turns up in.
         const released = new Set(s.releasedIds);
@@ -636,6 +667,7 @@ class FlickemonEngine {
             teamIds: this.gameState.teamIds,
             pvpTeamIds: this.gameState.pvpTeamIds || [],
             rewardLockUntil: this.gameState.rewardLockUntil || 0,
+            expDebt: this.getExpDebt(),
             lastSyncedAt: this.gameState.lastSyncedAt,
         };
     }
@@ -799,6 +831,13 @@ class FlickemonEngine {
                 this.gameState.battleMode = cloud.battleMode === this.config.BATTLE_MODES.EXP
                     ? this.config.BATTLE_MODES.EXP
                     : this.config.BATTLE_MODES.CAPTURE;
+            }
+            // Newest write, NOT max(). max() would be the harsher rule and
+            // therefore the tempting one, but it can never reach zero: a device
+            // that still remembers a debt already paid off elsewhere would keep
+            // reimposing it forever.
+            if (Number.isFinite(cloud.expDebt)) {
+                this.gameState.expDebt = Math.max(0, Math.floor(cloud.expDebt));
             }
             // These lists speak the remote's schema: v2 sends instanceIds, v1
             // sent speciesIds. Either way, only ids naming a Pokémon this device
@@ -1692,8 +1731,14 @@ class FlickemonEngine {
             this.wildOpponent.fightDurationSeconds += secondsWatched;
 
             // Escaped check if wildLevel >= active.level + 4 after 90s
+            // A guaranteed catch does not flee. Without this the guarantee is
+            // a lie in exactly the case it matters most: rollWildLevel can put
+            // a wild up to ~14 levels above the player, so a shiny or a
+            // legendary could clear the +4 threshold and walk away at 90
+            // seconds no matter what the capture rules said.
             const levelDiff = this.wildOpponent.wildLevel - active.level;
-            if (levelDiff >= 4 && this.wildOpponent.fightDurationSeconds >= 90) {
+            if (levelDiff >= 4 && this.wildOpponent.fightDurationSeconds >= 90
+                && !this.isGuaranteedCatch(this.wildOpponent)) {
                 this.wildOpponent.status = 'escaped';
                 const partialExp = Math.round(
                     this.wildOpponent.wildLevel * this.config.ESCAPE_EXP_MULTIPLIER
@@ -1730,46 +1775,43 @@ class FlickemonEngine {
                 // Battle won. Worth pushing to the cloud right away.
                 capturedThisTick = true;
 
-                const captured = this.isCaptureMode();
+                // Winning in capture mode is no longer the same thing as
+                // catching. The roll happens once, here, at the moment the
+                // battle ends -- not per tick, and not at spawn, so a student
+                // cannot learn the outcome early and walk away from a loss.
+                const inCaptureMode = this.isCaptureMode();
+                // Rolled unconditionally, then overridden, so that a guaranteed
+                // catch does not quietly draw a different number of values from
+                // Math.random than an ordinary one does.
+                const wonRoll = Math.random() < this.config.CAPTURE_CHANCE;
+                // Shinies and legendaries ignore both the roll AND the mode.
+                // This is the one place EXP mode captures anything, and it is
+                // deliberate: the point of EXP mode is giving up the ordinary
+                // catches, not the once-a-month ones.
+                const guaranteed = this.isGuaranteedCatch(this.wildOpponent);
+                const captured = guaranteed || (inCaptureMode && wonRoll);
+
                 this.wildOpponent.status = captured ? 'captured' : 'defeated';
-                const winExp = Math.round(this.wildOpponent.wildLevel * this.getWinExpBonus());
+                // Beaten in capture mode but not caught. The status is a defeat
+                // either way -- it lost the fight -- but the widget has to say
+                // which of the two happened or a 60% miss reads as a bug.
+                this.wildOpponent.brokeFree = inCaptureMode && !captured;
+                // Worth telling apart from an ordinary catch on the results
+                // line, especially in EXP mode where a capture is otherwise
+                // impossible and would read as a bug.
+                this.wildOpponent.guaranteed = captured && guaranteed;
+
+                const winExp = this.consumeWinExp(this.wildOpponent.wildLevel);
                 this.wildOpponent.expGained = winExp;
 
                 if (captured) {
-                    // Catching a species you already own gives you a second,
-                    // separate Pokémon with its own level — both show in the
-                    // party and either can go on a PVP team. Previously the
-                    // duplicate was dropped on the floor while the widget still
-                    // announced a capture, so beating a Lv.40 of something you
-                    // held at Lv.5 was worth nothing but the EXP.
-                    const atCapacity = this.gameState.party.length >= this.config.MAX_PARTY_SIZE;
-                    const isNewSpecies = !this.gameState.party
-                        .some(p => p.speciesId === this.wildOpponent.wildSpecies.id);
-
-                    // At the backstop, a species you have never owned still gets
-                    // in — losing a Pokédex entry matters, losing a duplicate
-                    // does not.
-                    if (!atCapacity || isNewSpecies) {
-                        this.gameState.party.push({
-                            instanceId: this.generateId(),
-                            speciesId: this.wildOpponent.wildSpecies.id,
-                            level: this.wildOpponent.wildLevel,
-                            totalExp: this.config.expForLevel(this.wildOpponent.wildLevel),
-                            shiny: this.wildOpponent.shiny === true,
-                            // An admin-summoned mega arrives holding its stone,
-                            // already transformed. Anything else would make the
-                            // tool produce a mega you cannot keep.
-                            megaStones: this.wildOpponent.megaForm ? [this.wildOpponent.megaForm] : [],
-                            megaSeen: [],
-                            megaActive: this.wildOpponent.megaForm || null,
-                            megaActiveAt: this.wildOpponent.megaForm ? Date.now() : 0,
-                        });
-                    }
+                    this.addWildToParty(this.wildOpponent);
                     this.updatePokedex(this.wildOpponent.wildSpecies.id, true,
                                        this.wildOpponent.shiny === true);
                 } else {
-                    // EXP mode: the encounter still counts as SEEN — the student
-                    // did meet it — but it is not added to the party or marked caught.
+                    // EXP mode, or a capture that failed its roll: the encounter
+                    // still counts as SEEN — the student did meet it — but it is
+                    // not added to the party or marked caught.
                     this.updatePokedex(this.wildOpponent.wildSpecies.id, false);
                 }
 
@@ -1780,7 +1822,10 @@ class FlickemonEngine {
                     wildLevel: this.wildOpponent.wildLevel,
                     won: true,
                     captured,
+                    guaranteed: this.wildOpponent.guaranteed === true,
+                    brokeFree: this.wildOpponent.brokeFree === true,
                     expGained: winExp,
+                    expDebtLeft: this.getExpDebt(),
                     evolved: !!evoResult,
                     evolvedInto: evoResult || undefined,
                 }));
@@ -1795,6 +1840,129 @@ class FlickemonEngine {
         this.gameState.wildOpponent = this.wildOpponent;
         this.creditStudyMinutes(this.studySource(), secondsWatched / 60);
         await this.saveGameState({ immediate: capturedThisTick });
+    }
+
+    /**
+     * Puts a beaten wild Pokemon into the party.
+     *
+     * Shared by the ordinary 40% capture and by the instant-capture button, so
+     * the party-capacity rule cannot come to mean two different things
+     * depending on how the Pokemon was caught.
+     *
+     * Catching a species you already own gives you a second, separate Pokemon
+     * with its own level — both show in the party and either can go on a PVP
+     * team. At the capacity backstop a species you have never owned still gets
+     * in: losing a Pokedex entry matters, losing a duplicate does not.
+     */
+    addWildToParty(wild) {
+        const atCapacity = this.gameState.party.length >= this.config.MAX_PARTY_SIZE;
+        const isNewSpecies = !this.gameState.party
+            .some(p => p.speciesId === wild.wildSpecies.id);
+        if (atCapacity && !isNewSpecies) return false;
+
+        this.gameState.party.push({
+            instanceId: this.generateId(),
+            speciesId: wild.wildSpecies.id,
+            level: wild.wildLevel,
+            totalExp: this.config.expForLevel(wild.wildLevel),
+            shiny: wild.shiny === true,
+            // An admin-summoned mega arrives holding its stone, already
+            // transformed. Anything else would make the tool produce a mega you
+            // cannot keep.
+            megaStones: wild.megaForm ? [wild.megaForm] : [],
+            megaSeen: [],
+            megaActive: wild.megaForm || null,
+            megaActiveAt: wild.megaForm ? Date.now() : 0,
+        });
+        return true;
+    }
+
+    /**
+     * Whether meeting this Pokemon means keeping it, whatever the mode.
+     *
+     * A legendary is a 1% draw gated behind Lv.40; a shiny is 1 in 512.
+     * Both are the moment a student looks up from their notes
+     * and tells someone, and neither should then be taken away by a 40% roll --
+     * or by EXP mode, where the trade is meant to be "no ordinary captures for
+     * double EXP", not "your one shiny this month is a statistic".
+     */
+    isGuaranteedCatch(wild) {
+        if (!wild || !wild.wildSpecies) return false;
+        return wild.wildSpecies.isLegendary === true || wild.shiny === true;
+    }
+
+    /** Wins still owed to an instant capture, or 0. */
+    getExpDebt() {
+        const n = this.gameState.expDebt;
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    }
+
+    /**
+     * The EXP for one win, and the bookkeeping that goes with it.
+     *
+     * A win under an instant-capture debt is worth nothing and pays off one of
+     * the ten. The debt is spent by WINNING, not by capturing: a Pokemon that
+     * broke free was still beaten, so it counts. Escapes do not — nothing was
+     * defeated — which also stops "let the high-level ones flee" being a way to
+     * wait out the debt for free.
+     */
+    consumeWinExp(wildLevel) {
+        const debt = this.getExpDebt();
+        if (debt > 0) {
+            this.gameState.expDebt = debt - 1;
+            return 0;
+        }
+        return Math.round(wildLevel * this.getWinExpBonus());
+    }
+
+    /**
+     * Catches the wild Pokemon on the spot, and books the cost.
+     *
+     * The button exists because a 40% roll on a shiny or a legendary that took
+     * two and a half minutes to beat is a genuinely bad moment. This turns that
+     * into a decision the student makes deliberately and pays for, rather than
+     * one the dice make for them.
+     *
+     * No EXP for the capture itself — nothing was defeated — and the next
+     * INSTANT_CAPTURE_EXP_DEBT wins award none either. Capturing still works
+     * normally throughout: the debt costs levels, never Pokemon.
+     */
+    async instantCapture() {
+        const wild = this.wildOpponent;
+        if (!wild || wild.status !== 'fighting') return { ok: false, reason: 'no-battle' };
+        if (!this.isCaptureMode()) return { ok: false, reason: 'mode' };
+
+        wild.status = 'captured';
+        wild.brokeFree = false;
+        wild.instant = true;
+        wild.currentHp = 0;
+        wild.expGained = 0;
+        this.wildHpAcc = 0;
+
+        const joined = this.addWildToParty(wild);
+        this.updatePokedex(wild.wildSpecies.id, true, wild.shiny === true);
+        this.gameState.expDebt = this.getExpDebt() + this.config.INSTANT_CAPTURE_EXP_DEBT;
+
+        this.encounterListeners.forEach(cb => cb({
+            wildSpecies: wild.wildSpecies,
+            wildLevel: wild.wildLevel,
+            won: true,
+            captured: true,
+            instant: true,
+            joined,
+            expGained: 0,
+            expDebtLeft: this.getExpDebt(),
+            evolved: false,
+        }));
+
+        if (this.respawnTimer) clearTimeout(this.respawnTimer);
+        this.respawnTimer = setTimeout(() => this.spawnWildOpponent(), 3000);
+
+        this.gameState.wildOpponent = wild;
+        this.emitWild();
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+        return { ok: true, joined, debt: this.getExpDebt() };
     }
 
     spawnWildOpponent() {
@@ -1838,22 +2006,31 @@ class FlickemonEngine {
             }
         }
 
+        // Custom Pokemon that asked to be met. Checked before the stage table
+        // rather than folded into it, so the 50/40/10 split stays exactly what
+        // it says it is -- and so a roster with nothing marked `wild: true`
+        // leaves the encounter code behaving identically to before.
+        const wildCustoms = this.config.customRoster().filter(s => s.wild);
+        if (wildCustoms.length > 0 && Math.random() < this.config.CUSTOM_ENCOUNTER_CHANCE) {
+            return wildCustoms[Math.floor(Math.random() * wildCustoms.length)];
+        }
+
         const nonLegendaries = this.config.POKEMON_REGISTRY.filter(s => !s.isLegendary);
+
+        // The table comes from how far the PARTNER has come. A first-form
+        // partner meets first forms only; a fully evolved one draws the whole
+        // ladder. See ENCOUNTER_STAGE_WEIGHTS.
+        const weights = this.config.encounterWeightsFor(active ? active.speciesId : 1);
         const roll = Math.random();
         let cumulative = 0;
-        let selectedStage = 1;
+        let selectedStage = weights[0].stage;
 
-        for (const entry of this.config.ENCOUNTER_STAGE_WEIGHTS) {
+        for (const entry of weights) {
             cumulative += entry.weight;
             if (roll <= cumulative) {
                 selectedStage = entry.stage;
                 break;
             }
-        }
-
-        // Stage 3 locked until Level 30+
-        if (selectedStage === 3 && activeLevel < 30) {
-            selectedStage = Math.random() <= 0.85 ? 1 : 2;
         }
 
         const candidates = nonLegendaries.filter(s => s.evolutionStage === selectedStage);
@@ -2035,6 +2212,14 @@ class FlickemonEngine {
     }
 
     updatePokedex(speciesId, caught, shiny = false) {
+        // The Pokedex is the 1,025 real ones and stays that way. A custom
+        // Pokemon is caught, kept, levelled and battled like any other, but it
+        // is not a dex entry: the grid iterates POKEMON_REGISTRY so it would
+        // never render, and getCaughtCount would quietly inflate "N / 1,025"
+        // with something no other trainer could ever match. One guard here
+        // keeps every downstream count honest.
+        if (this.config.isCustomSpeciesId(speciesId)) return;
+
         const existing = this.gameState.pokedex.find(e => e.speciesId === speciesId);
         if (existing) {
             if (caught) existing.caught = true;

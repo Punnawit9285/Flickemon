@@ -201,6 +201,7 @@ class FlickemonUI {
         const expProg = this.engine.getExpProgress(active);
         const isCaptureMode = this.engine.isCaptureMode();
         const reward = this.engine.getActiveReward ? this.engine.getActiveReward() : null;
+        const expDebt = this.engine.getExpDebt ? this.engine.getExpDebt() : 0;
 
         // onVideoProgress fires ~4x/sec, and rebuilding innerHTML each time tore
         // down every button mid-click and wiped the open popover — the widget
@@ -209,7 +210,20 @@ class FlickemonUI {
         // change rebuilds.
         const signature = [
             activeSpecies.id, active.level, isCaptureMode,
+            // The MEGA form, not just the species. getSpeciesForPokemon returns
+            // the base species by design, so a mega toggle changes none of the
+            // other fields here -- the signature matched, the widget took the
+            // patch path, and patchWidgetView does not touch the partner
+            // sprite. The HUD went on showing the ordinary sprite until some
+            // unrelated structural change happened to force a rebuild.
+            this.engine.activeMegaForm ? (this.engine.activeMegaForm(active)?.key ?? '-') : '-',
             wild ? wild.wildSpecies.id : '-', wild ? wild.status : '-',
+            // Shiny decides the sprite AND whether the catch is guaranteed, so
+            // two encounters with the same species must not share a signature.
+            wild ? (wild.shiny === true) : '-',
+            // Structural: it adds a line and takes the catch button away. It
+            // moves only on a win or a button press, never on a video tick.
+            expDebt,
             // Only the type, not the countdown: the minutes are patched in
             // place, so a ticking clock must not force a rebuild every minute.
             reward ? reward.type : '-',
@@ -296,18 +310,70 @@ class FlickemonUI {
                                 <div class="hp-bar-track">
                                     <div class="hp-bar-fill" style="width: ${Math.round((wild.currentHp / wild.maxHp) * 100)}%;"></div>
                                 </div>
+                                ${wild.wildSpecies.isCustom ? `<div class="custom-flag">${this.config.CUSTOM_MARK} ${this.config.CUSTOM_LABEL}!</div>` : ''}
                                 ${wild.wildSpecies.isLegendary ? '<div class="legendary-flag">★ Legendary!</div>' : ''}
                                 ${wild.shiny ? '<div class="shiny-flag">✦ Shiny!</div>' : ''}
                                 ${wild.megaForm ? `<div class="mega-flag">◆ ${this.wildMegaName(wild)}!</div>` : ''}
                                 <div class="status-line ${wild.status}">
-                                    ${wild.status === 'captured' ? `🏆 Captured! (+${wild.expGained || 0} EXP)` : wild.status === 'defeated' ? `💥 Defeated! (+${wild.expGained || 0} EXP)` : wild.status === 'escaped' ? `💨 Escaped! (+${wild.expGained || 0} EXP)` : `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`}
+                                    ${wild.status === 'captured'
+                                        ? `🏆 ${wild.guaranteed ? 'Caught — too rare to lose!' : 'Caught!'}${wild.instant ? '' : ` (+${wild.expGained || 0} EXP)`}`
+                                        : wild.status === 'defeated'
+                                        // A capture that missed its roll is still a win —
+                                        // it just did not end with a Pokémon. Saying so is
+                                        // what stops a 60% miss reading as a lost catch.
+                                        ? `${wild.brokeFree ? '💨 It broke free and fled!' : '💥 Defeated!'} (+${wild.expGained || 0} EXP)`
+                                        : wild.status === 'escaped'
+                                        ? `💨 Escaped! (+${wild.expGained || 0} EXP)`
+                                        : `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`}
                                 </div>
+                                ${wild.status === 'fighting' ? (
+                                    // Shown in BOTH modes: this is the one thing
+                                    // EXP mode does catch, and a capture there
+                                    // with no warning reads as a bug.
+                                    //
+                                    // It also replaces the button rather than
+                                    // sitting beside it. Never offer to sell
+                                    // what is already free — ten wins of EXP for
+                                    // nothing you were not getting anyway.
+                                    (wild.wildSpecies.isLegendary || wild.shiny)
+                                    ? `<div class="guaranteed-flag">Guaranteed catch — just win</div>`
+                                    : isCaptureMode
+                                    ? `<button class="catch-now-btn"
+                                            title="Catch it now, without finishing the fight. Costs the EXP from your next ${this.config.INSTANT_CAPTURE_EXP_DEBT} wins.">
+                                        ${pokeballSvg} CATCH NOW
+                                    </button>`
+                                    : '') : ''}
+                                ${expDebt > 0 ? `
+                                    <div class="exp-debt-flag"
+                                         title="You spent this on an instant capture. Catching still works normally.">
+                                        No EXP for ${expDebt} more win${expDebt === 1 ? '' : 's'}
+                                    </div>` : ''}
                             </div>
                         ` : '<div class="searching-text">Searching for wild Pokémon...</div>'}
                     </div>
                 </div>
             </div>
         `;
+
+        // Irreversible, and expensive enough to be worth a beat of thought:
+        // ten wins is roughly twenty-five minutes of lectures with nothing to
+        // show for them. Confirm rather than let a mis-click spend it.
+        card.querySelector('.catch-now-btn')?.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const cost = this.config.INSTANT_CAPTURE_EXP_DEBT;
+            const owed = this.engine.getExpDebt();
+            if (!confirm(
+                `Catch it now, without finishing the fight?\n\n`
+                + `Your next ${cost} wins will award no EXP`
+                + (owed > 0 ? ` — on top of the ${owed} you already owe.` : '.')
+                + `\nCatching still works normally the whole time.`
+            )) return;
+            const res = await this.engine.instantCapture();
+            if (res.ok && !res.joined) {
+                alert('Your party is full, so it could not join — but it is '
+                    + 'recorded in your Pokédex.');
+            }
+        });
 
         // Each segment selects its own mode directly, rather than one button
         // cycling — with two states a switch shows both options and which is on.
@@ -799,6 +865,7 @@ class FlickemonUI {
                             <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(active), active.shiny)}" alt="${activeSpecies.name}" class="partner-big-sprite${active.shiny ? ' is-shiny' : ''}${this.engine.activeMegaForm(active) ? ' is-mega' : ''}"/>
                             <h2 class="partner-big-name">
                                 ${activeSpecies.name}
+                                ${activeSpecies.isCustom ? `<span class="badge badge-custom" title="${this.config.CUSTOM_LABEL}">${this.config.CUSTOM_LABEL}</span>` : ''}
                                 ${activeSpecies.isLegendary ? '<span class="badge badge-legendary" title="Legendary">★</span>' : ''}
                                 ${active.shiny ? '<span class="badge badge-shiny" title="Shiny">✦</span>' : ''}
                                 ${this.engine.activeMegaForm(active) ? `<span class="badge badge-mega" title="${this.engine.activeMegaForm(active).name} — deals 1.3x damage">MEGA</span>` : ''}
@@ -879,6 +946,7 @@ class FlickemonUI {
                                     <div class="party-row-info">
                                         <span class="party-row-name">
                                             ${sp.name}${dupe}
+                                            ${sp.isCustom ? `<span class="badge badge-custom" title="${this.config.CUSTOM_LABEL}">${this.config.CUSTOM_LABEL}</span>` : ''}
                                             ${sp.isLegendary ? '<span class="badge badge-legendary" title="Legendary">★</span>' : ''}
                                             ${pk.shiny ? '<span class="badge badge-shiny" title="Shiny">✦</span>' : ''}
                                             ${isActive ? '<span class="badge badge-active">ACTIVE</span>' : ''}
@@ -1128,6 +1196,13 @@ class FlickemonUI {
                         </div>
                         <p class="admin-stone-result"></p>
 
+                        <div class="admin-summon-row">
+                            <span class="admin-field-label">EXP debt:</span>
+                            <span class="admin-debt-state"></span>
+                            <button class="admin-debt-btn">Clear</button>
+                        </div>
+                        <p class="admin-debt-result"></p>
+
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="font-size:0.85rem; font-weight:600;">Set Level:</span>
                             <input type="number" class="admin-lvl-input" min="1" max="100" value="5" style="width:60px; padding:4px; border-radius:4px; border:1px solid #ccc; background:var(--flick-card-bg); color:var(--flick-text);"/>
@@ -1349,8 +1424,12 @@ class FlickemonUI {
         // only after an admin check has already passed.
         const speciesList = adminPanel.querySelector('#flickemon-species-list');
         if (speciesList) {
-            speciesList.innerHTML = this.config.POKEMON_REGISTRY
-                .map(sp => `<option value="${sp.name}">#${sp.id}</option>`).join('');
+            speciesList.innerHTML = [
+                // Custom ones first: a roster of three is far more likely to be
+                // what an admin is reaching for than dex entry 412.
+                ...this.config.customRoster().map(sp => `<option value="${sp.name}">custom</option>`),
+                ...this.config.POKEMON_REGISTRY.map(sp => `<option value="${sp.name}">#${sp.id}</option>`),
+            ].join('');
         }
 
         const summonBtn = adminPanel.querySelector('.admin-summon-btn');
@@ -1361,12 +1440,13 @@ class FlickemonUI {
             const shiny = adminPanel.querySelector('.admin-summon-shiny').checked;
             if (!raw) return;
 
-            // Accept a dex number, "#25", or a name in any casing.
+            // Accept a dex number, "#25", or a name in any casing. By name
+            // this reaches the custom roster too, which is how a homemade
+            // Pokemon gets into a game without being marked `wild`.
             const byNumber = Number(raw.replace(/^#/, ''));
             const species = Number.isFinite(byNumber) && byNumber > 0
                 ? this.config.getSpeciesById(byNumber)
-                : this.config.POKEMON_REGISTRY.find(
-                    sp => sp.name.toLowerCase() === raw.toLowerCase());
+                : this.config.getSpeciesByName(raw);
 
             if (!species) {
                 summonResult.textContent = `No Pokémon called "${raw}".`;
@@ -1389,6 +1469,33 @@ class FlickemonUI {
         // same scene a 10% PVP win produces.
         const stoneBtn = adminPanel.querySelector('.admin-stone-btn');
         const stoneResult = adminPanel.querySelector('.admin-stone-result');
+        // Shown live, because the number is the entire point of the control:
+        // an admin needs to see whether a debt is outstanding before clearing it.
+        const debtState = adminPanel.querySelector('.admin-debt-state');
+        const debtResult = adminPanel.querySelector('.admin-debt-result');
+        const debtBtn = adminPanel.querySelector('.admin-debt-btn');
+
+        const refreshDebt = () => {
+            const owed = this.engine.getExpDebt();
+            if (debtState) {
+                debtState.textContent = owed > 0
+                    ? `${owed} win${owed === 1 ? '' : 's'} with no EXP`
+                    : 'none owed';
+                debtState.className = `admin-debt-state ${owed > 0 ? 'owing' : ''}`;
+            }
+            if (debtBtn) debtBtn.disabled = owed === 0;
+        };
+        refreshDebt();
+
+        debtBtn?.addEventListener('click', async () => {
+            const res = await this.engine.adminClearExpDebt();
+            debtResult.textContent = res.cleared > 0
+                ? `Cleared ${res.cleared} win${res.cleared === 1 ? '' : 's'} of debt.`
+                : 'There was no debt to clear.';
+            debtResult.className = `admin-debt-result ${res.cleared > 0 ? 'good' : ''}`;
+            refreshDebt();
+        });
+
         stoneBtn?.addEventListener('click', async () => {
             const before = this.engine.getActivePokemon();
             const res = await this.engine.adminGrantMegaStone();
@@ -1629,6 +1736,13 @@ class FlickemonUI {
         const rows = pairs => `<dl class="guide-rows">${pairs
             .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
 
+        // Rendered from ENCOUNTER_STAGE_WEIGHTS rather than written out, so
+        // retuning the table cannot leave this paragraph quietly wrong.
+        const stageWord = { 1: 'first forms', 2: 'middle forms', 3: 'final forms' };
+        const encounterMix = tier => (c.ENCOUNTER_STAGE_WEIGHTS[tier] || [])
+            .map(w => `${pct(w.weight)} ${stageWord[w.stage] || `stage ${w.stage}`}`)
+            .join(', ');
+
         // Mega lives on its own branch for now. Render the section only when
         // the data is actually present, so this guide never describes a feature
         // the running build does not have.
@@ -1661,11 +1775,24 @@ class FlickemonUI {
                     takes about <strong>${bal.battleMinutes} minutes</strong> of watching, whatever
                     its level — a stronger opponent is not slower, just worth more.</p>
                     ${rows([
-                        ['Capture mode', `Defeated Pokémon join your party. ${c.BATTLE_WIN_EXP_BONUS}x EXP per win.`],
-                        ['EXP mode', `No captures, but ${c.EXP_MODE_WIN_EXP_BONUS}x EXP — about twice as fast.`],
+                        ['Capture mode', `A defeated Pokémon joins your party ${pct(c.CAPTURE_CHANCE)} of the time. ${c.BATTLE_WIN_EXP_BONUS}x EXP per win either way.`],
+                        ['EXP mode', `No ordinary captures, but ${c.EXP_MODE_WIN_EXP_BONUS}x EXP — about twice as fast.`],
+                        ['Shinies and legendaries', 'Always caught, in either mode, and they never flee.'],
                         ['Escapes', `A Pokémon ${4}+ levels above you flees after 90 seconds, leaving ${pct(c.ESCAPE_EXP_MULTIPLIER)} EXP.`],
+                        ['Catch now', `Skips the fight and the roll. Costs the EXP from your next ${c.INSTANT_CAPTURE_EXP_DEBT} wins.`],
                     ])}
-                    <p class="guide-note">Switch modes any time from the widget header.</p>`)}
+                    <p>Who you meet depends on how far your partner has come — the world
+                    grows up with it.</p>
+                    ${rows([
+                        ['Partner on its first form', encounterMix(c.ENCOUNTER_TIERS.BASIC)],
+                        ['Partner on its middle form', encounterMix(c.ENCOUNTER_TIERS.MIDDLE)],
+                        ['Partner fully evolved', encounterMix(c.ENCOUNTER_TIERS.FINAL)],
+                    ])}
+                    <p class="guide-note">A win that does not end in a capture is still a win —
+                    the EXP is the same. <strong>Catch now</strong> appears on the battle box in
+                    capture mode; while you are paying for one, catching carries on working
+                    normally, including the ${pct(c.CAPTURE_CHANCE)} roll. Switch modes any time
+                    from the widget header.</p>`)}
 
                 ${section('Levelling and evolution', `
                     <p>Evolution is by level: <strong>Lv.${c.EVOLUTION_LEVELS.stage1ToStage2}</strong>

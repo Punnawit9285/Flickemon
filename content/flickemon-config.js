@@ -43,6 +43,13 @@ function getAssetUrl(path) {
 }
 
 function getSpriteUrl(pokemonId, shiny = false) {
+    const custom = getCustomSpecies(pokemonId);
+    if (custom) {
+        // A shiny variant is optional: without one, a shiny custom just wears
+        // its ordinary art rather than showing a broken image.
+        const file = (shiny && custom.shinySprite) || custom.sprite;
+        return bundledUrl(`sprites/custom/${file}`) || `sprites/custom/${file}`;
+    }
     const rel = shiny ? `sprites/shiny/${pokemonId}.png` : `sprites/${pokemonId}.png`;
     const remote = shiny ? `${SPRITE_BASE_URL}/shiny/${pokemonId}.png`
                          : `${SPRITE_BASE_URL}/${pokemonId}.png`;
@@ -50,6 +57,13 @@ function getSpriteUrl(pokemonId, shiny = false) {
 }
 
 function getBackSpriteUrl(pokemonId, shiny = false) {
+    const custom = getCustomSpecies(pokemonId);
+    if (custom) {
+        // No back sprite is the normal case for hand-drawn art, so fall through
+        // to the front view rather than asking the author for two pictures.
+        const file = custom.backSprite || (shiny && custom.shinySprite) || custom.sprite;
+        return bundledUrl(`sprites/custom/${file}`) || `sprites/custom/${file}`;
+    }
     const rel = shiny ? `sprites/back/shiny/${pokemonId}.png` : `sprites/back/${pokemonId}.png`;
     const remote = shiny ? `${SPRITE_BASE_URL}/back/shiny/${pokemonId}.png`
                          : `${SPRITE_BASE_URL}/back/${pokemonId}.png`;
@@ -255,6 +269,24 @@ const EXP_MODE_WIN_EXP_BONUS = 12;
 // worth 18x a win, and 86% of all EXP came from losing fights.
 const ESCAPE_EXP_MULTIPLIER = 0.5;
 
+// ── Capture ──
+//
+// Beating a wild Pokemon in capture mode used to catch it every time. At the
+// battle length above that is roughly 24 guaranteed catches an hour, which
+// filled the party and the Pokedex faster than anything else in the game gave
+// the student a reason to want. The roll is what makes meeting a rare species
+// worth doing twice.
+const CAPTURE_CHANCE = 0.40;
+
+// The instant-capture button skips both the fight and the roll, and is paid for
+// in the only currency the game has: the next N wins award no EXP. Since every
+// point of EXP in Flickemon comes from a win bonus, that is about N battles of
+// levelling given up for one guaranteed catch.
+//
+// Uses STACK rather than refresh. Refreshing to N would make every press after
+// the first one free, which is the same as having no cost at all.
+const INSTANT_CAPTURE_EXP_DEBT = 10;
+
 const BATTLE_MODES = { CAPTURE: 'capture', EXP: 'exp' };
 
 // ── Team & EXP share ──
@@ -294,11 +326,42 @@ const EVOLUTION_LEVELS = {
 
 // ─────────────────────────── Encounter Weights ───────────────────────────
 
-const ENCOUNTER_STAGE_WEIGHTS = [
-    { stage: 1, weight: 0.88 },
-    { stage: 2, weight: 0.11 },
-    { stage: 3, weight: 0.01 },
-];
+// What the wild population looks like depends on how far the PARTNER has come,
+// not on one fixed global curve. A student starting out meets nothing but
+// first forms; a fully evolved partner draws a world that has grown up with it.
+//
+// This replaced a flat 88/11/1 plus a "stage 3 locked until Lv.30" gate. The
+// gate was a blunt stand-in for the same idea and would now contradict it: a
+// two-stage line is fully evolved at Lv.20, and the table below promises that
+// partner its 10%.
+const ENCOUNTER_TIERS = { BASIC: 'basic', MIDDLE: 'middle', FINAL: 'final' };
+
+const ENCOUNTER_STAGE_WEIGHTS = {
+    [ENCOUNTER_TIERS.BASIC]:  [{ stage: 1, weight: 1.00 }],
+    [ENCOUNTER_TIERS.MIDDLE]: [{ stage: 1, weight: 0.90 }, { stage: 2, weight: 0.10 }],
+    [ENCOUNTER_TIERS.FINAL]:  [{ stage: 1, weight: 0.50 }, { stage: 2, weight: 0.40 },
+                               { stage: 3, weight: 0.10 }],
+};
+
+/**
+ * Which table a partner draws from.
+ *
+ * Deliberately asymmetric, and the asymmetry is the whole point. A partner is
+ * "done" by isFullyEvolved -- Raticate and Tauros never evolve again, so they
+ * belong in the same tier as Charizard even though they are not stage 3.
+ * The WILD side buckets by evolutionStage instead, because that is what "meet
+ * a stage 2" means when you are looking at the encounter.
+ */
+function encounterTierFor(speciesId) {
+    if (isFullyEvolved(speciesId)) return ENCOUNTER_TIERS.FINAL;
+    const sp = getSpeciesById(speciesId);
+    return sp && sp.evolutionStage >= 2 ? ENCOUNTER_TIERS.MIDDLE : ENCOUNTER_TIERS.BASIC;
+}
+
+function encounterWeightsFor(speciesId) {
+    return ENCOUNTER_STAGE_WEIGHTS[encounterTierFor(speciesId)]
+        || ENCOUNTER_STAGE_WEIGHTS[ENCOUNTER_TIERS.BASIC];
+}
 
 // ─────────────────────────── Species Registry ───────────────────────────
 
@@ -2074,10 +2137,192 @@ function rollMegaStone() {
     return Math.random() < MEGA_STONE_CHANCE;
 }
 
+// ─────────────────────────── Custom species ───────────────────────────
+//
+// Player-authored Pokemon from content/flickemon-custom.js. Deliberately NOT
+// in POKEMON_REGISTRY: the Pokedex grid, the caught count and the encounter
+// stage buckets all iterate that array, and a homemade Pokemon has no business
+// in any of them. Everything else -- party, battles, PVP, trade -- resolves
+// species through getSpeciesById, so joining there is all it takes to be a
+// first-class Pokemon everywhere it matters.
+
+// What a custom Pokemon is called on screen: a third rarity tag beside
+// Legendary and Shiny, worn by every custom Pokemon automatically rather than
+// opted into. Kept here rather than written into each render site, so renaming
+// it is one edit.
+const CUSTOM_LABEL = 'ตัวซีเคร็ท';
+// The compact form, for nameplates and trade slots with no room for a word.
+// Text presentation, like the ★ and ✦ it sits beside -- not an emoji.
+const CUSTOM_MARK = '\u2756';
+
+// How often a wild encounter is drawn from the custom roster instead of the
+// real one. Applies ONLY to entries marked `wild: true`; with none marked, the
+// branch never fires and the encounter table is exactly what it was.
+//
+// One in ten thousand, which at roughly 24 encounters an hour is one sighting
+// per ~420 hours of lectures. That is deliberately a rumour rather than a drop
+// rate: custom Pokemon are meant to be handed out by an admin over a trade, and
+// this exists so that "could it just turn up?" has an answer other than no.
+const CUSTOM_ENCOUNTER_CHANCE = 1 / 10000;
+
+// Far above the mega forms (10033-10326) with room to spare, so nothing here
+// can ever collide with a real dex number or a form id.
+const CUSTOM_ID_BASE = 900000;
+const CUSTOM_ID_RANGE = 100000;
+
+/**
+ * A stable id for a custom Pokemon, derived from its key.
+ *
+ * Derived rather than assigned by position, because position is exactly what
+ * an author changes: inserting an entry at the top of the file would otherwise
+ * renumber every Pokemon below it and silently turn every saved one into
+ * something else. FNV-1a over the key -- the same trick the PVP codes use --
+ * means the id depends on nothing but the name the author chose.
+ */
+function customIdFor(key) {
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) {
+        h ^= key.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return CUSTOM_ID_BASE + ((h >>> 0) % CUSTOM_ID_RANGE);
+}
+
+/**
+ * Reads flickemon-custom.js into real species objects.
+ *
+ * One bad entry is skipped and named in the console rather than taken down the
+ * whole roster with it -- the file is meant to be edited by hand, and a typo in
+ * entry 4 must not cost you entries 1 to 3. Memoised because every party row
+ * render asks for it.
+ */
+let customCache = null;
+const customProblems = [];
+
+function normalizeCustomRoster() {
+    if (customCache) return customCache;
+
+    const raw = (typeof window !== 'undefined' && Array.isArray(window.FlickemonCustom))
+        ? window.FlickemonCustom : [];
+    const chart = (typeof window !== 'undefined' && window.FlickemonBattle
+                   && window.FlickemonBattle.TYPE_CHART) || null;
+
+    const out = [];
+    const seenKeys = new Set();
+    const seenIds = new Map();
+    customProblems.length = 0;
+    const reject = (i, why) => customProblems.push(`entry ${i + 1}: ${why}`);
+
+    raw.forEach((entry, i) => {
+        if (!entry || typeof entry !== 'object') return reject(i, 'is not an entry');
+
+        const key = typeof entry.key === 'string' ? entry.key.trim() : '';
+        if (!key) return reject(i, 'needs a key');
+        if (seenKeys.has(key)) return reject(i, `key "${key}" is already used above`);
+
+        const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+        if (!name) return reject(i, `"${key}" needs a name`);
+
+        const types = Array.isArray(entry.types)
+            ? entry.types.filter(t => typeof t === 'string').map(t => t.toLowerCase())
+            : [];
+        if (types.length < 1 || types.length > 2) {
+            return reject(i, `"${key}" needs one or two types`);
+        }
+        // Only checked when the type chart is loaded; a config-only context
+        // (the tests, the guide) must not fail for want of the battle module.
+        if (chart) {
+            const bad = types.find(t => !(t in chart));
+            if (bad) return reject(i, `"${key}" has an unknown type "${bad}"`);
+        }
+
+        const st = entry.stats || {};
+        const stat = (v) => Number.isFinite(v) && v >= 1 && v <= 255 ? Math.round(v) : null;
+        const baseStats = {
+            hp: stat(st.hp), attack: stat(st.attack),
+            defense: stat(st.defense), speed: stat(st.speed),
+        };
+        if (Object.values(baseStats).some(v => v === null)) {
+            return reject(i, `"${key}" needs hp, attack, defense and speed, each 1-255`);
+        }
+
+        if (typeof entry.sprite !== 'string' || !entry.sprite.trim()) {
+            return reject(i, `"${key}" needs a sprite filename`);
+        }
+
+        const id = Number.isFinite(entry.id) ? entry.id : customIdFor(key);
+        if (id < CUSTOM_ID_BASE || id >= CUSTOM_ID_BASE + CUSTOM_ID_RANGE) {
+            return reject(i, `"${key}" has an id outside the custom range`);
+        }
+        if (seenIds.has(id)) {
+            // Astronomically unlikely, but silence here would mean one Pokemon
+            // quietly becoming another in an existing save.
+            return reject(i, `"${key}" collides with "${seenIds.get(id)}" — rename one key`);
+        }
+
+        seenKeys.add(key);
+        seenIds.set(id, key);
+        out.push({
+            id, key, name, types, baseStats,
+            // Both spellings, because `isLegendary` is what the field is called
+            // everywhere else in the codebase and `legendary` is what anyone
+            // writing this file by hand types first.
+            isLegendary: entry.isLegendary === true || entry.legendary === true,
+            isCustom: true,
+            // Only ones that ask for it are ever drawn in the wild, so a roster
+            // that does not opt in changes nothing about the game.
+            wild: entry.wild === true,
+            sprite: entry.sprite.trim(),
+            shinySprite: typeof entry.shinySprite === 'string' ? entry.shinySprite.trim() : null,
+            backSprite: typeof entry.backSprite === 'string' ? entry.backSprite.trim() : null,
+            evolvesTo: entry.evolvesTo != null ? entry.evolvesTo : null,
+            evolvesAt: Number.isFinite(entry.evolvesAt) ? entry.evolvesAt : null,
+            // Used only for the encounter stage buckets, which customs sit
+            // outside of. Present so nothing downstream reads undefined.
+            evolutionStage: entry.evolvesTo != null ? 1 : 3,
+        });
+    });
+
+    if (customProblems.length && typeof console !== 'undefined') {
+        console.warn('[Flickémon custom] skipped:\n  ' + customProblems.join('\n  '));
+    }
+    customCache = out;
+    return customCache;
+}
+
+function customRoster() { return normalizeCustomRoster(); }
+function customRosterProblems() { normalizeCustomRoster(); return [...customProblems]; }
+function isCustomSpeciesId(id) {
+    return Number.isFinite(id) && id >= CUSTOM_ID_BASE && id < CUSTOM_ID_BASE + CUSTOM_ID_RANGE;
+}
+function getCustomSpecies(id) {
+    if (!isCustomSpeciesId(id)) return undefined;
+    return normalizeCustomRoster().find(s => s.id === id);
+}
+function getCustomByKey(key) {
+    return normalizeCustomRoster().find(s => s.key === key);
+}
+
 // ─────────────────────────── Helper Utilities ───────────────────────────
 
+// 1,025 entries, and getSpeciesById is on the path of every party row, every
+// battle tick and every Pokedex cell. Built once, on first use, because the
+// registry is a const that is never mutated.
+let registryById = null;
+
 function getSpeciesById(id) {
-    return POKEMON_REGISTRY.find(p => p.id === id);
+    if (!registryById) {
+        registryById = new Map(POKEMON_REGISTRY.map(p => [p.id, p]));
+    }
+    return registryById.get(id) || getCustomSpecies(id);
+}
+
+/** Species by name, across the real roster and the custom one. Case-insensitive. */
+function getSpeciesByName(name) {
+    const want = String(name || '').trim().toLowerCase();
+    if (!want) return undefined;
+    return POKEMON_REGISTRY.find(p => p.name.toLowerCase() === want)
+        || normalizeCustomRoster().find(p => p.name.toLowerCase() === want);
 }
 
 function getSpeciesByStage(stage) {
@@ -2085,10 +2330,28 @@ function getSpeciesByStage(stage) {
 }
 
 function getEvolution(fromId) {
+    // A custom Pokemon carries its own evolution rather than living in
+    // EVOLUTION_CHAINS, so that editing flickemon-custom.js never means
+    // editing this file too. `evolvesTo` accepts another custom key or a plain
+    // Pokedex number, which is what makes "my creature evolves into Dragonite"
+    // one line instead of a schema.
+    if (isCustomSpeciesId(fromId)) {
+        const me = getCustomSpecies(fromId);
+        if (!me || me.evolvesTo == null) return undefined;
+        const toId = typeof me.evolvesTo === 'string'
+            ? (getCustomByKey(me.evolvesTo) || {}).id
+            : me.evolvesTo;
+        if (!Number.isFinite(toId) || !getSpeciesById(toId)) return undefined;
+        return { fromId, toId, level: me.evolvesAt || EVOLUTION_LEVELS.stage1ToStage2 };
+    }
     return EVOLUTION_CHAINS.find(e => e.fromId === fromId);
 }
 
 function getAllEvolutions(fromId) {
+    if (isCustomSpeciesId(fromId)) {
+        const one = getEvolution(fromId);
+        return one ? [one] : [];
+    }
     return EVOLUTION_CHAINS.filter(e => e.fromId === fromId);
 }
 
@@ -2172,6 +2435,8 @@ window.FlickemonConfig = {
     BATTLE_WIN_EXP_BONUS,
     EXP_MODE_WIN_EXP_BONUS,
     ESCAPE_EXP_MULTIPLIER,
+    CAPTURE_CHANCE,
+    INSTANT_CAPTURE_EXP_DEBT,
     BATTLE_MODES,
     MAX_TEAM_SIZE,
     MAX_PARTY_SIZE,
@@ -2182,6 +2447,21 @@ window.FlickemonConfig = {
     MAX_LEVEL,
     EVOLUTION_LEVELS,
     ENCOUNTER_STAGE_WEIGHTS,
+    ENCOUNTER_TIERS,
+    CUSTOM_LABEL,
+    CUSTOM_MARK,
+    CUSTOM_ID_BASE,
+    CUSTOM_ID_RANGE,
+    CUSTOM_ENCOUNTER_CHANCE,
+    customIdFor,
+    customRoster,
+    customRosterProblems,
+    isCustomSpeciesId,
+    getCustomSpecies,
+    getCustomByKey,
+    getSpeciesByName,
+    encounterTierFor,
+    encounterWeightsFor,
     POKEMON_REGISTRY,
     EVOLUTION_CHAINS,
     STARTER_OPTIONS,

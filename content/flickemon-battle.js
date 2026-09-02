@@ -197,6 +197,11 @@ function toCombatant(pokemon, species, config) {
         // reach the opponent's screen or half the point of owning one is lost.
         shiny: pokemon.shiny === true,
         legendary: species.isLegendary === true,
+        // Someone's own Pokémon. Travels for the same reason `legendary` does:
+        // the label is half of what makes it worth showing off, and the
+        // opponent has no other way to know. Render-only — nothing in the turn
+        // arithmetic reads it.
+        custom: species.isCustom === true,
         // A mega is NOT cosmetic — see damageMult below — but like shiny it has
         // to reach the opponent's screen, and for the same reason.
         megaForm: mega ? mega.key : null,

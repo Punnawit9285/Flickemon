@@ -24,6 +24,7 @@
             ],
             "js": [
                 "content/flickemon-config.js",
+                "content/flickemon-custom.js",
                 "content/flickemon-playlist.js",
                 "content/flickemon-music.js",
                 "content/flickemon-battle.js",
@@ -46,6 +47,7 @@
                 "sprites/back/*.png",
                 "sprites/shiny/*.png",
                 "sprites/back/shiny/*.png",
+                "sprites/custom/*.png",
                 "icons/*.png"
             ],
             "matches": [

@@ -135,12 +135,48 @@ console.log('\n=== the manifest actually exposes them ===');
         'relying on * crossing a / would be a guess');
     check('shiny sprites are exposed', res.includes('sprites/shiny/*.png'), JSON.stringify(res));
     check('shiny back sprites are exposed', res.includes('sprites/back/shiny/*.png'), JSON.stringify(res));
+    check('custom sprites are exposed', res.includes('sprites/custom/*.png'), JSON.stringify(res));
 
     check('exposure is limited to the lecture site',
         JSON.stringify(war[0].matches) === JSON.stringify(['https://flick.docchula.com/*']),
         JSON.stringify(war[0].matches));
     check('the content script host list still matches',
         JSON.stringify(m.content_scripts[0].matches) === JSON.stringify(war[0].matches));
+}
+
+console.log('\n=== the art in flickemon-custom.js is actually there ===');
+{
+    // A typo in a `sprite:` filename is the likeliest mistake an author makes,
+    // and its only symptom in the game is a broken image. Read the real file --
+    // not a fixture -- so this fails here instead of on someone's screen.
+    for (const k of Object.keys(require.cache)) delete require.cache[k];
+    global.window = {};
+    delete global.chrome;
+    require(R + 'content/flickemon-custom.js');
+    require(R + 'content/flickemon-config.js');
+    const cfg = global.window.FlickemonConfig;
+
+    check('the shipped roster has no rejected entries',
+        cfg.customRosterProblems().length === 0,
+        cfg.customRosterProblems().join('; '));
+
+    const MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const missing = [], notPng = [];
+    for (const sp of cfg.customRoster()) {
+        for (const file of [sp.sprite, sp.shinySprite, sp.backSprite].filter(Boolean)) {
+            const f = path.join(R, 'sprites/custom', file);
+            if (!fs.existsSync(f)) { missing.push(`${sp.key}: ${file}`); continue; }
+            const fd = fs.openSync(f, 'r');
+            const head = Buffer.alloc(8);
+            fs.readSync(fd, head, 0, 8, 0);
+            fs.closeSync(fd);
+            if (!head.equals(MAGIC)) notPng.push(`${sp.key}: ${file}`);
+        }
+    }
+    check('every declared sprite is on disk', missing.length === 0, missing.join(', '));
+    check('and every one is a real PNG', notPng.length === 0, notPng.join(', '));
+    check('none of them leaked into the Pokédex',
+        !cfg.POKEMON_REGISTRY.some(sp => sp.isCustom));
 }
 
 console.log('\n=== the build ships them ===');
@@ -150,15 +186,24 @@ console.log('\n=== the build ships them ===');
     check('build.sh copies every sprite variant',
         ['cp sprites/*.png', 'cp sprites/back/*.png',
          'cp sprites/shiny/*.png', 'cp sprites/back/shiny/*.png'].every(g => build.includes(g)));
+    // Player-drawn art. An empty folder is the normal case, so the copy must
+    // not be able to fail the build when nothing matches.
+    check('build.sh copies custom sprites, tolerating none',
+        build.includes('cp sprites/custom/*.png') && build.includes('|| true'));
 
     // The script exists to ship only what the manifest references; a recursive
     // copy would sweep in PROVENANCE.md alongside the images.
-    const DIRS = ['dist/sprites', 'dist/sprites/back', 'dist/sprites/shiny', 'dist/sprites/back/shiny'];
-    const SUBDIRS = new Set(['back', 'shiny']);
+    const DIRS = ['dist/sprites', 'dist/sprites/back', 'dist/sprites/shiny',
+                  'dist/sprites/back/shiny', 'dist/sprites/custom'];
+    const SUBDIRS = new Set(['back', 'shiny', 'custom']);
     const stray = DIRS.flatMap(d => fs.existsSync(R + d)
         ? fs.readdirSync(R + d).filter(f => !f.endsWith('.png') && !SUBDIRS.has(f))
         : [d + ' missing']);
     check('nothing but PNGs ships in the sprite folder', stray.length === 0, stray.join(', '));
+    // sprites/custom/ carries a README for whoever is drawing the art. It is
+    // documentation for the repo, not an asset for the package.
+    check('the custom sprite README stays out of the build',
+        !fs.existsSync(R + 'dist/sprites/custom/README.md'));
 
     // dist/ is gitignored, so a fresh clone has nothing to inspect until
     // ./build.sh has run. Skipping is honest; failing would just be noise.

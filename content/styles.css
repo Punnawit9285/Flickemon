@@ -110,6 +110,10 @@
      * that tells you it is deliberate and not a rendering fault. */
     --flick-shiny: var(--ion-color-warning, #f5b301);
     --flick-legendary: var(--ion-color-secondary, #7c3aed);
+    /* The third tag: someone's own Pokémon. Its own colour, because reusing
+     * the legendary purple would say "legendary" and these are independent —
+     * a custom Pokémon can be legendary, shiny, both, or neither. */
+    --flick-custom: var(--ion-color-success, #17a673);
 
     /* A QR code is read by a camera, not a person. It must stay dark-on-white
      * whatever the site is wearing, or a dark theme stops it scanning — so
@@ -1527,9 +1531,36 @@
 }
 .signin-gate-skip-note.visible { display: block; }
 
-/* EXP mode: battle won without a capture */
+/* Battle won without a capture: EXP mode, or a capture that missed its roll. */
 .status-line.defeated { color: var(--flick-primary); font-weight: 700; }
 
+/* Instant capture. Deliberately not styled as a primary action — it is the
+   expensive way to catch something, offered rather than encouraged. */
+.catch-now-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-top: 4px; padding: 3px 8px;
+    border: 1px solid var(--flick-primary);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--flick-primary);
+    font-size: 0.62rem; font-weight: 800; letter-spacing: 0.04em;
+    cursor: pointer;
+}
+.catch-now-btn:hover { background: var(--flick-primary); color: var(--flick-on-primary); }
+
+/* A legendary catches itself; say so where the button would have been. */
+.guaranteed-flag {
+    margin-top: 4px;
+    font-size: 0.6rem; font-weight: 800; letter-spacing: 0.03em;
+    color: var(--flick-legendary);
+}
+
+/* What that capture cost, counting down. */
+.exp-debt-flag {
+    margin-top: 3px;
+    font-size: 0.6rem; font-weight: 700;
+    color: var(--flick-danger);
+}
 
 
 /* The header gets tight on narrow widgets — drop to just the icon. */
@@ -1629,6 +1660,15 @@
 
 .pvp-rarity.mega { color: var(--flick-mega); }
 
+/* A combatant whose art this build does not have — someone else's custom
+   Pokémon. The stats travelled with it, so the battle is right; only the
+   picture is missing, and a silhouette says that better than a broken icon. */
+.pvp-sprite.sprite-missing {
+    background: var(--flick-fill);
+    border: 2px dashed var(--flick-border);
+    border-radius: 10px;
+}
+
 /* Stones held, listed under the level on a party row. */
 .party-row-stones {
     display: block;
@@ -1664,6 +1704,23 @@
     .partner-big-sprite.is-mega, .pvp-sprite.is-mega,
     .partner-big-sprite.is-shiny.is-mega, .pvp-sprite.is-shiny.is-mega { animation: none; }
 }
+/* The third rarity tag, worn by every Pokémon from flickemon-custom.js. Unlike
+   the other two it carries a word rather than a glyph: ★ and ✦ are read at a
+   glance because everyone already knows them, and this one does not have that
+   history to lean on. */
+.badge-custom {
+    background: var(--flick-custom);
+    color: var(--flick-on-primary);
+    letter-spacing: 0;
+}
+.custom-flag {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    color: var(--flick-custom);
+}
+.pvp-rarity.custom { color: var(--flick-custom); }
+
 /* Legendary and shiny are independent, and a Pokémon can be both — the two
    badges sit side by side rather than one replacing the other. */
 .badge-legendary {
@@ -2714,3 +2771,27 @@
     cursor: pointer;
 }
 .music-btn-wide:hover { background: var(--flick-primary); color: var(--flick-on-primary); }
+
+/* Admin: outstanding instant-capture debt. */
+.admin-debt-state {
+    flex: 1;
+    font-size: 0.8rem;
+    color: var(--flick-text-muted);
+}
+.admin-debt-state.owing { color: var(--flick-capture); font-weight: 700; }
+.admin-debt-btn {
+    background: var(--flick-primary);
+    color: var(--flick-on-primary);
+    border: none;
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 700;
+}
+.admin-debt-btn:disabled {
+    background: var(--flick-border);
+    color: var(--flick-text-muted);
+    cursor: default;
+}
+.admin-debt-result { margin: 0 0 8px; font-size: 0.75rem; min-height: 1em; }
+.admin-debt-result.good { color: var(--flick-success); }

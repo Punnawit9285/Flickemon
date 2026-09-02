@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Flickémon PVP sandbox</title>
+<link rel="stylesheet" href="../../content/styles.css"/>
+<style>
+    :root { color-scheme: light dark; }
+    body {
+        margin: 0; padding: 20px;
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #f4f5f7; color: #16171a;
+    }
+    @media (prefers-color-scheme: dark) { body { background: #16171a; color: #e9eaec; } }
+    .sb-head { max-width: 900px; margin: 0 auto 14px; }
+    .sb-title { margin: 0 0 4px; font-size: 1.05rem; font-weight: 800; }
+    .sb-sub { margin: 0; font-size: 0.78rem; opacity: 0.75; line-height: 1.5; }
+    .sb-who {
+        display: inline-block; margin: 8px 8px 0 0; padding: 3px 10px;
+        border-radius: 999px; font-size: 0.72rem; font-weight: 800;
+        background: #2f6fed; color: #fff;
+    }
+    .sb-who.b { background: #d1476b; }
+    .sb-bar { max-width: 900px; margin: 0 auto 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .sb-bar button, .sb-bar a {
+        padding: 5px 10px; border-radius: 6px; border: 1px solid currentColor;
+        background: transparent; color: inherit; font-size: 0.74rem; font-weight: 700;
+        cursor: pointer; text-decoration: none;
+    }
+    /* The widget injects only where there is a lecture to watch, and study time
+       is measured from a <video>. This is that video: one silent frame, looping,
+       so the engine ticks and battles actually resolve. */
+    .sb-stage { max-width: 900px; margin: 0 auto; }
+    video { width: 320px; border-radius: 8px; background: #000; display: block; }
+    .scroll-area { margin-top: 14px; }
+</style>
+</head>
+<body>
+    <div class="sb-head">
+        <p class="sb-title">Flickémon PVP sandbox</p>
+        <p class="sb-sub">
+            The real content scripts, with the extension's <code>chrome.*</code> APIs and its
+            service worker faked. The battle document lives in localStorage instead of
+            Firestore. Open this page twice — once as <code>?p=a</code>, once as
+            <code>?p=b</code> — and the two tabs are two separate trainers.
+        </p>
+        <span class="sb-who" id="sb-who">…</span>
+        <span class="sb-sub" id="sb-code"></span>
+    </div>
+
+    <div class="sb-bar">
+        <a href="?p=a">Open as Player A</a>
+        <a href="?p=b">Open as Player B</a>
+        <button id="sb-fill">Give me a party</button>
+        <button id="sb-play">Play / pause the video</button>
+        <button id="sb-wipe">Wipe this player's save</button>
+        <button id="sb-wipe-lobbies">Clear all lobbies</button>
+    </div>
+
+    <div class="sb-stage">
+        <video id="sb-video" loop muted playsinline></video>
+        <div class="scroll-area"></div>
+    </div>
+
+    <script src="sandbox.js"></script>
+    <script src="../../content/flickemon-config.js"></script>
+    <script src="../../content/flickemon-playlist.js"></script>
+    <script src="../../content/flickemon-music.js"></script>
+    <script src="../../content/flickemon-battle.js"></script>
+    <script src="../../content/flickemon-engine.js"></script>
+    <script src="../../content/flickemon-ui.js"></script>
+    <script src="../../content/flickemon-pvp.js"></script>
+    <script src="../../content/flickemon-trade.js"></script>
+    <script src="../../content/content-script.js"></script>
+    <script src="boot.js"></script>
+</body>
+</html>
