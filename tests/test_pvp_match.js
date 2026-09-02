@@ -180,6 +180,76 @@ console.log('\n=== the arena stacks in the right order ===');
         'a gradient scene should not have picked up an image');
 }
 
+console.log('\n=== a nameplate never covers a Pokémon ===');
+{
+    // The foe's plate and YOUR Pokémon share the left side of the arena. At
+    // four stacked rows the plate grew tall enough to sit on top of the
+    // Pokémon being played — which is what a player noticed first.
+    const css = require('fs').readFileSync(ROOT + 'content/styles.css', 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (sel) => {
+        for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+            if (m[1].split(',').map(x => x.trim()).includes(sel)) return m[2];
+        }
+        return '';
+    };
+    const px = (sel, prop) => {
+        const m = new RegExp(prop + ':\\s*(\\d+)px').exec(rule(sel));
+        return m ? +m[1] : null;
+    };
+
+    for (const [label, scene, info, sprite] of [
+        ['desktop', px('.pvp-scene', 'height'), '.pvp-plateinfo.foe-info', '.pvp-sprite.my-sprite'],
+    ]) {
+        const top = px(info, 'top'), cap = px(info, 'max-height');
+        const h = px(sprite, 'height'), bottom = px(sprite, 'bottom');
+        check(`${label}: the plate declares a height cap`, cap !== null,
+            'without one a long name wraps and undoes the layout');
+        const plateEnds = top + cap, spriteStarts = scene - bottom - h;
+        check(`${label}: the plate stops above your Pokémon`,
+            spriteStarts > plateEnds,
+            `plate ends ${plateEnds}, sprite starts ${spriteStarts}`);
+    }
+
+    check('the cap is enforced, not advisory',
+        /\.pvp-plateinfo\.foe-info[^}]*overflow:\s*hidden/.test(css),
+        'max-height alone lets content spill over the sprite');
+    check('a long name truncates rather than wrapping',
+        /\.pvp-mon-name[^}]*white-space:\s*nowrap/.test(css)
+        && /\.pvp-mon-name[^}]*text-overflow:\s*ellipsis/.test(css));
+
+    const pvpSrc = require('fs').readFileSync(ROOT + 'content/flickemon-pvp.js', 'utf8');
+    const plateRows = (pvpSrc.match(/class="pvp-plate-top"/g) || []).length;
+    check('both plates use the compact two-row layout', plateRows === 2, `${plateRows} found`);
+    check('the marks sit on the name row', /pvp-plate-top[\s\S]{0,400}pvp-plate-marks/.test(pvpSrc));
+}
+
+console.log('\n=== levelling up makes a Pokémon stronger, not just tougher ===');
+{
+    // HP scaled with level and the other three stats did not, so a level 5
+    // Pikachu outran a level 100 Snorlax — permanently.
+    const lo = B.toCombatant({ level: 5 }, cfg.getSpeciesById(25), cfg);
+    const hi = B.toCombatant({ level: 100 }, cfg.getSpeciesById(25), cfg);
+    for (const stat of ['attack', 'defense', 'speed', 'maxHp']) {
+        check(`${stat} grows with level`, hi[stat] > lo[stat], `${lo[stat]} -> ${hi[stat]}`);
+    }
+    check('the formula matches the games',
+        lo.speed === cfg.calculateRealStat(cfg.getSpeciesById(25).baseStats.speed, 5),
+        `${lo.speed}`);
+
+    const pika5 = B.toCombatant({ level: 5 }, cfg.getSpeciesById(25), cfg);
+    const snor100 = B.toCombatant({ level: 100 }, cfg.getSpeciesById(143), cfg);
+    check('a level 100 Snorlax outspeeds a level 5 Pikachu',
+        B.effectiveSpeed(snor100) > B.effectiveSpeed(pika5),
+        `${B.effectiveSpeed(snor100)} vs ${B.effectiveSpeed(pika5)}`);
+
+    // Base stats must still decide who is fast AT THE SAME level.
+    const pika50 = B.toCombatant({ level: 50 }, cfg.getSpeciesById(25), cfg);
+    const snor50 = B.toCombatant({ level: 50 }, cfg.getSpeciesById(143), cfg);
+    check('at equal level the faster species is still faster',
+        B.effectiveSpeed(pika50) > B.effectiveSpeed(snor50));
+}
+
 console.log('\n=== the battle screen renders every state a player can reach ===');
 {
     const src = require('fs').readFileSync(ROOT + 'content/flickemon-pvp.js', 'utf8');

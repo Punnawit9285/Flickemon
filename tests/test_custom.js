@@ -159,8 +159,15 @@ const member = { instanceId: 'c1', speciesId: elder.id, level: 40,
                  shiny: false, megaStones: [], megaSeen: [], megaActive: null };
 const c = B.toCombatant(member, elder, cfg);
 check('a combatant is built', c.name === 'Mosscat Elder');
+// Scaled to the level, the same way maxHp is on the next line — attack,
+// defense and speed used to be the raw base stat at every level.
 check('carrying its own stats, not a lookup',
-      c.attack === 85 && c.defense === 78 && c.speed === 84);
+      c.attack === cfg.calculateRealStat(85, 40)
+      && c.defense === cfg.calculateRealStat(78, 40)
+      && c.speed === cfg.calculateRealStat(84, 40),
+      `${c.attack}/${c.defense}/${c.speed}`);
+check('and those stats grow with level',
+      B.toCombatant({ ...member, level: 80 }, elder, cfg).attack > c.attack);
 check('its HP comes from its own base', c.maxHp === cfg.calculateRealMaxHp(90, 40));
 check('its types travel', c.types.join('/') === 'grass/dark');
 check('it gets a real moveset', c.moves.length > 0, JSON.stringify(c.moves.map(m => m.name)));

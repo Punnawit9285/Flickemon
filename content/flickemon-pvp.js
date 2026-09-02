@@ -1082,13 +1082,13 @@ class FlickemonPvp {
                                 <div class="pvp-plate-top">
                                     <span class="pvp-mon-name">${esc(foe.name)}</span>
                                     <span class="pvp-mon-lv">Lv${foe.level}</span>
+                                    <span class="pvp-plate-marks">${rarity(foe)}${badge(foe)}</span>
                                 </div>
-                                <div class="pvp-plate-marks">${rarity(foe)}${badge(foe)}</div>
                                 <div class="pvp-hp-row">
                                     <span class="pvp-hp-tag">HP</span>
                                     <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(foe))}" style="width:${hpPct(foe)}%"></div></div>
+                                    ${this.renderBalls(foeTeam, foeIndex)}
                                 </div>
-                                ${this.renderBalls(foeTeam, foeIndex)}
                             </div>
                         </div>
 
@@ -1098,14 +1098,15 @@ class FlickemonPvp {
                                 <div class="pvp-plate-top">
                                     <span class="pvp-mon-name">${esc(me.name)}</span>
                                     <span class="pvp-mon-lv">Lv${me.level}</span>
+                                    <span class="pvp-plate-marks">${rarity(me)}${badge(me)}</span>
                                 </div>
-                                <div class="pvp-plate-marks">${rarity(me)}${badge(me)}</div>
                                 <div class="pvp-hp-row">
                                     <span class="pvp-hp-tag">HP</span>
                                     <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(me))}" style="width:${hpPct(me)}%"></div></div>
                                 </div>
-                                <div class="pvp-hp-num">${me.hp}/${me.maxHp}</div>
-                                ${this.renderBalls(myTeam, myIndex)}
+                                    <span class="pvp-hp-num">${me.hp}/${me.maxHp}</span>
+                                    ${this.renderBalls(myTeam, myIndex)}
+                                </div>
                             </div>
                         </div>
                     </div>

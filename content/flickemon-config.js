@@ -344,6 +344,20 @@ function calculateRealMaxHp(baseHp, level) {
     return Math.floor(((2 * baseHp) * level) / 100) + level + 10;
 }
 
+/**
+ * Attack, Defense and Speed at a level — the games' formula without IVs, EVs
+ * or natures, which this game does not model.
+ *
+ * HP scaled with level and these three did not, so a Pokémon's Attack was its
+ * raw base stat whether it was level 5 or level 100. Damage still grew, because
+ * the damage formula has its own level term, but Speed did not — which meant a
+ * level 5 Pikachu outran a level 100 Snorlax, permanently. Levelling up has to
+ * make a Pokémon faster, not only tougher.
+ */
+function calculateRealStat(baseStat, level) {
+    return Math.floor(((2 * baseStat) * level) / 100) + 5;
+}
+
 function expForLevel(level) {
     return Math.pow(level, 3);
 }
@@ -2486,6 +2500,7 @@ window.FlickemonConfig = {
     MAX_PARTY_SIZE,
     TEAM_EXP_SHARE,
     calculateRealMaxHp,
+    calculateRealStat,
     expForLevel,
     levelFromExp,
     MAX_LEVEL,

@@ -77,9 +77,16 @@ check('starter sprite fits the narrowest card',
 // absolutely on a scene rather than sitting in a row, so "widths must sum to
 // less than the modal" no longer describes it. What still has to hold is that
 // a nameplate cannot grow across the scene and end up under its own Pokémon.
-const infoWidth = /max-width:\s*(\d+)%/.exec(block('.pvp-plateinfo'));
+// The cap moved from max-width to an explicit width when the plate was
+// compacted; either expresses the same rule — a nameplate must not span the
+// arena, because the foe's plate shares a side with your own Pokémon.
+const infoBlock = block('.pvp-plateinfo');
+const infoPct = /(?:max-)?width:\s*(\d+)%/.exec(infoBlock);
 check('a nameplate is capped to part of the arena',
-    infoWidth && +infoWidth[1] <= 65, infoWidth ? infoWidth[1] + '%' : 'uncapped');
+    infoPct && +infoPct[1] <= 65, infoPct ? infoPct[1] + '%' : 'uncapped');
+check('and to an absolute width as well',
+    /max-width:\s*\d+px/.test(infoBlock),
+    'a percentage alone lets it sprawl on a wide screen');
 
 const sceneH = /height:\s*(\d+)px/.exec(block('.pvp-scene'));
 check('the arena has a fixed height for the platforms to sit on',

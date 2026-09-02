@@ -333,9 +333,11 @@ function toCombatant(pokemon, species, config) {
         level: pokemon.level,
         maxHp,
         hp: maxHp,
-        attack: species.baseStats.attack,
-        defense: species.baseStats.defense,
-        speed: species.baseStats.speed,
+        // Scaled to the level, like HP above. Using the raw base stat here meant
+        // a Pokémon never got stronger or faster for levelling — only bulkier.
+        attack: config.calculateRealStat(species.baseStats.attack, pokemon.level),
+        defense: config.calculateRealStat(species.baseStats.defense, pokemon.level),
+        speed: config.calculateRealStat(species.baseStats.speed, pokemon.level),
         status: null,          // burn | paralyze | poison | sleep | freeze | toxic
         flinched: false,
         // Stage changes live together so every stat is boostable the same way.

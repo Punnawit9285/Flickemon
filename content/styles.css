@@ -1978,7 +1978,7 @@
    float. All gradients: no image to load, no request to make. */
 .pvp-scene {
     position: relative;
-    height: 232px;
+    height: 250px;
     overflow: hidden;
     background: var(--flick-arena-sky-bot);
 }
@@ -2074,8 +2074,8 @@
 .pvp-plate { z-index: 3; }
 .pvp-sprite, .pvp-plateinfo { z-index: 4; }
 
-.pvp-plate.foe-plate { right: 6%;  top: 96px;    width: 132px; height: 26px; }
-.pvp-plate.my-plate  { left: 4%;   bottom: 14px; width: 160px; height: 32px; }
+.pvp-plate.foe-plate { right: 6%;  top: 92px;    width: 132px; height: 26px; }
+.pvp-plate.my-plate  { left: 4%;   bottom: 12px; width: 160px; height: 32px; }
 
 /* Sprites sit ON the platforms — the bottom edges are matched deliberately. */
 .pvp-sprite {
@@ -2083,23 +2083,50 @@
     image-rendering: pixelated;
     filter: drop-shadow(0 3px 0 var(--flick-arena-shade));
 }
-.pvp-sprite.foe-sprite { right: 10%; top: 20px;    width: 96px;  height: 96px; }
-.pvp-sprite.my-sprite  { left: 8%;   bottom: 26px; width: 120px; height: 120px; }
+.pvp-sprite.foe-sprite { right: 10%; top: 14px;    width: 96px;  height: 96px; }
+.pvp-sprite.my-sprite  { left: 8%;   bottom: 24px; width: 120px; height: 120px; }
 .pvp-sprite.sprite-missing { background: var(--flick-fill); border-radius: 8px; }
 
-/* Nameplates, on the opposite corner from their Pokémon. */
-.pvp-plateinfo { position: absolute; max-width: 58%; }
-.pvp-plateinfo.foe-info { left: 8px;  top: 10px; }
-.pvp-plateinfo.my-info  { right: 8px; bottom: 10px; }
+/* Nameplates, on the opposite corner from their Pokémon.
+   
+   The foe's plate and YOUR Pokémon share the left side, so the plate has to
+   stay inside the top band: at four stacked rows it grew tall enough to cover
+   the Pokémon you are playing. Two rows and a height cap keep it there — the
+   cap matters because a long species name would otherwise wrap and undo it. */
+.pvp-plateinfo {
+    position: absolute;
+    width: 54%;
+    max-width: 260px;
+}
+/* overflow:hidden makes the cap real rather than advisory. If something ever
+   does grow past it, clipping a poké ball is a far better failure than
+   covering the Pokémon the player is trying to watch. */
+.pvp-plateinfo.foe-info { left: 8px;  top: 8px;    max-height: 88px; overflow: hidden; }
+.pvp-plateinfo.my-info  { right: 8px; bottom: 8px; max-height: 88px; overflow: hidden; }
 
 .pvp-plate-top {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
-    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
 }
+/* The name yields before anything else — a level or a status badge cut in half
+   tells you less than a truncated name does. */
+.pvp-mon-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.pvp-plate-marks { display: inline-flex; align-items: center; flex-shrink: 0; }
 .pvp-plate-marks:empty { display: none; }
-.pvp-hp-row { display: flex; align-items: center; gap: 5px; margin-top: 4px; }
+.pvp-hp-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+}
 .pvp-hp-tag {
     font-size: 0.5rem;
     font-weight: 800;
@@ -2112,12 +2139,15 @@
 }
 
 @media (max-width: 460px) {
-    .pvp-scene { height: 196px; }
-    .pvp-sprite.foe-sprite { width: 76px; height: 76px; top: 16px; }
+    .pvp-scene { height: 214px; }
+    .pvp-sprite.foe-sprite { width: 76px; height: 76px; top: 12px; }
     .pvp-sprite.my-sprite { width: 92px; height: 92px; bottom: 20px; }
-    .pvp-plate.foe-plate { top: 78px; width: 100px; height: 20px; }
-    .pvp-plate.my-plate { bottom: 12px; width: 120px; height: 24px; }
-    .pvp-plateinfo { max-width: 62%; }
+    .pvp-plate.foe-plate { top: 74px; width: 100px; height: 20px; }
+    .pvp-plate.my-plate { bottom: 10px; width: 120px; height: 24px; }
+    /* Narrower AND shorter: the two halves are closer together here, so the
+       plate has less room before it reaches the other trainer's Pokémon. */
+    .pvp-plateinfo { width: 56%; max-height: 74px; }
+    .pvp-mon-name { font-size: 0.74rem; }
 }
 
 .pvp-nameplate { order: 2; }
@@ -2181,7 +2211,13 @@
 .pvp-hp-fill.ok { background: var(--flick-hp-ok); }
 .pvp-hp-fill.warn { background: var(--flick-hp-warn); }
 .pvp-hp-fill.low { background: var(--flick-hp-low); }
-.pvp-hp-num { font-size: 0.64rem; font-weight: 700; text-align: right; color: var(--flick-arena-ink); margin-top: 2px; }
+.pvp-hp-num {
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: var(--flick-arena-ink);
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
 
 /* Log */
 .pvp-log {
