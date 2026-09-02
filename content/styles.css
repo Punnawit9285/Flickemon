@@ -1730,6 +1730,11 @@
 @media (prefers-reduced-motion: reduce) {
     .partner-big-sprite.is-mega, .pvp-sprite.is-mega,
     .partner-big-sprite.is-shiny.is-mega, .pvp-sprite.is-shiny.is-mega { animation: none; }
+    /* The Mega Evolve button's pulse and the transformation burst. Both are
+       decoration on top of a state that is already stated in words — the
+       button says MEGA READY and the log says what happened — so removing
+       them costs nothing. */
+    .pvp-mega-btn.armed, .pvp-sprite.just-megaed { animation: none; }
 }
 /* The third rarity tag, worn by every Pokémon from flickemon-custom.js. Unlike
    the other two it carries a word rather than a glyph: ★ and ✦ are read at a
@@ -2409,6 +2414,79 @@
 .pvp-team-chip.is-mega img { filter: drop-shadow(0 0 5px var(--flick-mega-glow)); }
 .pvp-roster-sprite.is-mega { filter: drop-shadow(0 0 5px var(--flick-mega-glow)); }
 .pvp-bench-mon.is-mega { border-color: var(--flick-mega); }
+
+/* ── Shiny, everywhere a Pokémon is drawn small ──
+
+   The battle sprites and the roster already twinkled. The line-up chips and the
+   switch bench drew the shiny picture with nothing to say it was one, which at
+   48px makes a shiny Gyarados just a red Gyarados. A glow rather than the
+   twinkle animation: a strip of six chips all pulsing out of phase is noise. */
+.pvp-team-chip.is-shiny img,
+.pvp-bench-mon.is-shiny img { filter: drop-shadow(0 0 5px var(--flick-shiny)); }
+.pvp-bench-mon.is-shiny { border-color: var(--flick-shiny); }
+
+/* Holding a stone, not yet transformed — the ◆ on a line-up chip. */
+.pvp-team-chip { position: relative; }
+.pvp-chip-stone {
+    position: absolute;
+    top: -2px; right: -2px;
+    font-size: 0.6rem;
+    line-height: 1;
+    color: var(--flick-mega);
+    text-shadow: 0 0 4px var(--flick-mega-glow);
+}
+.pvp-team-chip.has-stone img { filter: drop-shadow(0 0 4px var(--flick-mega-glow)); }
+/* Both at once: the shiny colour wins on the sprite, since the stone has its
+   own mark in the corner and shiny has nothing else to say it. */
+.pvp-team-chip.has-stone.is-shiny img { filter: drop-shadow(0 0 5px var(--flick-shiny)); }
+
+/* ── MEGA EVOLVE ──
+
+   Above the moves, because it is a decision about the turn rather than a fifth
+   thing to attack with. Full width so it cannot be mistaken for one of the four. */
+.pvp-mega-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    margin-bottom: 7px;
+    padding: 7px 10px;
+    border: 3px solid var(--flick-mega);
+    background: transparent;
+    color: var(--flick-mega);
+    font-family: "Courier New", monospace;
+    font-weight: 800;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+}
+.pvp-mega-btn .mega-stone-svg { width: 16px; height: 16px; flex-shrink: 0; }
+.pvp-mega-btn:hover:not(:disabled) { background: var(--flick-mega-glow); }
+.pvp-mega-btn:disabled { opacity: 0.45; cursor: default; }
+/* Armed: filled, so there is no doubt the next move spends it. */
+.pvp-mega-btn.armed {
+    background: var(--flick-mega);
+    color: var(--flick-on-type);
+    animation: mega-armed 1.1s ease-in-out infinite;
+}
+@keyframes mega-armed {
+    0%, 100% { box-shadow: 0 0 0 0 var(--flick-mega-glow); }
+    50%      { box-shadow: 0 0 0 5px transparent; }
+}
+
+/* The transformation itself: a flash on the sprite, played once. Deliberately
+   NOT the fullscreen mega overlay — that runs for seconds and would cover the
+   arena mid-turn while the other trainer sits polling and waiting. */
+.pvp-sprite.just-megaed { animation: mega-burst 1.2s ease-out 1; }
+@keyframes mega-burst {
+    0%   { filter: drop-shadow(0 0 0 var(--flick-mega)) brightness(3); transform: scale(1.18); }
+    35%  { filter: drop-shadow(0 0 14px var(--flick-mega)) brightness(1.6); transform: scale(0.94); }
+    70%  { filter: drop-shadow(0 0 8px var(--flick-mega-glow)) brightness(1.2); transform: scale(1.05); }
+    100% { filter: drop-shadow(0 3px 0 var(--flick-arena-shade)); transform: scale(1); }
+}
+/* Armed but unspent, on a nameplate: hollow where a transformed mega is solid. */
+.pvp-rarity.mega.armed { opacity: 0.75; }
 .pvp-prize-label { font-size: 0.7rem; font-weight: 800; color: var(--flick-text); text-align: center; }
 .pvp-prize-detail { font-size: 0.58rem; color: var(--flick-text-muted); text-align: center; line-height: 1.35; }
 

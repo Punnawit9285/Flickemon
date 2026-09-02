@@ -294,15 +294,23 @@ function makeRng(seedStr) {
 function toCombatant(pokemon, species, config) {
     const maxHp = config.calculateRealMaxHp(species.baseStats.hp, pokemon.level);
 
-    // A mega is resolved here rather than passed in, because everything needed
-    // is already to hand: the stone list lives on the party member and the
-    // roster lives on the config. Same three conditions the engine's
-    // activeMegaForm applies — selected, owned, and belonging to this species.
-    const mega = pokemon.megaActive
-        && Array.isArray(pokemon.megaStones)
-        && pokemon.megaStones.includes(pokemon.megaActive)
-        ? (config.megaFormsFor(species.id) || []).find(f => f.key === pokemon.megaActive) || null
-        : null;
+    // The mega this Pokémon could become — ARMED, not applied. A combatant
+    // enters a PVP battle in its base form no matter what the party screen
+    // shows, and transforms only when its trainer spends their one Mega
+    // Evolution on it. See the mega step in resolveTurn.
+    //
+    // Which form: the one the party has toggled on, if it is owned and belongs
+    // to this species — the same three conditions the engine's activeMegaForm
+    // applies. Failing that, the first owned usable form, so a player who has
+    // never touched the toggle still gets to Mega Evolve. The toggle only has
+    // to decide anything for the nine species with more than one form, which is
+    // what it is for.
+    const forms = config.megaFormsFor(species.id) || [];
+    const owned = Array.isArray(pokemon.megaStones) ? pokemon.megaStones : [];
+    const mega = (pokemon.megaActive && owned.includes(pokemon.megaActive)
+        ? forms.find(f => f.key === pokemon.megaActive) : null)
+        || forms.find(f => owned.includes(f.key))
+        || null;
 
     return {
         speciesId: species.id,
@@ -315,20 +323,31 @@ function toCombatant(pokemon, species, config) {
         // opponent has no other way to know. Render-only — nothing in the turn
         // arithmetic reads it.
         custom: species.isCustom === true,
-        // A mega is NOT cosmetic — see damageMult below — but like shiny it has
-        // to reach the opponent's screen, and for the same reason.
-        megaForm: mega ? mega.key : null,
-        // What to draw. Equal to speciesId unless megaed, so a reader that has
-        // never heard of megas still renders every combatant correctly.
-        spriteId: mega ? mega.spriteId : species.id,
-        // The multiplier travels as a NUMBER rather than being looked up from
-        // megaForm on each side. Two clients whose rosters disagree about a key
-        // would otherwise compute different damage from the same document — one
-        // applying 1.30 and the other 1, desyncing HP with no error anywhere.
-        // A self-describing number makes the document the single source of
-        // truth, which is what the rest of the wire format already assumes.
-        damageMult: mega ? config.MEGA_DAMAGE_MULTIPLIER : 1,
-        name: mega ? mega.name : species.name,
+        // The form this Pokémon is CURRENTLY in, which at build time is never a
+        // mega. Everything that draws a mega — the ◆ mark, is-mega, the team
+        // chips — keys off this and so needs no changes to stay correct.
+        megaForm: null,
+
+        // The armed form, carried in full rather than as a key to look up.
+        // Two clients whose rosters disagree about a key would otherwise
+        // transform into different Pokémon from the same document — one showing
+        // Mega Charizard X and the other a plain Charizard, with no error
+        // anywhere. Self-describing fields make the document the single source
+        // of truth, which is what the rest of the wire format already assumes.
+        //
+        // What is NOT carried is any boosted number: the battle document is
+        // written by the opponent too, so a stat written here is a stat someone
+        // can forge. The boost lives in code and is applied on read — see
+        // MEGA_BOOST below.
+        megaKey: mega ? mega.key : null,
+        megaName: mega ? mega.name : null,
+        megaSprite: mega ? mega.spriteId : null,
+        megaOn: false,
+
+        // What to draw. Follows megaForm, so a reader that has never heard of
+        // megas still renders every combatant correctly.
+        spriteId: species.id,
+        name: species.name,
         types: [...species.types],
         level: pokemon.level,
         maxHp,
@@ -434,7 +453,7 @@ const STAT_LABEL = { attack: 'Attack', defense: 'Defense', speed: 'Speed' };
 function effectiveAttack(c) {
     // Burn halves physical attack, as in the games.
     const burn = c.status === 'burn' ? 0.5 : 1;
-    return c.attack * stageMultiplier(stageOf(c, 'attack')) * burn;
+    return c.attack * stageMultiplier(stageOf(c, 'attack')) * burn * megaBoost(c, 'attack');
 }
 
 /**
@@ -447,33 +466,36 @@ function effectiveDefense(c, ignoreBoost = false) {
     const used = ignoreBoost && stage > 0 ? 0 : stage;
     // Legacy saves carried a bare defenseStage before stages became a group.
     const legacy = Number.isFinite(c.defenseStage) ? c.defenseStage : 0;
-    return c.defense * stageMultiplier(used + (stage === 0 ? legacy : 0));
+    return c.defense * stageMultiplier(used + (stage === 0 ? legacy : 0))
+         * megaBoost(c, 'defense');
 }
 
 function effectiveSpeed(c) {
     const para = c.status === 'paralyze' ? 0.5 : 1;
-    return c.speed * stageMultiplier(stageOf(c, 'speed')) * para;
+    return c.speed * stageMultiplier(stageOf(c, 'speed')) * para * megaBoost(c, 'speed');
 }
 
-// The mega bonus, clamped on READ.
+// What Mega Evolution is worth, held as CONSTANTS rather than read from the
+// document.
 //
-// This field arrives in a document the opponent can also write, so an
-// unclamped read is a "99x damage" forgery waiting to happen. Both clients
-// clamp identically, so pinning it to [1, MEGA_MULT_CAP] costs no determinism —
-// a forged value simply resolves to the same legal number on both screens
-// instead of only on the forger's.
+// This is the whole defence. The battle document is written by the opponent
+// too, so any number in it is a number someone can forge — the version this
+// replaced carried the multiplier itself and had to clamp it on every read to
+// stop a "99x damage" forgery. Here the document carries only `megaOn`, a
+// boolean, and the amount lives in code: the worst a forger can claim is that a
+// Pokémon Mega Evolved, which is a legal move that both clients then resolve
+// identically. Nothing to clamp, because nothing arrives.
 //
 // Held here rather than read from FlickemonConfig even though config loads
 // first: every content script shares one global scope, so the name must be
 // distinct from the config's, and turn resolution is deliberately free of
-// outside lookups. Keep the value in step with MEGA_DAMAGE_MULTIPLIER there —
-// a test asserts they match.
-const MEGA_MULT_CAP = 1.30;
+// outside lookups. Keep these in step with MEGA_STAT_BOOST there — a test
+// asserts they match.
+const MEGA_BOOST = { attack: 1.25, defense: 1.15, speed: 1.10 };
 
-function megaMult(c) {
-    const raw = Number(c && c.damageMult);
-    if (!Number.isFinite(raw)) return 1;
-    return Math.min(MEGA_MULT_CAP, Math.max(1, raw));
+/** The factor one stat gains while megaed, or 1 the rest of the time. */
+function megaBoost(c, stat) {
+    return c && c.megaOn === true ? (MEGA_BOOST[stat] || 1) : 1;
 }
 
 /**
@@ -509,7 +531,10 @@ function computeDamage(attacker, defender, move, rng) {
 
     const damage = Math.max(
         eff === 0 ? 0 : 1,
-        Math.floor(base * stab * eff * spread * (crit ? 1.5 : 1) * DAMAGE_SCALE * megaMult(attacker))
+        // No mega term here any more: the boost lives in effectiveAttack and
+        // effectiveDefense, which the ratio above already goes through. One
+        // place, so it composes with stages, burn and the crit rule for free.
+        Math.floor(base * stab * eff * spread * (crit ? 1.5 : 1) * DAMAGE_SCALE)
     );
     return { damage, effectiveness: eff, crit };
 }
@@ -549,6 +574,35 @@ function resolveTurn(state, actionP1, actionP2, seed) {
     };
     doSwitch('p1', actionP1);
     doSwitch('p2', actionP2);
+
+    // Mega Evolution: after everyone has been switched in, before any move.
+    // That is the games' own order, and doing it before decideOrder means the
+    // Speed a mega gains counts for the turn it transforms on, as it has since
+    // Gen 7.
+    //
+    // Ordered by pre-mega Speed for the log to read right, with a fixed p1-first
+    // tiebreak rather than decideOrder's coin-flip: this step must not consume
+    // an rng() call, or transforming would shift every roll for the rest of the
+    // match on one client and not the other.
+    const megaOrder = effectiveSpeed(state.p1) >= effectiveSpeed(state.p2)
+        ? ['p1', 'p2'] : ['p2', 'p1'];
+
+    for (const side of megaOrder) {
+        const action = side === 'p1' ? actionP1 : actionP2;
+        const c = state[side];
+        // Every condition is checked on BOTH clients from the document alone,
+        // so a forged request resolves to the same answer on both screens
+        // rather than only on the forger's.
+        if (!action || action.mega !== true) continue;
+        if (!c || c.hp <= 0 || c.megaOn === true || !c.megaKey) continue;
+
+        const was = c.name;
+        c.megaOn = true;
+        c.megaForm = c.megaKey;
+        c.name = c.megaName || c.name;
+        if (c.megaSprite) c.spriteId = c.megaSprite;
+        log.push(`${was} Mega Evolved into ${c.name}!`);
+    }
 
     const order = decideOrder(state.p1, state.p2, actionP1, actionP2, rng);
 
@@ -736,7 +790,7 @@ function decideOrder(p1, p2, a1, a2, rng) {
 }
 
 window.FlickemonBattle = {
-    TYPE_CHART, MOVES, DAMAGE_SCALE, MEGA_MULT_CAP, megaMult, getMove, getMovesetFor,
+    TYPE_CHART, MOVES, DAMAGE_SCALE, MEGA_BOOST, megaBoost, getMove, getMovesetFor,
     typeEffectiveness, computeDamage, resolveTurn, decideOrder,
     toCombatant, makeRng, effectiveSpeed, effectiveDefense, effectiveAttack,
     STATUS_LABEL, isImmuneToStatus,

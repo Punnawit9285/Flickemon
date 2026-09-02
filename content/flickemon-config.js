@@ -244,8 +244,13 @@ const DEFAULT_PVP_MODE = '3v3';
  * Version 3 introduced the mega damage multiplier. The multiplier itself rides
  * in the battle document, but computeDamage had to change to read it, and a
  * version 2 client would ignore the field and diverge on the first hit.
+ *
+ * Version 4 made Mega Evolution the mechanic the games have: chosen during the
+ * battle rather than before it, once per trainer, and paid for in stats instead
+ * of a flat damage number. A version 3 client would enter already transformed,
+ * ignore the activation, and compute different damage from the same document.
  */
-const PVP_RULES_VERSION = 3;
+const PVP_RULES_VERSION = 4;
 
 /** The named format, or the default when a document predates modes. */
 function getPvpMode(id) {
@@ -1980,11 +1985,21 @@ const STARTER_OPTIONS = [
 
 // ─────────────────────────── Mega Evolution ───────────────────────────
 //
-// A mega is a skin plus one number: the sprite changes and the Pokémon deals
-// MEGA_DAMAGE_MULTIPLIER times its usual damage. Types and base stats are
-// deliberately untouched — those feed the type chart and the EXP curve, the two
-// systems it would be most expensive to destabilise, and the request was for
-// something that "works like shiny".
+// A mega is a sprite change plus a power increase. What that increase IS
+// depends on where the Pokémon is fighting, and the two are deliberately
+// different:
+//
+//   Studying (wild captures)   MEGA_DAMAGE_MULTIPLIER, applied for as long as
+//                              the toggle is on. Permanent, because that is
+//                              what a reward for studying should feel like.
+//
+//   PVP                        MEGA_STAT_BOOST, applied only after the trainer
+//                              spends their one Mega Evolution in that battle.
+//                              Temporary, chosen, and paid for in stats — the
+//                              mechanic the games actually have.
+//
+// Types are untouched in both: they feed the type chart and the EXP curve, the
+// two systems it would be most expensive to destabilise.
 //
 // Keyed by BASE species id, because every read is "given a speciesId, what
 // megas?" — O(1) here, a full-array scan per party row otherwise.
@@ -2126,6 +2141,27 @@ const MEGA_FORMS = {
 // active partner, and inside computeDamage in PVP. Deliberately one number in
 // one place, so the two paths cannot drift apart.
 const MEGA_DAMAGE_MULTIPLIER = 1.30;
+
+/**
+ * What Mega Evolution is worth in a PVP battle.
+ *
+ * Stats rather than a damage number, because that is where a real mega's power
+ * comes from: roughly +100 BST over the base form, concentrated in whatever
+ * that Pokémon is for. Mega Gyarados gains attack x1.24 and defense x1.38;
+ * Mega Alakazam gains defense x1.44 and speed x1.25. These three factors are
+ * the shape of that, averaged, rather than 96 hand-entered stat lines with
+ * nothing in the repo to check them against.
+ *
+ * HP IS ABSENT ON PURPOSE. No mega in any game changes its HP, and a mega that
+ * healed on transforming would also be a mega worth saving until you are nearly
+ * dead — the wrong incentive entirely.
+ *
+ * Attack x1.25 also lands damage within a few percent of the flat 1.30x this
+ * replaced, so the 8-15 turn pacing that was tuned around it survives. Unlike
+ * that multiplier, this also makes the mega bulkier and faster, which is what
+ * makes one feel like a mega rather than a stronger hit.
+ */
+const MEGA_STAT_BOOST = { attack: 1.25, defense: 1.15, speed: 1.10 };
 
 // A PVP win draws a mega stone this often. The remaining 90% is split evenly
 // between the three boosts, so the full table is 30/30/30/10.
@@ -2468,6 +2504,7 @@ window.FlickemonConfig = {
     PVP_LOSS_LOCKOUT_MS,
     MEGA_FORMS,
     MEGA_DAMAGE_MULTIPLIER,
+    MEGA_STAT_BOOST,
     MEGA_STONE_CHANCE,
     MEGA_STONE_SVG,
     megaFormsFor,

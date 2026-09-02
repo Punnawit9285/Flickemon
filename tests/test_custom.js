@@ -177,7 +177,11 @@ check('the moves match its types',
 // Nothing on the wire is re-derived from speciesId except the picture, which
 // is what makes a homemade Pokemon safe to take into PVP at all.
 check('everything the opponent needs is on the wire',
-      ['name', 'types', 'level', 'maxHp', 'attack', 'defense', 'speed', 'moves', 'damageMult']
+      ['name', 'types', 'level', 'maxHp', 'attack', 'defense', 'speed', 'moves',
+       // The armed mega travels in full rather than as a key to look up: two
+       // clients whose rosters disagree would otherwise transform into
+       // different Pokemon from the same document.
+       'megaKey', 'megaName', 'megaSprite', 'megaOn']
         .every(k => c[k] !== undefined));
 
 console.log('\n=== the wild pool is opt-in ===');

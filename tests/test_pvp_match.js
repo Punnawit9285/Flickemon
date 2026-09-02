@@ -332,5 +332,249 @@ console.log('\n=== every format finishes inside its own limit ===');
     }
 }
 
+console.log('\n=== Mega Evolution is the mechanic the games have ===');
+{
+    // Gyarados, holding its stone and with the party toggle on. The toggle is
+    // how the party screen shows a permanent mega while studying; a PVP battle
+    // must ignore it and start in the base form regardless.
+    const armed = (id, lv = 50, extra = {}) => {
+        const forms = cfg.megaFormsFor(id);
+        return B.toCombatant({
+            level: lv, megaStones: [forms[0].key], megaActive: forms[0].key, ...extra,
+        }, cfg.getSpeciesById(id), cfg);
+    };
+
+    console.log('\n  -- it enters as itself --');
+    {
+        const g = armed(130);
+        check('not transformed at the start', g.megaOn === false && g.megaForm === null);
+        check('wearing its own name', g.name === 'Gyarados', g.name);
+        check('and its own sprite', g.spriteId === 130, String(g.spriteId));
+        check('but armed', g.megaKey === 'gyarados-mega' && g.megaName === 'Mega Gyarados');
+        check('with the form sprite ready to swap in', g.megaSprite === 10041, String(g.megaSprite));
+
+        // The whole security argument: no boosted number is ever written down.
+        check('no stat on the wire is boosted',
+            g.attack === cfg.calculateRealStat(cfg.getSpeciesById(130).baseStats.attack, 50));
+        check('and there is no multiplier to forge', g.damageMult === undefined);
+    }
+
+    console.log('\n  -- and transforms only when asked --');
+    {
+        const g = armed(130), foe = mon(9, 50);
+        const s = { p1: g, p2: foe, p1Team: [g], p2Team: [foe] };
+        const quiet = B.resolveTurn(s, move(g.moves[0].id), idle, 'm:1');
+        check('a plain move does not transform it', g.megaOn === false);
+        check('and says nothing about megas', !quiet.some(l => /Mega Evolved/.test(l)));
+
+        const log = B.resolveTurn(s, { ...move(g.moves[0].id), mega: true }, idle, 'm:2');
+        check('asking transforms it', g.megaOn === true);
+        check('it takes the form name', g.name === 'Mega Gyarados', g.name);
+        check('and the form sprite', g.spriteId === 10041, String(g.spriteId));
+        check('megaForm is set, so every existing render site lights up',
+            g.megaForm === 'gyarados-mega');
+        check('it is announced before the move',
+            log[0] === 'Gyarados Mega Evolved into Mega Gyarados!', JSON.stringify(log[0]));
+
+        // Once. A second request must not stack, and must not re-announce.
+        const again = B.resolveTurn(s, { ...move(g.moves[0].id), mega: true }, idle, 'm:3');
+        check('a second request does nothing', !again.some(l => /Mega Evolved/.test(l)),
+            JSON.stringify(again));
+    }
+
+    console.log('\n  -- HP never changes, which is the rule in every game --');
+    {
+        const g = armed(130);
+        const hp = g.hp, maxHp = g.maxHp;
+        const foe = mon(9, 50);
+        const s = { p1: g, p2: foe, p1Team: [g], p2Team: [foe] };
+        B.resolveTurn(s, { ...move(g.moves[0].id), mega: true }, idle, 'hp:1');
+        check('max HP is untouched', g.maxHp === maxHp, `${maxHp} -> ${g.maxHp}`);
+        check('and transforming healed nothing', g.hp <= hp, `${hp} -> ${g.hp}`);
+    }
+
+    console.log('\n  -- the boost is stats, not a damage number --');
+    {
+        const base = armed(130), meg = armed(130);
+        meg.megaOn = true;
+        const bo = cfg.MEGA_STAT_BOOST;
+        const near = (a, b) => Math.abs(a - b) < 0.001;
+        check('attack rises', near(B.effectiveAttack(meg), B.effectiveAttack(base) * bo.attack));
+        check('defense rises', near(B.effectiveDefense(meg), B.effectiveDefense(base) * bo.defense));
+        check('speed rises', near(B.effectiveSpeed(meg), B.effectiveSpeed(base) * bo.speed));
+
+        // Speed mattering is the point of boosting it, so prove it flips an
+        // order rather than just moving a number. Two identical Gyarados, one
+        // megaed: the mega must move first, and would not have before.
+        const twinA = armed(130), twinB = armed(130);
+        check('identical twins tie on speed',
+            B.effectiveSpeed(twinA) === B.effectiveSpeed(twinB));
+        twinA.megaOn = true;
+        const order = B.decideOrder(twinA, twinB, move(twinA.moves[0].id),
+            move(twinB.moves[0].id), () => 0.99);
+        check('and the megaed twin now moves first', order[0] === 'p1',
+            `${B.effectiveSpeed(twinA)} vs ${B.effectiveSpeed(twinB)}`);
+
+        // It composes with stages rather than sitting beside them.
+        const staged = armed(130);
+        staged.megaOn = true;
+        staged.stages = { attack: 2, defense: 0, speed: 0 };
+        check('stages multiply on top of the mega',
+            near(B.effectiveAttack(staged), B.effectiveAttack(base) * 2 * bo.attack),
+            String(B.effectiveAttack(staged)));
+
+        // And through the damage formula, which is what a player feels.
+        const foe = mon(9, 50);
+        const dmgBase = B.computeDamage(base, foe, base.moves.find(m => m.power > 0), () => 0.9).damage;
+        const dmgMega = B.computeDamage(meg, foe, meg.moves.find(m => m.power > 0), () => 0.9).damage;
+        check('a mega hits harder', dmgMega > dmgBase, `${dmgBase} -> ${dmgMega}`);
+        console.log(`      damage ${dmgBase} -> ${dmgMega} (x${(dmgMega / dmgBase).toFixed(2)})`);
+    }
+
+    console.log('\n  -- both clients reach the same state --');
+    {
+        // The two clients replay the same turn from the same document. If a
+        // mega changed anything not written down, they would diverge here.
+        const run = () => {
+            const g = armed(130), foe = mon(9, 50);
+            const s = { p1: g, p2: foe, p1Team: [g], p2Team: [foe] };
+            const log = B.resolveTurn(s, { ...move(g.moves[0].id), mega: true },
+                move(foe.moves[0].id), 'sync:1');
+            return JSON.stringify({ log, p1: s.p1, p2: s.p2 });
+        };
+        check('replaying a mega turn is deterministic', run() === run());
+    }
+
+    console.log('\n  -- a forged request resolves the same on both screens --');
+    {
+        // Nothing here can stop an opponent editing their own client. What it
+        // CAN do is make the forgery resolve identically for both players, and
+        // cap what it is worth. A stat written into the document would not be.
+        const g = armed(130);
+        g.megaSprite = 10041;
+        const foe = mon(9, 50);
+        const s = { p1: g, p2: foe, p1Team: [g], p2Team: [foe] };
+        B.resolveTurn(s, { ...move(g.moves[0].id), mega: true }, idle, 'f:1');
+        const honest = B.effectiveAttack(g);
+
+        const forged = armed(130);
+        forged.megaOn = true;
+        forged.attack = 99999;               // a hand-edited document
+        check('a forged stat is still just a number both sides read',
+            B.effectiveAttack(forged) === 99999 * cfg.MEGA_STAT_BOOST.attack,
+            'the defence is that the AMOUNT is not forgeable, not the stat');
+        check('the boost itself comes from code, not the document',
+            B.effectiveAttack(g) === honest);
+
+        // A Pokémon with no stone cannot claim one.
+        const bare = mon(9, 50);
+        const s2 = { p1: bare, p2: mon(130, 50), p1Team: [bare], p2Team: [mon(130, 50)] };
+        const log = B.resolveTurn(s2, { ...move(bare.moves[0].id), mega: true }, idle, 'f:2');
+        check('no stone, no transformation', bare.megaOn === false && bare.megaForm === null);
+        check('and nothing is announced', !log.some(l => /Mega Evolved/.test(l)));
+    }
+
+    console.log('\n  -- a fainted mega does not hand the transformation back --');
+    {
+        const g = armed(130);
+        g.megaOn = true; g.megaForm = 'gyarados-mega';
+        g.hp = 0;
+        const t = [g, mon(9, 50)];
+        // megaUsedBy in the PVP layer reads exactly this: a spent mega stays
+        // spent, because the record IS the team.
+        check('the team still shows one spent', t.some(c => c.megaOn === true));
+    }
+
+    console.log('\n  -- and it is gone next battle --');
+    {
+        // Reversion needs no code: buildPvpTeam builds fresh combatants from the
+        // party every match, and nothing about the transformation is persisted.
+        const member = { level: 50, megaStones: ['gyarados-mega'], megaActive: 'gyarados-mega' };
+        const first = B.toCombatant(member, cfg.getSpeciesById(130), cfg);
+        first.megaOn = true; first.name = 'Mega Gyarados'; first.megaForm = 'gyarados-mega';
+        const second = B.toCombatant(member, cfg.getSpeciesById(130), cfg);
+        check('the next battle starts untransformed', second.megaOn === false);
+        check('the party member was never touched',
+            member.megaOn === undefined && member.name === undefined);
+    }
+
+    console.log('\n  -- the two boost tables must not drift apart --');
+    {
+        // battle.js holds its own copy so turn resolution stays free of outside
+        // lookups. That is only safe while they agree.
+        for (const k of ['attack', 'defense', 'speed']) {
+            check(`${k} matches the config`, B.MEGA_BOOST[k] === cfg.MEGA_STAT_BOOST[k],
+                `${B.MEGA_BOOST[k]} vs ${cfg.MEGA_STAT_BOOST[k]}`);
+        }
+        check('and HP is in neither', B.MEGA_BOOST.hp === undefined
+            && cfg.MEGA_STAT_BOOST.hp === undefined);
+    }
+
+    console.log('\n  -- pacing survives the change --');
+    {
+        // The 1.30x this replaced was tuned for 8-15 turn battles. Attack x1.25
+        // was chosen to land near it; this is the check that says so.
+        const alive = t => t.some(c => c.hp > 0);
+        let worst = 0, longest = 0;
+        for (let seed = 0; seed < 40; seed++) {
+            const a = armed(130, 50), b = mon(9, 50);
+            a.megaOn = true;                                   // mega vs plain
+            const s = { p1: a, p2: b, p1Team: [a], p2Team: [b] };
+            let turn = 0;
+            while (alive([a]) && alive([b]) && turn < 100) {
+                turn++;
+                const pk = x => x.moves[turn % x.moves.length].id;
+                B.resolveTurn(s, move(pk(s.p1)), move(pk(s.p2)), `p${seed}:${turn}`);
+            }
+            worst = Math.max(worst, turn);
+            longest = Math.max(longest, turn);
+        }
+        console.log(`      mega vs plain, worst of 40: ${worst} turns`);
+        check('a mega does not end battles instantly', worst >= 4, `${worst} turns`);
+        check('nor drag them out', worst <= 30, `${worst} turns`);
+    }
+}
+
+console.log('\n=== shinies reach the other trainer ===');
+{
+    const shiny = (id, lv = 30) =>
+        B.toCombatant({ level: lv, shiny: true }, cfg.getSpeciesById(id), cfg);
+
+    const s = shiny(130), plain = mon(130);
+    check('the flag travels on the combatant', s.shiny === true && plain.shiny === false);
+
+    // Cosmetic, and it has to STAY cosmetic: a shiny that hit harder would turn
+    // a 1-in-512 encounter into a competitive requirement.
+    check('same max HP', s.maxHp === plain.maxHp);
+    check('same attack', s.attack === plain.attack);
+    check('same defense', s.defense === plain.defense);
+    check('same speed', s.speed === plain.speed);
+    check('same moves', JSON.stringify(s.moves) === JSON.stringify(plain.moves));
+
+    // The document is JSON in one field, so anything not JSON-safe is lost.
+    const wire = JSON.parse(JSON.stringify(s));
+    check('it survives the trip through the document', wire.shiny === true);
+
+    console.log('\n  -- including a shiny mega --');
+    {
+        const g = B.toCombatant({
+            level: 50, shiny: true,
+            megaStones: ['gyarados-mega'], megaActive: 'gyarados-mega',
+        }, cfg.getSpeciesById(130), cfg);
+        const foe = mon(9, 50);
+        const st = { p1: g, p2: foe, p1Team: [g], p2Team: [foe] };
+        B.resolveTurn(st, { ...move(g.moves[0].id), mega: true }, idle, 'sh:1');
+        check('it is still shiny after transforming', g.shiny === true);
+        check('and wearing the mega sprite', g.spriteId === 10041, String(g.spriteId));
+
+        // Which is a real file, in the shiny directory. A mega whose shiny art
+        // was missing would show a broken image at the loudest possible moment.
+        const fs = require('fs');
+        for (const dir of ['sprites/shiny', 'sprites/back/shiny']) {
+            check(`${dir}/10041.png ships`, fs.existsSync(ROOT + dir + '/10041.png'));
+        }
+    }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

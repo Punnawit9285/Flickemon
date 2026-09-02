@@ -77,6 +77,10 @@ class FlickemonPvp {
         this.rosterFilter = '';
         this.lossRecorded = false;
         this.switchPanelOpen = false;
+        // Armed but not yet spent: the Mega Evolve button is pressed, and the
+        // next move chosen will carry it. Cleared every turn, so an armed
+        // button never survives into a turn its owner did not arm it for.
+        this.megaArmed = false;
 
         // A hidden tab has nobody watching the battle, so reads there are pure
         // waste. Students alt-tab constantly, which makes this a real saving.
@@ -129,6 +133,10 @@ class FlickemonPvp {
         this.myCode = status.code;
         this.myName = (status.email || 'Trainer').split('@')[0];
         this.remote = null;
+        // A new battle is a new Mega Evolution. Both of these are per-battle
+        // and must not carry over from the last one.
+        this.megaArmed = false;
+        this.megaFlashed = new Set();
         this.renderLobby();
     }
 
@@ -200,12 +208,16 @@ class FlickemonPvp {
         const fielded = team.slice(0, mode.size);
         const benched = team.slice(mode.size);
 
-        // `spriteId` is the mega form when one is active and equals speciesId
-        // otherwise, so the fallback covers documents written before megas.
+        // A combatant is never megaed at this point — it enters the battle in
+        // its base form and transforms only if its trainer spends their one
+        // Mega Evolution on it. So the strip marks who CAN, which is the thing
+        // worth knowing while deciding a line-up.
         const chip = (c, out) => `
-            <div class="pvp-team-chip ${out ? 'benched' : ''} ${c.megaForm ? 'is-mega' : ''}" title="${esc(c.name)} Lv${c.level}${out ? ' — benched in this format' : ''}">
+            <div class="pvp-team-chip ${out ? 'benched' : ''} ${c.megaKey ? 'has-stone' : ''} ${c.shiny ? 'is-shiny' : ''}"
+                 title="${esc(c.name)} Lv${c.level}${c.shiny ? ' ✦ shiny' : ''}${c.megaKey ? ` — can become ${esc(c.megaName)}` : ''}${out ? ' — benched in this format' : ''}">
                 <img src="${this.config.getSpriteUrl(c.spriteId ?? c.speciesId, c.shiny)}" alt="${esc(c.name)}"/>
                 <span>Lv${c.level}</span>
+                ${c.megaKey ? `<span class="pvp-chip-stone" aria-hidden="true">◆</span>` : ''}
             </div>`;
 
         return `
@@ -389,11 +401,17 @@ class FlickemonPvp {
      */
     renderStoneRules() {
         const mult = this.config.MEGA_DAMAGE_MULTIPLIER;
+        const boost = this.config.MEGA_STAT_BOOST;
         return `
             <ul class="pvp-mega-rules">
                 <li>Binds to one Pokémon in your line-up, picked at random. It never expires.</li>
-                <li>That Pokémon wears its Mega form and deals <b>${mult}x damage</b>
-                    while studying and in PVP. Switch it on and off any time from the Party tab.</li>
+                <li><b>While studying:</b> that Pokémon wears its Mega form and deals
+                    <b>${mult}x damage</b> to wild Pokémon. Switch it on and off any time
+                    from the Party tab.</li>
+                <li><b>In a battle:</b> it starts as itself and you press <b>MEGA EVOLVE</b>
+                    when you want it — <b>once per battle</b>, then it stays that way until
+                    the battle ends. Attack ×${boost.attack}, Defense ×${boost.defense},
+                    Speed ×${boost.speed}; HP never changes.</li>
                 <li>A stone can land even while a boost is running — only boosts refuse
                     to stack. A loss lockout still blocks both.</li>
                 <li>Only a fully evolved Pokémon can use one. Won by one that is not,
@@ -556,14 +574,13 @@ class FlickemonPvp {
                 <p class="pvp-sub">${mode.blurb} A win is worth one ${mode.rewardLabel} boost.</p>
                 <div class="pvp-team-strip">
                     ${team.map(c => `
-                        <div class="pvp-team-chip ${c.megaForm ? 'is-mega' : ''}">
+                        <div class="pvp-team-chip ${c.megaKey ? 'has-stone' : ''} ${c.shiny ? 'is-shiny' : ''}"
+                             title="${esc(c.name)} Lv${c.level}${c.shiny ? ' ✦ shiny' : ''}${c.megaKey ? ` — can become ${esc(c.megaName)}` : ''}">
                             <img src="${this.config.getSpriteUrl(c.spriteId ?? c.speciesId, c.shiny)}" alt="${esc(c.name)}"/>
                             <span>Lv${c.level}</span>
+                            ${c.megaKey ? `<span class="pvp-chip-stone" aria-hidden="true">◆</span>` : ''}
                         </div>`).join('')}
                 </div>
-                ${team.length < mode.size
-                    ? `<p class="pvp-sub">You only have ${team.length} of ${mode.size} — you can still
-                       battle, but you are a Pokémon down.</p>` : ''}
                 <button class="pvp-btn pvp-confirm-btn">BATTLE</button>
                 <button class="pvp-btn ghost pvp-back-btn">BACK</button>
                 <p class="pvp-error"></p>
@@ -780,6 +797,7 @@ class FlickemonPvp {
         if (st.turn !== this.lastTurnRendered) {
             this.lastTurnRendered = st.turn;
             this.pendingAction = null;
+            this.megaArmed = false;
         }
         this.renderBattle();
     }
@@ -804,6 +822,30 @@ class FlickemonPvp {
         if (!st || st.phase !== 'switching') return false;
         const need = this.sidesOwedSwitch(st);
         return this.role === 'host' ? need.host : need.guest;
+    }
+
+    /**
+     * Whether this trainer has already spent their one Mega Evolution.
+     *
+     * Read off the team rather than kept as a flag on the document: a megaed
+     * Pokémon carries `megaOn` for the rest of the battle, so the team already
+     * IS the record. Nothing extra to write, nothing that can drift out of step
+     * with what is on the field, and nothing an opponent can forge into a
+     * second transformation.
+     *
+     * A mega that fainted still counts, as in the games — the Mega Evolution
+     * was spent, and losing the Pokémon does not hand it back.
+     */
+    megaUsedBy(team) {
+        return (team || []).some(c => c && c.megaOn === true);
+    }
+
+    /** Can the Pokémon I have out right now Mega Evolve? */
+    canMegaNow() {
+        if (!this.local) return false;
+        const { me, myTeam } = this.local;
+        return Boolean(me && me.megaKey && me.megaOn !== true
+            && me.hp > 0 && !this.megaUsedBy(myTeam));
     }
 
     /** Rebuilds my view of the battle from the shared document. */
@@ -963,6 +1005,7 @@ class FlickemonPvp {
         this.lastTurnRendered = next.turn;
         this.pendingAction = null;
         this.switchPanelOpen = false;
+        this.megaArmed = false;
         this.syncLocalFrom(this.remote);
         this.renderBattle();
     }
@@ -1002,11 +1045,37 @@ class FlickemonPvp {
                 ? '<span class="pvp-stage confused" title="Confused">CNF</span>' : '';
             return out + conf;
         };
-        // Worth knowing what you are up against before choosing a move.
+        // Worth knowing what you are up against before choosing a move. The
+        // stone shows on a Pokémon that COULD transform, filled once it has —
+        // so both trainers can see the threat coming, as they can in the games.
+        const boost = this.config.MEGA_STAT_BOOST;
+        const megaMark = (c) => {
+            if (c.megaOn) {
+                return `<span class="pvp-rarity mega" title="Mega — ATK ×${boost.attack}, DEF ×${boost.defense}, SPD ×${boost.speed}">◆</span>`;
+            }
+            if (c.megaKey) {
+                return `<span class="pvp-rarity mega armed" title="Holds a Mega Stone — can become ${esc(c.megaName || 'its Mega form')}">◇</span>`;
+            }
+            return '';
+        };
         const rarity = c => `${c.legendary ? '<span class="pvp-rarity legendary" title="Legendary">★</span>' : ''}`
                           + `${c.custom ? `<span class="pvp-rarity custom" title="${esc(this.config.CUSTOM_LABEL)}">${this.config.CUSTOM_MARK}</span>` : ''}`
                           + `${c.shiny ? '<span class="pvp-rarity shiny" title="Shiny">✦</span>' : ''}`
-                          + `${c.megaForm ? '<span class="pvp-rarity mega" title="Mega — deals 1.3x damage">◆</span>' : ''}`;
+                          + megaMark(c);
+
+        // The transformation flash, played once per Pokémon per battle. Keyed
+        // on which team slot it is rather than on "did this change since last
+        // render", because renderBattle runs on every poll and a switch away
+        // and back would otherwise replay it.
+        this.megaFlashed = this.megaFlashed || new Set();
+        const flashKey = (side, i) => `${side}:${i}`;
+        const flashes = (side, c, i) => {
+            if (!c || c.megaOn !== true || this.megaFlashed.has(flashKey(side, i))) return '';
+            this.megaFlashed.add(flashKey(side, i));
+            return ' just-megaed';
+        };
+        const myFlash = flashes('me', me, myIndex);
+        const foeFlash = flashes('foe', foe, foeIndex);
 
         const over = phase === 'over';
         const drawn = over && !st.winner;
@@ -1075,11 +1144,11 @@ class FlickemonPvp {
                         <div class="pvp-plate foe-plate"></div>
                         <div class="pvp-plate my-plate"></div>
 
-                        <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}${foe.megaForm ? ' is-mega' : ''}"
+                        <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}${foe.megaForm ? ' is-mega' : ''}${foeFlash}"
                              src="${this.config.getSpriteUrl(foe.spriteId ?? foe.speciesId, foe.shiny)}"
                              onerror="this.classList.add('sprite-missing'); this.removeAttribute('src');"
                              alt="${esc(foe.name)}"/>
-                        <img class="pvp-sprite my-sprite${me.shiny ? ' is-shiny' : ''}${me.megaForm ? ' is-mega' : ''}"
+                        <img class="pvp-sprite my-sprite${me.shiny ? ' is-shiny' : ''}${me.megaForm ? ' is-mega' : ''}${myFlash}"
                              src="${this.config.getBackSpriteUrl(me.spriteId ?? me.speciesId, me.shiny)}"
                              onerror="this.src='${this.config.getSpriteUrl(me.spriteId ?? me.speciesId, me.shiny)}'"
                              alt="${esc(me.name)}"/>
@@ -1204,11 +1273,30 @@ class FlickemonPvp {
             return bits.join(' · ');
         };
 
+        // Mega Evolution rides along with a move, exactly as it does in the
+        // games: you arm it, then pick what to do, and the transformation
+        // happens first. Drawn above the moves so it reads as a decision about
+        // the turn rather than a fifth thing to attack with.
+        //
+        // Hidden rather than disabled when there is nothing to use. Most
+        // Pokémon will never hold a stone, and a permanently dead button on
+        // every battle screen teaches players to ignore that corner.
+        const megaBtn = this.canMegaNow() ? `
+            <button class="pvp-mega-btn ${this.megaArmed ? 'armed' : ''}"
+                    ${this.pendingAction ? 'disabled' : ''}
+                    title="${this.megaArmed
+                        ? 'Armed — now choose a move'
+                        : `Become ${esc(me.megaName || 'its Mega form')} for the rest of the battle`}">
+                ${this.config.MEGA_STONE_SVG}
+                <span>${this.megaArmed ? 'MEGA READY — PICK A MOVE' : 'MEGA EVOLVE'}</span>
+            </button>` : '';
+
         // Every move exhausted used to leave four disabled buttons and no legal
         // action — a soft-lock. Struggle is what the games do instead.
         const outOfPP = me.moves.every(m => m.ppLeft <= 0);
         if (outOfPP) {
             return `
+                ${megaBtn}
                 <div class="pvp-moves">
                     <button class="pvp-move struggle" data-move="struggle"
                             ${this.pendingAction ? 'disabled' : ''}>
@@ -1223,6 +1311,7 @@ class FlickemonPvp {
         }
 
         return `
+            ${megaBtn}
             <div class="pvp-moves">
                 ${me.moves.map(m => `
                     <button class="pvp-move ${m.type}" data-move="${m.id}"
@@ -1236,7 +1325,8 @@ class FlickemonPvp {
                 <button class="pvp-btn ghost pvp-switch-open" ${this.pendingAction ? 'disabled' : ''}>
                     SWITCH (${bench.length})
                 </button>` : ''}
-            <p class="pvp-turn">${this.pendingAction ? 'WAITING FOR OPPONENT...' : 'CHOOSE A MOVE'}</p>
+            <p class="pvp-turn">${this.pendingAction ? 'WAITING FOR OPPONENT...'
+                : this.megaArmed ? 'MEGA EVOLVING — CHOOSE A MOVE' : 'CHOOSE A MOVE'}</p>
         `;
     }
 
@@ -1244,7 +1334,9 @@ class FlickemonPvp {
         if (bench.length === 0) return `<p class="pvp-turn">Nobody left to send out.</p>`;
         return `<div class="pvp-bench">
             ${bench.map(({ c, i }) => `
-                <button class="pvp-bench-mon ${btnClass} ${c.megaForm ? 'is-mega' : ''}" data-index="${i}" ${this.pendingAction ? 'disabled' : ''}>
+                <button class="pvp-bench-mon ${btnClass} ${c.megaForm ? 'is-mega' : ''} ${c.shiny ? 'is-shiny' : ''}"
+                        data-index="${i}" ${this.pendingAction ? 'disabled' : ''}
+                        title="${esc(c.name)} Lv${c.level}${c.shiny ? ' ✦ shiny' : ''}${c.megaKey && !c.megaOn ? ' — holds a Mega Stone' : ''}">
                     <img src="${this.config.getSpriteUrl(c.spriteId ?? c.speciesId, c.shiny)}" alt="${esc(c.name)}"/>
                     <span class="pvp-bench-name">${esc(c.name)}</span>
                     <span class="pvp-bench-hp">${c.hp}/${c.maxHp}</span>
@@ -1269,10 +1361,25 @@ class FlickemonPvp {
             btn.setAttribute('aria-label', btn.title);
         });
 
+        // Arms or disarms; nothing is sent until a move is chosen. Pressing it
+        // twice by mistake must be free, because the alternative is spending
+        // the only Mega Evolution of the battle on a misclick.
+        body.querySelector('.pvp-mega-btn')?.addEventListener('click', (e) => {
+            if (e.currentTarget.disabled || this.pendingAction) return;
+            this.megaArmed = !this.megaArmed;
+            this.renderBattle();
+        });
+
         body.querySelectorAll('.pvp-move').forEach(btn => {
             btn.addEventListener('click', () => {
                 if (btn.disabled) return;
-                this.send({ type: 'move', moveId: btn.dataset.move });
+                const action = { type: 'move', moveId: btn.dataset.move };
+                // Only ever set when it is genuinely available: canMegaNow is
+                // re-checked here rather than trusted from the render, because
+                // a poll between drawing the button and pressing it can have
+                // changed the answer.
+                if (this.megaArmed && this.canMegaNow()) action.mega = true;
+                this.send(action);
             });
         });
 

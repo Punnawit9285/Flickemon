@@ -1747,17 +1747,28 @@ class FlickemonUI {
         // the data is actually present, so this guide never describes a feature
         // the running build does not have.
         const megaForms = c.MEGA_FORMS || null;
+        const boost = c.MEGA_STAT_BOOST || {};
         const megaBlock = megaForms ? section('Mega Evolution', `
-            <p>Some Pokémon can Mega Evolve. It is a different sprite and harder
-            hits — <strong>${c.MEGA_DAMAGE_MULTIPLIER}x damage</strong> — and nothing else.
-            Types and base stats are untouched, so a Mega does not change what it
-            is strong or weak against, or how fast it levels.</p>
+            <p>Some Pokémon can Mega Evolve: a different sprite, a different name,
+            and more power. What that power is depends on where you are fighting.</p>
             ${rows([
+                ['While studying', `Toggle it on in Party and your partner deals
+                    <strong>${c.MEGA_DAMAGE_MULTIPLIER}x damage</strong> to wild Pokémon
+                    for as long as it is on. Permanent — it is yours once won.`],
+                ['In PVP', `Press <strong>MEGA EVOLVE</strong> during the battle, then pick
+                    your move. It transforms before either side attacks, and stays that way
+                    until the battle ends. <strong>Once per battle</strong>, so the timing
+                    is the decision.`],
+                ['What it gives you', `Attack x${boost.attack}, Defense x${boost.defense},
+                    Speed x${boost.speed}. <strong>HP never changes</strong> — no mega in any
+                    Pokémon game heals on transforming, and one that did would be a mega
+                    worth saving until you were nearly dead.`],
                 ['How to get one', `Winning a PVP battle has a ${pct(c.MEGA_STONE_CHANCE)} chance of dropping a stone.`],
                 ['Who it belongs to', 'The individual Pokémon that won it, not the species.'],
-                ['Permanent', 'Once won, it is yours. Toggle it on and off freely.'],
                 ['Forms', `${Object.values(megaForms).reduce((n, f) => n + f.length, 0)} across ${Object.keys(megaForms).length} species.`],
-            ])}`) : '';
+            ])}
+            <p class="guide-note">Types are untouched either way, so a Mega does not change
+            what it is strong or weak against, or how fast it levels.</p>`) : '';
 
         modal.body.innerHTML = `
             <div class="guide">

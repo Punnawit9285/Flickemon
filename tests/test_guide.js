@@ -200,7 +200,16 @@ console.log('\n=== the hour figures still match the engine ===');
             check('quotes the damage multiplier', after.includes('1.3x damage'));
             check('quotes the drop chance', after.includes('10% chance'));
             check('counts forms and species', after.includes('3 across 2 species'));
-            check('says stats are unchanged', /base stats are untouched/.test(after));
+            check('says types are unchanged', /[Tt]ypes are untouched/.test(after));
+            // The two halves of the mechanic, which are genuinely different
+            // rules. A guide that described only one of them would send someone
+            // into a PVP battle expecting to already be transformed.
+            check('separates studying from PVP',
+                  /While studying/.test(after) && /In PVP/.test(after));
+            check('says PVP mega is once per battle', /[Oo]nce per battle/.test(after));
+            check('quotes the stat boost',
+                  after.includes(`Attack x${cfg.MEGA_STAT_BOOST.attack}`), after.slice(0, 0) || 'missing');
+            check('and promises HP never changes', /HP never changes/.test(after));
             if (saved === undefined) delete cfg.MEGA_FORMS; else cfg.MEGA_FORMS = saved;
         }
 

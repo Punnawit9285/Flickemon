@@ -651,7 +651,8 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
     m().megaActive=m().megaStones[0];
     const forced=window.FlickemonBattle.toCombatant(m(), cfg.getSpeciesById(m().speciesId), cfg);
     check('PVP refuses a dormant form too',
-          forced.damageMult===1 && forced.megaForm===null, JSON.stringify(forced.megaForm));
+          forced.megaKey===null && forced.megaForm===null && forced.megaOn===false,
+          JSON.stringify({key:forced.megaKey, on:forced.megaOn}));
     check('and so does the study multiplier', e.megaMultiplierFor(m())===1);
     m().megaActive=null;
 
