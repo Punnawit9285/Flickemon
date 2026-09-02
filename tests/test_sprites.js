@@ -31,7 +31,7 @@ const previously = {
     '.pokedex-unknown':                        48,
     '.partner-big-sprite':                    128,
     '.party-row-sprite':                       44,
-    '.pvp-sprite':                             76,
+    '.pvp-sprite.foe-sprite':                  76,
     '.pvp-sprite.my-sprite':                   88,
     '.pvp-team-chip img':                      34,
 };
@@ -73,11 +73,26 @@ check('starter sprite fits the narrowest card',
     +starterMin[1] >= size('.starter-card-img').w,
     `card=${starterMin[1]} sprite=${size('.starter-card-img').w}`);
 
-const nameplate = /max-width:\s*(\d+)px/.exec(block('.pvp-nameplate'))[1];
-const modal = /max-width:\s*(\d+)px/.exec(/\.pvp-overlay \.flickemon-modal-container\s*{[^}]*}/.exec(css)[0])[1];
-check('PVP sprite + nameplate fit the battle modal',
-    size('.pvp-sprite.my-sprite').w + +nameplate < +modal,
-    `${size('.pvp-sprite.my-sprite').w}+${nameplate} vs ${modal}`);
+// The battle screen became an arena: sprites and nameplates are placed
+// absolutely on a scene rather than sitting in a row, so "widths must sum to
+// less than the modal" no longer describes it. What still has to hold is that
+// a nameplate cannot grow across the scene and end up under its own Pokémon.
+const infoWidth = /max-width:\s*(\d+)%/.exec(block('.pvp-plateinfo'));
+check('a nameplate is capped to part of the arena',
+    infoWidth && +infoWidth[1] <= 65, infoWidth ? infoWidth[1] + '%' : 'uncapped');
+
+const sceneH = /height:\s*(\d+)px/.exec(block('.pvp-scene'));
+check('the arena has a fixed height for the platforms to sit on',
+    sceneH && +sceneH[1] >= 150, sceneH ? sceneH[1] + 'px' : 'auto');
+
+// Each sprite has to overlap its platform, or it floats above the ground.
+const foeTop = +/top:\s*(\d+)px/.exec(block('.pvp-sprite.foe-sprite'))[1];
+const foeH = size('.pvp-sprite.foe-sprite').h;
+const plateTop = +/top:\s*(\d+)px/.exec(block('.pvp-plate.foe-plate'))[1];
+const plateH = +/height:\s*(\d+)px/.exec(block('.pvp-plate.foe-plate'))[1];
+check('the foe stands on its platform rather than above it',
+    foeTop + foeH > plateTop && foeTop + foeH <= plateTop + plateH,
+    `sprite ends ${foeTop + foeH}, platform spans ${plateTop}-${plateTop + plateH}`);
 
 console.log('\n=== the morph animation fits inside the overlay lifetime ===');
 const lifetime = +/EVOLUTION_OVERLAY_MS\s*=\s*(\d+)/.exec(ui)[1];

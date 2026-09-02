@@ -76,6 +76,11 @@ console.log('\n=== neutral fills survive a dark theme ===');
 {
     // A fixed rgba(0,0,0,0.05) fill is invisible on a dark surface. Ionic's
     // step scale is derived between background and text, so it flips with it.
+    // The arena paints its own world, like the evolution scene: a lecture
+    // site's palette has no business repainting the ground a Pokémon stands on.
+    check('the arena palette is fixed on purpose',
+        /--flick-arena-sky-top:\s*#/.test(tokens) && /--flick-arena-ink:\s*#/.test(tokens));
+
     check('the QR colours are fixed on purpose, and only those',
         /--flick-qr-ground:\s*#ffffff/.test(tokens) && /--flick-qr-ink:\s*#/.test(tokens),
         'a QR must stay dark-on-white or it stops scanning');
@@ -132,7 +137,7 @@ console.log('\n=== a re-themed host actually moves every colour ===');
         // meant to be independent of the host surface.
         const SCENE = ['scrim', 'shadow', 'spark', 'ray', 'burst', 'damage',
                        'on-type', 'field', 'tint-neutral', 'highlight', 'sheen', 'qr-',
-                       'video-ground'];
+                       'video-ground', 'arena-'];
         if (SCENE.some(k => name.includes(k))) continue;
         // A token pointing at another token inherits whatever that one does.
         if (/var\(--(?:type|flick)-[\w-]+/.test(value)) continue;

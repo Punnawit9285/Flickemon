@@ -189,11 +189,15 @@ const TACTICAL_MOVES = [
       effect: 'paralyze', chance: 0.1 },
 
     // Recovery: the reason a defensive setup can actually win.
-    { id: 'recover',      name: 'Recover',      type: 'normal',  power: 0, accuracy: 100, pp: 10,
+    //
+    // 5 PP, not 10 — which is both what Gen 9 uses and what keeps a match
+    // finite. At 10 PP two healers could trade 50% restores for long enough to
+    // push a 3v3 past 200 turns, which is nobody's idea of a lunch break.
+    { id: 'recover',      name: 'Recover',      type: 'normal',  power: 0, accuracy: 100, pp: 5,
       heal: 0.5 },
-    { id: 'roost',        name: 'Roost',        type: 'flying',  power: 0, accuracy: 100, pp: 10,
+    { id: 'roost',        name: 'Roost',        type: 'flying',  power: 0, accuracy: 100, pp: 5,
       heal: 0.5 },
-    { id: 'synthesis',    name: 'Synthesis',    type: 'grass',   power: 0, accuracy: 100, pp: 10,
+    { id: 'synthesis',    name: 'Synthesis',    type: 'grass',   power: 0, accuracy: 100, pp: 5,
       heal: 0.5 },
 ];
 

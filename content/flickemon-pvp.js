@@ -155,11 +155,21 @@ class FlickemonPvp {
 
                 <p class="pvp-8bit small">FORMAT</p>
                 <div class="pvp-modes">
-                    ${this.config.PVP_MODES.map(m => `
-                        <button class="pvp-mode ${m.id === this.modeId ? 'on' : ''}" data-mode="${m.id}">
+                    ${this.config.PVP_MODES.map(m => {
+                        // Say up front which formats are out of reach. Finding
+                        // out on the Host button, after picking one, is a worse
+                        // way to learn you are two Pokémon short.
+                        const fit = this.engine.canFieldPvpMode(m.id);
+                        return `
+                        <button class="pvp-mode ${m.id === this.modeId ? 'on' : ''}${fit.ok ? '' : ' short'}"
+                                data-mode="${m.id}"
+                                title="${fit.ok ? m.blurb : `Needs ${fit.need} Pokémon — you have ${fit.have}`}">
                             <span class="pvp-mode-label">${m.label}</span>
-                            <span class="pvp-mode-reward">${m.rewardLabel} boost</span>
-                        </button>`).join('')}
+                            <span class="pvp-mode-reward">${fit.ok
+                                ? `${m.rewardLabel} boost`
+                                : `need ${fit.need}, have ${fit.have}`}</span>
+                        </button>`;
+                    }).join('')}
                 </div>
                 <p class="pvp-sub">${mode.blurb} Winning grants one boost for
                    ${mode.rewardLabel} — boosts never stack, so let one run out
@@ -479,8 +489,11 @@ class FlickemonPvp {
         body.querySelector('.pvp-host-btn').addEventListener('click', async () => {
             err.classList.remove('visible');
             try {
+                const fit = this.engine.canFieldPvpMode(mode.id);
+                if (!fit.ok) {
+                    throw new Error(`${mode.label} needs ${fit.need} Pokémon on your team — you have ${fit.have}.`);
+                }
                 const team = this.engine.buildPvpTeam(mode.size);
-                if (team.length === 0) throw new Error('Add at least one Pokémon to your team.');
                 const res = await this.engine.pvpOpen({
                     displayName: this.myName,
                     team,
@@ -527,8 +540,13 @@ class FlickemonPvp {
         }
 
         const mode = this.config.getPvpMode(battle.state?.mode);
+        // The host chose the format, so the guest is the one who has to be told
+        // they cannot meet it — and told before anything is written.
+        const fit = this.engine.canFieldPvpMode(mode.id);
+        if (!fit.ok) {
+            throw new Error(`They opened a ${mode.label}. That needs ${fit.need} Pokémon on your team — you have ${fit.have}.`);
+        }
         const team = this.engine.buildPvpTeam(mode.size);
-        if (team.length === 0) throw new Error('Add at least one Pokémon to your team.');
 
         this.modal.body.innerHTML = `
             <div class="pvp-notice">
@@ -852,12 +870,24 @@ class FlickemonPvp {
         const hostAlive  = p1Team.some(c => c.hp > 0);
         const guestAlive = p2Team.some(c => c.hp > 0);
 
+        const limit = this.config.pvpTurnLimit(this.config.getPvpMode(st.mode).size);
+
         if (!hostAlive || !guestAlive) {
             next.phase = 'over';
             next.winner = !hostAlive ? 'guest' : 'host';
             next.log.push(!hostAlive
                 ? `${battle.guestName} wins!`
                 : `${battle.hostName} wins!`);
+        } else if (next.turn > limit) {
+            // A stall, not a match. Decided the way competitive Pokémon decides
+            // one: most left standing, then the healthiest team.
+            next.phase = 'over';
+            next.winner = this.config.pvpStallWinner(p1Team, p2Team);
+            next.stalled = true;
+            next.log.push(`Time! The battle ran to ${limit} turns.`);
+            next.log.push(next.winner === null
+                ? "It's a draw — both teams are equally worn down."
+                : `${next.winner === 'host' ? battle.hostName : battle.guestName} wins on remaining Pokémon!`);
         } else {
             const owed = this.sidesOwedSwitch(next);
             if (owed.host || owed.guest) {
@@ -959,9 +989,12 @@ class FlickemonPvp {
                 .map(([stat, label]) => {
                     const n = Math.max(-6, Math.min(6, Number(st[stat]) || 0));
                     if (!n) return '';
-                    const arrows = (n > 0 ? '▲' : '▼').repeat(Math.min(3, Math.abs(n)));
+                    // The multiplier, not the stage: "ATK x2" says what it does
+                    // to the next hit. "ATK +2" asks you to remember a table.
+                    const mult = n >= 0 ? (2 + n) / 2 : 2 / (2 - n);
+                    const shown = Number.isInteger(mult) ? mult : mult.toFixed(2).replace(/0+$/, '');
                     return `<span class="pvp-stage ${n > 0 ? 'up' : 'down'}"
-                                  title="${label} ${n > 0 ? '+' : ''}${n}">${label}${arrows}</span>`;
+                                  title="${label} ${n > 0 ? '+' : ''}${n}">${label} \u00d7${shown}</span>`;
                 })
                 .join('');
             const conf = c && c.confusedTurns > 0
@@ -975,7 +1008,8 @@ class FlickemonPvp {
                           + `${c.megaForm ? '<span class="pvp-rarity mega" title="Mega — deals 1.3x damage">◆</span>' : ''}`;
 
         const over = phase === 'over';
-        const iWon = over && ((st.winner === 'host') === (this.role === 'host'));
+        const drawn = over && !st.winner;
+        const iWon = over && !drawn && ((st.winner === 'host') === (this.role === 'host'));
 
         // Claim the victory reward once, on the first render that shows a win.
         // renderBattle runs on every poll, so the flag is what keeps a single
@@ -1003,7 +1037,10 @@ class FlickemonPvp {
         // A defeat starts the no-reward window. Same once-only guard, for the
         // same reason — and recorded on the loser's own device, so it is the
         // person who lost who carries it.
-        if (over && !iWon && !this.lossRecorded) {
+        // A draw is not a defeat: nobody was beaten, so nobody carries the
+        // lockout. Without the `drawn` guard a timed-out battle would punish
+        // both players for a stalemate neither chose.
+        if (over && !iWon && !drawn && !this.lossRecorded) {
             this.lossRecorded = true;
             this.engine.recordPvpLoss()
                 .then(() => this.renderBattle())
@@ -1014,26 +1051,54 @@ class FlickemonPvp {
             <div class="pvp-battle">
                 <div class="pvp-mode-tag">${mode.label}</div>
                 <div class="pvp-field">
-                    <div class="pvp-side foe">
-                        <div class="pvp-nameplate">
-                            ${this.renderBalls(foeTeam, foeIndex)}
-                            <span class="pvp-mon-name">${esc(foe.name)}</span>
-                            <span class="pvp-mon-lv">Lv${foe.level}</span>${rarity(foe)}${badge(foe)}${stages(foe)}
-                            <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(foe))}" style="width:${hpPct(foe)}%"></div></div>
-                        </div>
-                        <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}${foe.megaForm ? ' is-mega' : ''}" src="${this.config.getSpriteUrl(foe.spriteId ?? foe.speciesId, foe.shiny)}"
+                    <!-- The diagonal the series has used since 1996: the foe up
+                         and to the right, you down and to the left, each on its
+                         own platform. Absolute placement rather than flex rows,
+                         because that composition is the whole look. -->
+                    <div class="pvp-scene">
+                        <div class="pvp-plate foe-plate"></div>
+                        <div class="pvp-plate my-plate"></div>
+
+                        <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}${foe.megaForm ? ' is-mega' : ''}"
+                             src="${this.config.getSpriteUrl(foe.spriteId ?? foe.speciesId, foe.shiny)}"
                              onerror="this.classList.add('sprite-missing'); this.removeAttribute('src');"
                              alt="${esc(foe.name)}"/>
-                    </div>
-                    <div class="pvp-side mine">
-                        <img class="pvp-sprite my-sprite${me.shiny ? ' is-shiny' : ''}${me.megaForm ? ' is-mega' : ''}" src="${this.config.getBackSpriteUrl(me.spriteId ?? me.speciesId, me.shiny)}"
-                             onerror="this.src='${this.config.getSpriteUrl(me.spriteId ?? me.speciesId, me.shiny)}'" alt="${esc(me.name)}"/>
-                        <div class="pvp-nameplate">
-                            ${this.renderBalls(myTeam, myIndex)}
-                            <span class="pvp-mon-name">${esc(me.name)}</span>
-                            <span class="pvp-mon-lv">Lv${me.level}</span>${rarity(me)}${badge(me)}${stages(me)}
-                            <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(me))}" style="width:${hpPct(me)}%"></div></div>
-                            <div class="pvp-hp-num">${me.hp}/${me.maxHp}</div>
+                        <img class="pvp-sprite my-sprite${me.shiny ? ' is-shiny' : ''}${me.megaForm ? ' is-mega' : ''}"
+                             src="${this.config.getBackSpriteUrl(me.spriteId ?? me.speciesId, me.shiny)}"
+                             onerror="this.src='${this.config.getSpriteUrl(me.spriteId ?? me.speciesId, me.shiny)}'"
+                             alt="${esc(me.name)}"/>
+
+                        <div class="pvp-plateinfo foe-info">
+                            ${stages(foe)}
+                            <div class="pvp-nameplate">
+                                <div class="pvp-plate-top">
+                                    <span class="pvp-mon-name">${esc(foe.name)}</span>
+                                    <span class="pvp-mon-lv">Lv${foe.level}</span>
+                                </div>
+                                <div class="pvp-plate-marks">${rarity(foe)}${badge(foe)}</div>
+                                <div class="pvp-hp-row">
+                                    <span class="pvp-hp-tag">HP</span>
+                                    <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(foe))}" style="width:${hpPct(foe)}%"></div></div>
+                                </div>
+                                ${this.renderBalls(foeTeam, foeIndex)}
+                            </div>
+                        </div>
+
+                        <div class="pvp-plateinfo my-info">
+                            ${stages(me)}
+                            <div class="pvp-nameplate">
+                                <div class="pvp-plate-top">
+                                    <span class="pvp-mon-name">${esc(me.name)}</span>
+                                    <span class="pvp-mon-lv">Lv${me.level}</span>
+                                </div>
+                                <div class="pvp-plate-marks">${rarity(me)}${badge(me)}</div>
+                                <div class="pvp-hp-row">
+                                    <span class="pvp-hp-tag">HP</span>
+                                    <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(me))}" style="width:${hpPct(me)}%"></div></div>
+                                </div>
+                                <div class="pvp-hp-num">${me.hp}/${me.maxHp}</div>
+                                ${this.renderBalls(myTeam, myIndex)}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1041,9 +1106,11 @@ class FlickemonPvp {
                 <div class="pvp-log">${(log || []).slice(-4).map(l => `<div>${esc(l)}</div>`).join('')}</div>
 
                 ${over ? `
-                    <div class="pvp-result ${iWon ? 'win' : 'lose'}">
-                        <p class="pvp-8bit">${iWon ? 'YOU WIN!' : 'YOU LOSE...'}</p>
-                        ${iWon ? this.renderRewardNotice() : this.renderLossNotice()}
+                    <div class="pvp-result ${drawn ? 'draw' : iWon ? 'win' : 'lose'}">
+                        <p class="pvp-8bit">${drawn ? 'DRAW' : iWon ? 'YOU WIN!' : 'YOU LOSE...'}</p>
+                        ${drawn
+                            ? '<p class="pvp-sub">Time ran out with both teams equally worn down. No boost, and no lockout.</p>'
+                            : iWon ? this.renderRewardNotice() : this.renderLossNotice()}
                         <button class="pvp-btn pvp-exit-btn">BACK</button>
                     </div>
                 ` : this.renderActions(me, myTeam, myIndex, phase)}

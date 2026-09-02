@@ -184,6 +184,43 @@ const REWARD_SHINY_MULTIPLIER = 10;
 //
 // Anything above 1v1 needs switching, which means both clients must agree on
 // what a fainted Pokémon does — hence PVP_RULES_VERSION below.
+// ────────────────────── Turn limit ──────────────────────
+//
+// Two Pokémon that both carry recovery can trade 50% restores for a very long
+// time. Simulated, a 6v6 ran past 260 turns — which at a couple of seconds a
+// turn, with two humans deciding, is not a lunch break any more.
+//
+// Competitive Pokémon has the same problem and answers it the same way: a turn
+// cap with a tiebreak on what is left standing. The cap scales with the format
+// so it is only ever reached by a genuine stall, never by a normal match — the
+// median 6v6 finishes in 65 turns, well inside the 150 allowed.
+const PVP_TURN_LIMIT = { 1: 60, 3: 120, 6: 180 };
+
+function pvpTurnLimit(size) {
+    return PVP_TURN_LIMIT[size] || 120;
+}
+
+/**
+ * Who wins a battle that hit the cap.
+ *
+ * Most Pokémon still standing, then the healthiest team by fraction of total
+ * HP. A draw stays a draw rather than being broken arbitrarily.
+ */
+function pvpStallWinner(hostTeam, guestTeam) {
+    const alive = t => t.filter(c => c && c.hp > 0).length;
+    const health = t => {
+        const total = t.reduce((n, c) => n + (c.maxHp || 0), 0);
+        return total ? t.reduce((n, c) => n + Math.max(0, c.hp || 0), 0) / total : 0;
+    };
+
+    const [ha, ga] = [alive(hostTeam), alive(guestTeam)];
+    if (ha !== ga) return ha > ga ? 'host' : 'guest';
+
+    const [hh, gh] = [health(hostTeam), health(guestTeam)];
+    if (Math.abs(hh - gh) > 0.01) return hh > gh ? 'host' : 'guest';
+    return null;
+}
+
 const PVP_MODES = [
     { id: '1v1', size: 1, label: '1 v 1', blurb: 'One Pokémon each. Quick.',        rewardMs: 30 * 60 * 1000,  rewardLabel: '30 min' },
     { id: '3v3', size: 3, label: '3 v 3', blurb: 'Three each, switching allowed.',  rewardMs: 60 * 60 * 1000,  rewardLabel: '1 hour' },
@@ -2426,6 +2463,9 @@ window.FlickemonConfig = {
     REWARD_LEGENDARY_MULTIPLIER,
     REWARD_SHINY_MULTIPLIER,
     PVP_MODES,
+    PVP_TURN_LIMIT,
+    pvpTurnLimit,
+    pvpStallWinner,
     DEFAULT_PVP_MODE,
     PVP_RULES_VERSION,
     getPvpMode,

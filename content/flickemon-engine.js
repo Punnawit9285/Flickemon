@@ -1156,6 +1156,23 @@ class FlickemonEngine {
         return out.slice(0, Math.max(1, size));
     }
 
+    /**
+     * Whether this account can actually field a given format.
+     *
+     * A format is a promise about the shape of the match. Letting someone bring
+     * two Pokémon to a 3v3 hands them a match their opponent cannot lose fairly
+     * — the other side simply outlasts them — so the roster has to be exact
+     * rather than "up to".
+     *
+     * Returns { ok, have, need }: the caller needs the numbers to say what is
+     * missing, not just that something is.
+     */
+    canFieldPvpMode(modeId) {
+        const mode = this.config.getPvpMode(modeId);
+        const have = this.buildPvpTeam(this.config.MAX_TEAM_SIZE).length;
+        return { ok: have >= mode.size, have, need: mode.size, mode };
+    }
+
     // ─────────────────────────── Mega Evolution ───────────────────────────
     //
     // A stone belongs to one party member, forever. Mega is a persistent toggle
