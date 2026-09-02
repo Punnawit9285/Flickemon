@@ -1414,16 +1414,6 @@ class FlickemonEngine {
         return form;
     }
 
-    /** Milliseconds left on the post-loss lockout, or 0 when there is none. */
-    getRewardLock() {
-        const until = this.gameState.rewardLockUntil || 0;
-        if (until <= Date.now()) {
-            if (until) this.gameState.rewardLockUntil = 0;
-            return 0;
-        }
-        return until - Date.now();
-    }
-
     /**
      * Starts the no-reward window after a defeat.
      *

@@ -68,6 +68,7 @@ class FlickemonPvp {
         this.lastTurnRendered = -1;
         this.rewardClaimed = false;
         this.rewardResult = null;
+        this.musicOn = false;      // is the battle theme ours to hand back?
 
         // Lobby state, kept across re-renders of the lobby screen.
         this.modeId = this.config.DEFAULT_PVP_MODE;
@@ -1009,6 +1010,12 @@ class FlickemonPvp {
 
         const over = phase === 'over';
         const drawn = over && !st.winner;
+
+        // The result screen is where a win tells you to go and spend the boost
+        // on a lecture, so the theme stops there rather than looping under it.
+        if (over) this.stopBattleMusic();
+        else this.startBattleMusic();
+
         const iWon = over && !drawn && ((st.winner === 'host') === (this.role === 'host'));
 
         // Claim the victory reward once, on the first render that shows a win.
@@ -1049,6 +1056,7 @@ class FlickemonPvp {
 
         this.modal.body.innerHTML = `
             <div class="pvp-battle">
+                ${this.renderAudioToggle()}
                 <div class="pvp-mode-tag">${mode.label}</div>
                 <div class="pvp-field">
                     <!-- The diagonal the series has used since 1996: the foe up
@@ -1103,7 +1111,6 @@ class FlickemonPvp {
                                 <div class="pvp-hp-row">
                                     <span class="pvp-hp-tag">HP</span>
                                     <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(me))}" style="width:${hpPct(me)}%"></div></div>
-                                </div>
                                     <span class="pvp-hp-num">${me.hp}/${me.maxHp}</span>
                                     ${this.renderBalls(myTeam, myIndex)}
                                 </div>
@@ -1126,6 +1133,23 @@ class FlickemonPvp {
             </div>`;
 
         this.bindBattle();
+    }
+
+    /**
+     * A speaker in the corner of the battle screen.
+     *
+     * The music dock sits under the modal overlay, so while a battle is on
+     * screen there is no other way to silence the theme — and someone in a
+     * library needs one button, not a trip out of the battle and back.
+     * Nothing is drawn at all when no battle theme is configured.
+     */
+    renderAudioToggle() {
+        if (!this.musicOn) return '';
+        const st = this.ui.music && this.ui.music.getState();
+        const on = Boolean(st && st.playing);
+        const label = on ? 'Mute the battle theme' : 'Play the battle theme';
+        return `<button class="pvp-audio${on ? '' : ' off'}" title="${label}"
+                        aria-label="${label}">♪</button>`;
     }
 
     /** One marker per Pokémon: filled if it can still fight, hollow if it can't. */
@@ -1230,6 +1254,20 @@ class FlickemonPvp {
 
     bindBattle() {
         const body = this.modal.body;
+
+        // Flipped straight away rather than waiting for the frame to confirm:
+        // pause() and play() set `playing` synchronously, and a mute button
+        // that looks unpressed for half a second reads as broken.
+        body.querySelector('.pvp-audio')?.addEventListener('click', (e) => {
+            const music = this.ui.music;
+            if (!music) return;
+            music.toggle();
+            const on = music.playing;
+            const btn = e.currentTarget;
+            btn.classList.toggle('off', !on);
+            btn.title = on ? 'Mute the battle theme' : 'Play the battle theme';
+            btn.setAttribute('aria-label', btn.title);
+        });
 
         body.querySelectorAll('.pvp-move').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -1340,7 +1378,36 @@ class FlickemonPvp {
         </div>`;
     }
 
+    // ─────────────────────────── Battle music ───────────────────────────
+    //
+    // Only during an actual battle. The lobby is where one student reads six
+    // digits out to another, and music over that is an obstacle, not
+    // atmosphere.
+    //
+    // The page's existing player is reused rather than a second one created:
+    // two YouTube frames would talk over each other, and the rule that a
+    // lecture silences music lives on that one player — so a lecture starting
+    // mid-battle still wins, which is the whole point of the feature.
+
+    startBattleMusic() {
+        if (this.musicOn || !this.ui || typeof this.ui.getMusic !== 'function') return;
+        const music = this.ui.getMusic();
+        if (!music || typeof music.playBattleTheme !== 'function') return;
+        // False means the playlist file names no battle theme. Nothing was
+        // taken over, so there will be nothing to hand back.
+        this.musicOn = music.playBattleTheme();
+    }
+
+    /** Hands the player back to whatever the student was listening to before. */
+    stopBattleMusic() {
+        if (!this.musicOn) return;
+        this.musicOn = false;
+        const music = this.ui && this.ui.music;
+        if (music && typeof music.endBattleTheme === 'function') music.endBattleTheme();
+    }
+
     onOpponentLeft() {
+        this.stopBattleMusic();
         this.stopPolling();
         if (!this.modal) return;
         this.modal.body.innerHTML = `<div class="pvp-notice">
@@ -1352,6 +1419,7 @@ class FlickemonPvp {
     }
 
     async leave() {
+        this.stopBattleMusic();
         this.stopPolling();
         clearInterval(this.clockTimer);
         this.clockTimer = null;

@@ -54,3 +54,23 @@ window.FlickemonPlaylist = [
     // ─────────────── Add your music above ───────────────
 
 ];
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                                                                          ║
+ * ║   BATTLE THEME                                                           ║
+ * ║                                                                          ║
+ * ║   The one track that is not part of the list above: what plays during a  ║
+ * ║   PVP battle, and only during a PVP battle. Same two bits to change.     ║
+ * ║                                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * It loops until the battle is over, then whatever you were listening to
+ * before comes back — or the player closes again, if you had music off.
+ *
+ * Delete the line (or set it to null) and battles are silent. Nothing else
+ * changes.
+ */
+
+window.FlickemonBattleMusic =
+    { name: 'Pokemon Battle Music', url: 'https://www.youtube.com/watch?v=jjM5mUXc3Lk&list=PLsWUM3Sz8ORyKKz2gvoFRLV8w0a2Lf7BT' };

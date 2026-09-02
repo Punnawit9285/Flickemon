@@ -2,7 +2,13 @@ const ROOT = require('path').join(__dirname, '..') + '/';
 // Music: YouTube-only by construction, silenced by a lecture, and surviving
 // the widget being rebuilt underneath it.
 const fs = require('fs');
-global.window = { addEventListener() {} };
+// Listeners are captured, not discarded: the ENDED handling that keeps a
+// battle theme from handing over to the playlist lives inside one of them.
+const winListeners = {};
+global.window = {
+    addEventListener(type, fn) { (winListeners[type] = winListeners[type] || []).push(fn); },
+};
+global.location = { origin: 'https://flick.docchula.com' };
 require(ROOT + 'content/flickemon-playlist.js');
 require(ROOT + 'content/flickemon-music.js');
 const Music = global.window.FlickemonMusic;
@@ -264,6 +270,177 @@ console.log('\n=== the tab fallback ===');
 
     const build = fs.readFileSync(ROOT + 'build.sh', 'utf8');
     check('the player page ships', /player\/player\.html/.test(build));
+}
+
+console.log('\n=== the PVP battle theme ===');
+{
+    // A player that never touches a DOM: mount is the only method that needs
+    // one, and what these tests care about is which track it is handed.
+    const build = () => {
+        const before = (winListeners.message || []).length;
+        const m = new Music();
+        // Each instance registers its own listener, bound to its own `this`.
+        // Taking [0] would drive the first player built anywhere in this file
+        // — whose frame is null, so every message would be dropped and the
+        // assertions would pass on an empty log.
+        m.onMessage = (winListeners.message || [])[before];
+        m.mounted = [];
+        m.mount = (track, autoplay) => {
+            m.mounted.push({ track, autoplay });
+            m.playing = Boolean(autoplay);
+        };
+        return m;
+    };
+
+    const m = build();
+    check('the battle theme is read from the playlist file',
+        m.battleTrack && m.battleTrack.videoId, JSON.stringify(m.battleTrack));
+    check('and it loops, because a battle runs as long as it runs',
+        m.battleTrack.loop === true);
+
+    // The whole reason it is a separate entry rather than a flagged line: it is
+    // not a member of the list, so Next never reaches it and pressing play
+    // never starts it. Identity, not the URL — the same music being in the
+    // playlist as well is a perfectly reasonable thing for someone to want.
+    check('it is not a member of the playlist', !m.tracks.includes(m.battleTrack));
+    check('and it does not lengthen it',
+        m.tracks.length === window.FlickemonPlaylist.length,
+        `${m.tracks.length} vs ${window.FlickemonPlaylist.length}`);
+
+    console.log('\n  -- it gives the music back when the battle ends --');
+    {
+        const m = build();
+        m.index = 2;
+        m.playing = true;                       // already listening to track 3
+        check('the theme starts', m.playBattleTheme() === true);
+        check('and it is what is in the frame',
+            m.mounted.at(-1).track === m.battleTrack && m.mounted.at(-1).autoplay === true);
+        check('the screen says so', m.getState().battle === true
+            && m.getState().track === m.battleTrack);
+        check('a second call is a no-op, not a restart',
+            m.playBattleTheme() === true && m.mounted.length === 1, m.mounted.length);
+
+        m.endBattleTheme();
+        check('the previous track comes back',
+            m.mounted.at(-1).track === m.tracks[2] && m.mounted.at(-1).autoplay === true);
+        check('and the playlist is in charge again',
+            m.override === null && m.resume === null && m.getState().battle === false);
+    }
+
+    console.log('\n  -- and leaves silence alone --');
+    {
+        const m = build();
+        m.playing = false;                      // music was off
+        m.playBattleTheme();
+        m.endBattleTheme();
+        check('nothing is playing afterwards', m.playing === false);
+        check('no track was started on the way out', m.mounted.length === 1,
+            JSON.stringify(m.mounted.map(x => x.track.title)));
+    }
+
+    console.log('\n  -- a deliberate choice mid-battle wins --');
+    {
+        const m = build();
+        m.playing = false;
+        m.playBattleTheme();
+        m.load(1, true);                        // the student picked something
+        check('picking a track drops the override', m.override === null && m.resume === null);
+        m.endBattleTheme();
+        check('so the battle ending does not overrule them',
+            m.mounted.at(-1).track === m.tracks[1], m.mounted.at(-1).track.title);
+    }
+
+    console.log('\n  -- it repeats instead of handing over --');
+    {
+        const m = build();
+        check('the player listens for the frame', typeof m.onMessage === 'function');
+
+        const contentWindow = { postMessage() {} };
+        m.frame = { contentWindow, addEventListener() {} };
+        m.playBattleTheme();
+
+        const ended = () => m.onMessage({
+            origin: 'https://www.youtube-nocookie.com',
+            source: contentWindow,
+            data: JSON.stringify({ event: 'infoDelivery', info: { playerState: 0 } }),
+        });
+
+        ended();
+        check('a battle theme that runs out starts again',
+            m.mounted.at(-1).track === m.battleTrack, m.mounted.at(-1).track.title);
+        check('and does not drop the playlist into the battle',
+            m.override === m.battleTrack && m.mounted.length === 2, m.mounted.length);
+
+        // Outside a battle the same event must still advance normally.
+        m.endBattleTheme();
+        m.index = 0;
+        m.frame = { contentWindow, addEventListener() {} };
+        const before = m.mounted.length;
+        ended();
+        check('an ordinary track still advances to the next one',
+            m.mounted.length === before + 1 && m.mounted.at(-1).track === m.tracks[1],
+            m.mounted.at(-1).track.title);
+    }
+
+    console.log('\n  -- the embed URL --');
+    {
+        const m = build();
+        const src = m.frameSrc(m.battleTrack, true);
+        check('points at the no-cookie host', src.startsWith('https://www.youtube-nocookie.com/embed/'));
+        check('asks the embed to loop', /[?&]loop=1/.test(src), src);
+        check('autoplays', /[?&]autoplay=1/.test(src));
+
+        // A lone video needs a one-item playlist of itself or `loop` does nothing.
+        const solo = m.frameSrc({ videoId: 'jfKfPfyJRdk', listId: null, loop: true }, true);
+        check('a single video is given itself to loop over',
+            /[?&]playlist=jfKfPfyJRdk/.test(solo), solo);
+        const listed = m.frameSrc({ videoId: 'jfKfPfyJRdk', listId: 'PLabc', loop: true }, true);
+        check('a real playlist is not', !/[?&]playlist=/.test(listed), listed);
+
+        const plain = m.frameSrc(m.tracks[0], true);
+        check('ordinary tracks do not loop', !/[?&]loop=/.test(plain), plain);
+    }
+
+    console.log('\n  -- no battle theme configured is a supported answer --');
+    {
+        const saved = global.window.FlickemonBattleMusic;
+        global.window.FlickemonBattleMusic = null;
+        const m = build();
+        check('nothing is parsed', m.battleTrack === null);
+        check('and the caller is told nothing happened', m.playBattleTheme() === false);
+        check('so ending it does nothing either',
+            (m.endBattleTheme(), m.mounted.length === 0));
+        global.window.FlickemonBattleMusic = saved;
+    }
+}
+
+console.log('\n=== PVP asks for it, and hands it back ===');
+{
+    const pvp = code('content/flickemon-pvp.js');
+
+    check('the battle screen starts the theme', /startBattleMusic\(\)/.test(pvp)
+        && /playBattleTheme/.test(pvp));
+
+    // The three ways out of a battle. Missing any one leaves a theme looping
+    // over a lecture the student has gone back to.
+    check('the result screen ends it', /if \(over\) this\.stopBattleMusic\(\)/.test(pvp));
+    check('closing the modal ends it',
+        /async leave\(\) \{\s*this\.stopBattleMusic\(\);/.test(pvp));
+    check('an opponent walking out ends it',
+        /onOpponentLeft\(\) \{\s*this\.stopBattleMusic\(\);/.test(pvp));
+
+    // The lobby is where six digits get read out loud.
+    check('the lobby stays quiet',
+        !/renderLobby\(\)[\s\S]{0,400}?BattleMusic/.test(pvp));
+
+    // One player, so the lecture rule still reaches it.
+    check('it reuses the page player rather than making a second one',
+        /this\.ui\.getMusic\(\)/.test(pvp) && !/new (window\.)?FlickemonMusic/.test(pvp));
+
+    check('and there is a mute inside the battle screen',
+        /pvp-audio/.test(pvp) && /music\.toggle\(\)/.test(pvp));
+    check('which is styled where the dock cannot be reached',
+        /\.pvp-audio\b/.test(code('content/styles.css')));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

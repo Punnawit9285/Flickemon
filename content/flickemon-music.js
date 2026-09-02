@@ -48,6 +48,11 @@ class FlickemonMusic {
         this.volume = 40;
         this.frame = null;
         this.host = null;
+        // A track playing INSTEAD of the list — the PVP battle theme — and what
+        // to go back to when it finishes. Null whenever the playlist is in
+        // charge, which is the ordinary case.
+        this.override = null;
+        this.resume = null;
         this.listeners = [];
         this.lastSnapshot = null;   // see emit(): drops YouTube's 4Hz position pings
         this.blocked = false;
@@ -59,6 +64,7 @@ class FlickemonMusic {
         this.handshakeTries = 0;
 
         this.loadTracks();
+        this.loadBattleTrack();
         this.bindPlayerMessages();
         this.restoreSettings();
     }
@@ -91,6 +97,24 @@ class FlickemonMusic {
                     : `Track ${i + 1}`),
             };
         }).filter(Boolean);
+    }
+
+    /**
+     * Reads the battle theme out of flickemon-playlist.js.
+     *
+     * Deliberately a separate entry rather than a flag on a playlist line: it
+     * is not music anyone chose to listen to, so it has no business appearing
+     * in the list, being reached by Next, or being what starts when someone
+     * presses play. Leaving it out is a supported answer — battles are then
+     * silent, and nothing else changes.
+     */
+    loadBattleTrack() {
+        const { url, name } = FlickemonMusic.readEntry(window.FlickemonBattleMusic);
+        const parsed = FlickemonMusic.parseYouTubeUrl(url);
+        // loop, because a battle lasts as long as it lasts. A theme running out
+        // three turns from the end and leaving silence behind it is worse than
+        // no theme at all.
+        this.battleTrack = parsed ? { ...parsed, title: name || 'Battle', loop: true } : null;
     }
 
     /**
@@ -205,20 +229,28 @@ class FlickemonMusic {
     }
 
     /**
-     * Loads a track. `autoplay` only ever comes from a click, because YouTube
-     * will not start unmuted audio without one — and `allow="autoplay"` is what
-     * passes that gesture through to the frame.
+     * Loads a track from the playlist. `autoplay` only ever comes from a click,
+     * because YouTube will not start unmuted audio without one — and
+     * `allow="autoplay"` is what passes that gesture through to the frame.
+     *
+     * Reaching the list at all means the playlist is back in charge, so any
+     * battle theme standing in for it is dropped here rather than resumed later.
      */
     load(index, autoplay) {
         const track = this.tracks[index];
         if (!track) return;
 
         this.index = index;
-        this.ready = false;
-        this.blocked = false;
-        this.stopHandshake();
-        const host = this.ensureHost();
+        this.override = null;
+        this.resume = null;
+        this.mount(track, autoplay);
+    }
 
+    /**
+     * The embed URL for a track — the one string in here that has to be exactly
+     * right, so it is built somewhere a test can read it back.
+     */
+    frameSrc(track, autoplay) {
         const params = new URLSearchParams({
             enablejsapi: '1',
             origin: location.origin,
@@ -231,15 +263,35 @@ class FlickemonMusic {
             params.set('list', track.listId);
             if (!track.videoId) params.set('listType', 'playlist');
         }
+        if (track.loop) {
+            params.set('loop', '1');
+            // YouTube's own quirk: a single video loops only if it is handed a
+            // one-item playlist of itself to loop over. A real playlist loops
+            // on `loop` alone.
+            if (track.videoId && !track.listId) params.set('playlist', track.videoId);
+        }
 
-        const path = track.videoId
-            ? `/embed/${track.videoId}`
-            : `/embed/videoseries`;
+        const path = track.videoId ? `/embed/${track.videoId}` : '/embed/videoseries';
+        return `${MUSIC_ORIGIN}${path}?${params.toString()}`;
+    }
+
+    /**
+     * Puts a track in the frame. Split out from load() so the battle theme can
+     * play without being a member of the playlist — it has no index, and giving
+     * it one would put it in the list where nobody asked for it.
+     */
+    mount(track, autoplay) {
+        if (!track) return;
+
+        this.ready = false;
+        this.blocked = false;
+        this.stopHandshake();
+        const host = this.ensureHost();
 
         const slot = host.querySelector('.music-dock-frame');
         slot.innerHTML = `<iframe
             class="flickemon-music-frame"
-            src="${MUSIC_ORIGIN}${path}?${params.toString()}"
+            src="${this.frameSrc(track, autoplay)}"
             title="Flickémon music player"
             allow="autoplay; encrypted-media"
             referrerpolicy="strict-origin-when-cross-origin"
@@ -368,7 +420,12 @@ class FlickemonMusic {
 
             if (state !== null) {
                 if (state === YT_STATE.ENDED) {
-                    this.next();
+                    // A battle theme repeats instead of handing over. The `loop`
+                    // parameter covers this for most videos, but not all of them
+                    // honour it, and dropping a lofi stream into the middle of a
+                    // battle is exactly the failure worth two lines of code.
+                    if (this.override) this.mount(this.override, true);
+                    else this.next();
                 } else if (state === YT_STATE.PLAYING || state === YT_STATE.PAUSED) {
                     this.playing = state === YT_STATE.PLAYING;
                     this.emit();
@@ -416,6 +473,8 @@ class FlickemonMusic {
     stop() {
         clearTimeout(this.blockTimer);
         this.stopHandshake();
+        this.override = null;
+        this.resume = null;
         this.command('pauseVideo');
         if (this.host) {
             this.host.remove();
@@ -443,6 +502,57 @@ class FlickemonMusic {
             // still opens. Reading lastError keeps it from being logged.
             void chrome.runtime.lastError;
         });
+    }
+
+    // ─────────────────────── The battle theme ───────────────────────
+
+    /**
+     * Swaps the battle theme in for the duration of a PVP battle.
+     *
+     * The same player, not a second one: two YouTube frames would talk over
+     * each other, and the rule that a lecture silences music lives on this one.
+     *
+     * Autoplay is safe to ask for here even though a battle can begin on a poll
+     * rather than a click. Autoplay permission is delegated to the frame by
+     * `allow="autoplay"`, and the parent's own permission comes from sticky
+     * activation — the student clicked their way into a PVP battle, so this
+     * document has been interacted with and keeps that for its lifetime.
+     *
+     * Returns false when the playlist file names no battle theme, so the caller
+     * knows nothing was taken over and has nothing to hand back.
+     */
+    playBattleTheme() {
+        if (!this.battleTrack) return false;
+        if (this.override) return true;              // already in one
+        // What to come back to. Captured before mount(), which overwrites
+        // `playing` with the autoplay flag.
+        this.resume = { index: this.index, playing: this.playing };
+        this.override = this.battleTrack;
+        this.mount(this.battleTrack, true);
+        return true;
+    }
+
+    /**
+     * Ends the battle theme and puts things back as they were: the track that
+     * was playing resumes, and a student who had music off gets silence and
+     * their screen back rather than a player they never opened.
+     *
+     * Does nothing if the override is already gone — that means the student
+     * picked something else mid-battle, and overruling a deliberate choice
+     * would be worse than leaving it playing.
+     */
+    endBattleTheme() {
+        if (!this.override) return;
+        const back = this.resume;
+        this.override = null;
+        this.resume = null;
+        if (back && back.playing) this.load(back.index, true);
+        else this.stop();
+    }
+
+    /** What is actually in the frame: the battle theme, or the playlist's turn. */
+    currentTrack() {
+        return this.override || this.tracks[this.index] || null;
     }
 
     // ─────────────────────── The lecture wins ───────────────────────
@@ -497,7 +607,8 @@ class FlickemonMusic {
             blocked: this.blocked,
             index: this.index,
             volume: this.volume,
-            track: this.tracks[this.index] || null,
+            track: this.currentTrack(),
+            battle: Boolean(this.override),
             count: this.tracks.length,
             badEntries: this.badEntries || [],
         };

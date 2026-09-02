@@ -1648,11 +1648,11 @@ class FlickemonUI {
 
                     <ol class="music-list">
                         ${music.tracks.map((t, i) => `
-                            <li class="music-track ${i === st.index ? 'current' : ''}" data-i="${i}">
+                            <li class="music-track ${i === st.index && !st.battle ? 'current' : ''}" data-i="${i}">
                                 <span class="music-track-n">${i + 1}</span>
                                 <span class="music-track-title">${t.title}</span>
                                 ${t.listId && !t.videoId ? '<span class="music-track-tag">playlist</span>' : ''}
-                                ${i === st.index && st.playing ? '<span class="music-track-eq">♪</span>' : ''}
+                                ${i === st.index && st.playing && !st.battle ? '<span class="music-track-eq">♪</span>' : ''}
                             </li>`).join('')}
                     </ol>
 
@@ -1836,7 +1836,8 @@ class FlickemonUI {
                     <p class="guide-note">Only one boost runs at a time, and a second win while
                     it is running grants nothing. That is deliberate: the way to use a boost is
                     to go back to a lecture, not to queue for another match.
-                    ${c.PVP_LOSS_LOCKOUT_MS ? `Losing locks you out of PVP for ${mins(c.PVP_LOSS_LOCKOUT_MS)} minutes.` : ''}</p>`)}
+                    ${c.PVP_LOSS_LOCKOUT_MS ? `Losing costs you ${mins(c.PVP_LOSS_LOCKOUT_MS)} minutes of prizes — you can
+                    still battle, but nothing pays out until that runs down.` : ''}</p>`)}
 
                 ${section('Trading', `
                     <p>The same 6-digit code. Both trainers put one Pokémon on the table, both
