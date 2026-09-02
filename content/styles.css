@@ -143,6 +143,14 @@
     --flick-arena-paper: #f8f8f0;
     --flick-arena-shade: rgba(0, 0, 0, 0.18);
     --flick-arena-drop: rgba(0, 0, 0, 0.28);
+    --flick-arena-cloud: rgba(255, 255, 255, 0.55);
+    --flick-arena-hill: #8fae7a;
+    --flick-arena-hill-far: #a6bd90;
+    --flick-arena-scrub: #c2ad7e;
+    --flick-arena-furrow: rgba(140, 120, 84, 0.20);
+    --flick-arena-speck: rgba(120, 100, 68, 0.28);
+    --flick-arena-vignette: rgba(40, 30, 12, 0.22);
+    --flick-arena-plate-top: #cdb98c;
     --flick-trade: var(--ion-color-tertiary, #0ea5e9);
     --flick-trade-rgb: var(--ion-color-tertiary-rgb, 14, 165, 233);
     /* Green and red read differently on the scene's dark ground than on a page,
@@ -1971,33 +1979,101 @@
 .pvp-scene {
     position: relative;
     height: 232px;
-    background:
-        radial-gradient(120% 60% at 50% 100%,
-            var(--flick-arena-near) 0%, var(--flick-arena-far) 55%, transparent 56%),
-        linear-gradient(180deg,
-            var(--flick-arena-sky-top) 0%,
-            var(--flick-arena-sky-bot) 38%,
-            var(--flick-arena-far) 39%,
-            var(--flick-arena-near) 100%);
-    image-rendering: pixelated;
+    overflow: hidden;
+    background: var(--flick-arena-sky-bot);
 }
-/* A faint line on the horizon, so the ground reads as ground. */
+
+/* ── Sky: gradient, two banks of cloud, and a treeline sitting on the horizon.
+   Every layer is a gradient, so the whole arena still costs zero requests. ── */
+.pvp-sky {
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 39%;
+    background-image:
+        /* treeline lumps, bottoms parked on the horizon */
+        radial-gradient(ellipse 16% 34% at 10% 100%, var(--flick-arena-hill) 0 97%, transparent 100%),
+        radial-gradient(ellipse 22% 46% at 30% 100%, var(--flick-arena-hill) 0 97%, transparent 100%),
+        radial-gradient(ellipse 14% 28% at 48% 100%, var(--flick-arena-hill-far) 0 97%, transparent 100%),
+        radial-gradient(ellipse 26% 52% at 72% 100%, var(--flick-arena-hill) 0 97%, transparent 100%),
+        radial-gradient(ellipse 15% 30% at 92% 100%, var(--flick-arena-hill-far) 0 97%, transparent 100%),
+        /* cloud banks */
+        radial-gradient(ellipse 13% 20% at 18% 30%, var(--flick-arena-cloud) 0 72%, transparent 76%),
+        radial-gradient(ellipse 9% 15% at 27% 34%, var(--flick-arena-cloud) 0 72%, transparent 76%),
+        radial-gradient(ellipse 11% 17% at 66% 22%, var(--flick-arena-cloud) 0 72%, transparent 76%),
+        radial-gradient(ellipse 8% 13% at 74% 26%, var(--flick-arena-cloud) 0 72%, transparent 76%),
+        linear-gradient(180deg, var(--flick-arena-sky-top) 0%, var(--flick-arena-sky-bot) 100%);
+}
+
+/* ── Ground: a lit near field, furrows running to the horizon, and scrub ── */
+.pvp-ground {
+    position: absolute;
+    left: 0; right: 0; top: 39%; bottom: 0;
+    background-image:
+        /* scattered scrub, denser toward the viewer */
+        radial-gradient(ellipse 2.5% 6% at 8% 30%,  var(--flick-arena-scrub) 0 70%, transparent 74%),
+        radial-gradient(ellipse 2% 5% at 24% 52%,   var(--flick-arena-scrub) 0 70%, transparent 74%),
+        radial-gradient(ellipse 3% 7% at 58% 40%,   var(--flick-arena-scrub) 0 70%, transparent 74%),
+        radial-gradient(ellipse 2.5% 6% at 79% 66%, var(--flick-arena-scrub) 0 70%, transparent 74%),
+        radial-gradient(ellipse 2% 5% at 93% 34%,   var(--flick-arena-scrub) 0 70%, transparent 74%),
+        /* speckled grit */
+        repeating-radial-gradient(circle at 0 0,
+            var(--flick-arena-speck) 0 1px, transparent 1px 13px),
+        /* furrows, widening as they come forward */
+        repeating-linear-gradient(96deg,
+            var(--flick-arena-furrow) 0 1px, transparent 1px 22px),
+        /* light pooling in the near field */
+        radial-gradient(ellipse 90% 70% at 50% 100%,
+            var(--flick-arena-near) 0 55%, transparent 100%),
+        linear-gradient(180deg, var(--flick-arena-far) 0%, var(--flick-arena-near) 100%);
+}
+
+/* The horizon itself, plus a haze band so the two halves meet rather than
+   simply abut. */
 .pvp-scene::before {
     content: '';
     position: absolute;
-    left: 0; right: 0; top: 38%;
-    height: 2px;
-    background: var(--flick-arena-line);
-    opacity: 0.5;
+    left: 0; right: 0; top: 39%;
+    height: 10px;
+    transform: translateY(-5px);
+    background: linear-gradient(180deg,
+        transparent 0%, var(--flick-arena-line) 45%, var(--flick-arena-line) 55%, transparent 100%);
+    opacity: 0.45;
+}
+
+/* Corners pulled down so the eye lands on the two combatants. */
+.pvp-scene::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse 78% 68% at 50% 50%,
+        transparent 55%, var(--flick-arena-vignette) 100%);
 }
 
 /* The platforms each combatant stands on. */
 .pvp-plate {
     position: absolute;
     border-radius: 50%;
-    background: var(--flick-arena-plate);
+    /* Lit from above: a pale top face falling to the rim, and a hard bottom
+       edge so it reads as a raised disc rather than a painted oval. */
+    background:
+        radial-gradient(ellipse 70% 60% at 50% 28%,
+            var(--flick-arena-plate-top) 0 40%, transparent 72%),
+        var(--flick-arena-plate);
     border-bottom: 3px solid var(--flick-arena-plate-edge);
+    box-shadow:
+        inset 0 -3px 0 var(--flick-arena-plate-edge),
+        0 3px 6px var(--flick-arena-shade);
 }
+/* Stacking, bottom to top: backdrop, horizon haze, vignette, platforms, then
+   the combatants. The vignette has to sit UNDER the sprites — over them it
+   would quietly dim the two things the screen exists to show. */
+.pvp-sky, .pvp-ground { z-index: 0; }
+.pvp-scene::before { z-index: 1; }
+.pvp-scene::after { z-index: 2; }
+.pvp-plate { z-index: 3; }
+.pvp-sprite, .pvp-plateinfo { z-index: 4; }
+
 .pvp-plate.foe-plate { right: 6%;  top: 96px;    width: 132px; height: 26px; }
 .pvp-plate.my-plate  { left: 4%;   bottom: 14px; width: 160px; height: 32px; }
 

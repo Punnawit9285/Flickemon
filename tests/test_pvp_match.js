@@ -136,6 +136,50 @@ console.log('\n=== formats field exactly what they promise ===');
         'that let two Pokémon into a 3v3');
 }
 
+console.log('\n=== the arena stacks in the right order ===');
+{
+    // Comments are stripped first: a selector list is split on commas, and the
+    // prose above these rules is full of them.
+    const css = require('fs').readFileSync(ROOT + 'content/styles.css', 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+    const z = (sel) => {
+        for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+            if (!m[1].split(',').map(x => x.trim()).includes(sel)) continue;
+            const zi = /z-index:\s*(-?\d+)/.exec(m[2]);
+            if (zi) return +zi[1];
+        }
+        return null;
+    };
+
+    const layers = {
+        sky: z('.pvp-sky'), ground: z('.pvp-ground'),
+        horizon: z('.pvp-scene::before'), vignette: z('.pvp-scene::after'),
+        plate: z('.pvp-plate'), sprite: z('.pvp-sprite'), plate_info: z('.pvp-plateinfo'),
+    };
+    for (const [name, v] of Object.entries(layers)) {
+        check(`${name} has an explicit layer`, v !== null, 'implicit order is not a decision');
+    }
+    check('the backdrop is behind everything',
+        layers.sky === layers.ground && layers.sky < layers.horizon);
+    check('the horizon haze sits over the backdrop', layers.horizon < layers.vignette);
+    check('the vignette is UNDER the combatants',
+        layers.vignette < layers.plate && layers.vignette < layers.sprite,
+        'over them it would quietly dim the two things the screen exists to show');
+    check('sprites and nameplates are above the platforms',
+        layers.sprite > layers.plate && layers.plate_info > layers.plate);
+
+    // The backdrop is decoration; it must never eat a click meant for a button.
+    check('the vignette does not swallow clicks',
+        /\.pvp-scene::after\s*\{[^}]*pointer-events:\s*none/.test(css));
+
+    const pvpSrc = require('fs').readFileSync(ROOT + 'content/flickemon-pvp.js', 'utf8');
+    check('sky and ground are real layers in the markup',
+        pvpSrc.includes('pvp-sky') && pvpSrc.includes('pvp-ground'));
+    check('the arena still costs no requests',
+        !/background[^;]*url\(/.test(css.slice(css.indexOf('.pvp-sky'), css.indexOf('.pvp-plate'))),
+        'a gradient scene should not have picked up an image');
+}
+
 console.log('\n=== the battle screen renders every state a player can reach ===');
 {
     const src = require('fs').readFileSync(ROOT + 'content/flickemon-pvp.js', 'utf8');

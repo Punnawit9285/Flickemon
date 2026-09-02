@@ -1056,6 +1056,14 @@ class FlickemonPvp {
                          own platform. Absolute placement rather than flex rows,
                          because that composition is the whole look. -->
                     <div class="pvp-scene">
+                        <!-- Sky and ground are separate layers so each can be
+                             textured on its own terms: clouds and a treeline
+                             above the horizon, furrows and scrub below it.
+                             Doing it in one background means every texture has
+                             to be clipped to half the box, which CSS makes
+                             far more painful than two divs. -->
+                        <div class="pvp-sky"></div>
+                        <div class="pvp-ground"></div>
                         <div class="pvp-plate foe-plate"></div>
                         <div class="pvp-plate my-plate"></div>
 

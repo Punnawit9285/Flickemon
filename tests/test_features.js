@@ -995,6 +995,42 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
     check('the count refreshes after clearing', /refreshDebt\(\);/.test(ui));
   }
 
+  console.log('\n=== Ultra Beasts count as legendary ===');
+  {
+    // One-per-game encounters with legendary stat totals. Left unflagged they
+    // sat in the common pool, so the rarest creatures in Gen 7 spawned as often
+    // as a Rattata.
+    const UB = { 793:'Nihilego', 794:'Buzzwole', 795:'Pheromosa', 796:'Xurkitree',
+                 797:'Celesteela', 798:'Kartana', 799:'Guzzlord', 803:'Poipole',
+                 804:'Naganadel', 805:'Stakataka', 806:'Blacephalon' };
+
+    for (const [id, name] of Object.entries(UB)) {
+      const sp = cfg.getSpeciesById(Number(id));
+      check(`${name} is present and legendary`, sp && sp.name === name && sp.isLegendary === true,
+            sp ? `${sp.name} legendary=${sp.isLegendary}` : 'missing');
+    }
+
+    // The edit that set these first landed inside baseStats, because the regex
+    // matched the brace closing the stats object rather than the entry's.
+    const broken = cfg.POKEMON_REGISTRY.filter(sp =>
+      Object.keys(sp.baseStats).join() !== 'hp,attack,defense,speed');
+    check('no species has a corrupted stat block', broken.length === 0,
+          broken.slice(0, 4).map(s => s.name + ':' + Object.keys(s.baseStats)).join(' | '));
+    check('every stat is still a number',
+          cfg.POKEMON_REGISTRY.every(sp => Object.values(sp.baseStats).every(Number.isFinite)));
+
+    // Flagging them changes where they spawn, which is the point.
+    check('they are out of the ordinary encounter pool',
+          Object.keys(UB).every(id => {
+            const sp = cfg.getSpeciesById(Number(id));
+            return !cfg.POKEMON_REGISTRY.filter(x => !x.isLegendary).includes(sp);
+          }));
+    check('Necrozma was already legendary and stayed so',
+          cfg.getSpeciesById(800).isLegendary === true);
+    check('the Gen 7 starters are untouched',
+          [722, 725, 728].every(id => !cfg.getSpeciesById(id).isLegendary));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail?1:0);
 })();
