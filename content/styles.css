@@ -78,6 +78,10 @@
     --flick-burn: var(--ion-color-danger, #ef4444);
     --flick-para: var(--ion-color-warning, #eab308);
     --flick-pois: var(--type-poison);
+    --flick-sleep: var(--type-psychic);
+    --flick-freeze: var(--type-ice);
+    --flick-toxic: var(--type-poison);
+    --flick-confused: var(--type-ghost);
 
     /* The full-screen scenes lay down their own ground, so these are
      * deliberately independent of the host surface: the evolution scene reads
@@ -1969,6 +1973,38 @@
 .pvp-status.burn { background: var(--flick-burn); }
 .pvp-status.paralyze { background: var(--flick-para); color: var(--flick-on-type-dark); }
 .pvp-status.poison { background: var(--flick-pois); }
+.pvp-status.sleep { background: var(--flick-sleep); }
+.pvp-status.freeze { background: var(--flick-freeze); color: var(--flick-on-type-dark); }
+.pvp-status.toxic { background: var(--flick-toxic); }
+
+/* Stage changes, beside the status badge. Without these a +2 Attack is
+   invisible to the other player, and an invisible mechanic is one nobody
+   plays around. */
+.pvp-stage {
+    font-size: 0.52rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    padding: 1px 4px;
+    margin-left: 4px;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+.pvp-stage.up { background: var(--flick-hp-ok); color: var(--flick-on-type-dark); }
+.pvp-stage.down { background: var(--flick-hp-low); color: var(--flick-on-type); }
+.pvp-stage.confused { background: var(--flick-confused); color: var(--flick-on-type); }
+
+/* What a move does, now that half of them deal no damage. */
+.pvp-move-hint {
+    font-size: 0.55rem;
+    color: var(--flick-text-muted);
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+}
+.pvp-move.struggle {
+    grid-column: 1 / -1;
+    border-color: var(--flick-danger);
+    color: var(--flick-danger);
+}
 
 .pvp-hp { height: 8px; margin-top: 5px; background: var(--flick-hp-empty); border: 2px solid var(--flick-text); }
 .pvp-hp-fill { height: 100%; transition: width 0.35s steps(8); }

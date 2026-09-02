@@ -948,6 +948,26 @@ class FlickemonPvp {
         const hpClass = p => p > 50 ? 'ok' : p > 20 ? 'warn' : 'low';
         const badge = c => c.status
             ? `<span class="pvp-status ${c.status}">${this.B.STATUS_LABEL[c.status]}</span>` : '';
+
+        // Stage changes are invisible without this, and an invisible mechanic
+        // is one nobody plays around: a +2 Attack means nothing to the other
+        // player if their screen looks exactly the same as before.
+        const stages = (c) => {
+            const st = (c && c.stages) || {};
+            const SHORT = { attack: 'ATK', defense: 'DEF', speed: 'SPE' };
+            const out = Object.entries(SHORT)
+                .map(([stat, label]) => {
+                    const n = Math.max(-6, Math.min(6, Number(st[stat]) || 0));
+                    if (!n) return '';
+                    const arrows = (n > 0 ? '▲' : '▼').repeat(Math.min(3, Math.abs(n)));
+                    return `<span class="pvp-stage ${n > 0 ? 'up' : 'down'}"
+                                  title="${label} ${n > 0 ? '+' : ''}${n}">${label}${arrows}</span>`;
+                })
+                .join('');
+            const conf = c && c.confusedTurns > 0
+                ? '<span class="pvp-stage confused" title="Confused">CNF</span>' : '';
+            return out + conf;
+        };
         // Worth knowing what you are up against before choosing a move.
         const rarity = c => `${c.legendary ? '<span class="pvp-rarity legendary" title="Legendary">★</span>' : ''}`
                           + `${c.custom ? `<span class="pvp-rarity custom" title="${esc(this.config.CUSTOM_LABEL)}">${this.config.CUSTOM_MARK}</span>` : ''}`
@@ -998,7 +1018,7 @@ class FlickemonPvp {
                         <div class="pvp-nameplate">
                             ${this.renderBalls(foeTeam, foeIndex)}
                             <span class="pvp-mon-name">${esc(foe.name)}</span>
-                            <span class="pvp-mon-lv">Lv${foe.level}</span>${rarity(foe)}${badge(foe)}
+                            <span class="pvp-mon-lv">Lv${foe.level}</span>${rarity(foe)}${badge(foe)}${stages(foe)}
                             <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(foe))}" style="width:${hpPct(foe)}%"></div></div>
                         </div>
                         <img class="pvp-sprite foe-sprite${foe.shiny ? ' is-shiny' : ''}${foe.megaForm ? ' is-mega' : ''}" src="${this.config.getSpriteUrl(foe.spriteId ?? foe.speciesId, foe.shiny)}"
@@ -1011,7 +1031,7 @@ class FlickemonPvp {
                         <div class="pvp-nameplate">
                             ${this.renderBalls(myTeam, myIndex)}
                             <span class="pvp-mon-name">${esc(me.name)}</span>
-                            <span class="pvp-mon-lv">Lv${me.level}</span>${rarity(me)}${badge(me)}
+                            <span class="pvp-mon-lv">Lv${me.level}</span>${rarity(me)}${badge(me)}${stages(me)}
                             <div class="pvp-hp"><div class="pvp-hp-fill ${hpClass(hpPct(me))}" style="width:${hpPct(me)}%"></div></div>
                             <div class="pvp-hp-num">${me.hp}/${me.maxHp}</div>
                         </div>
@@ -1065,6 +1085,43 @@ class FlickemonPvp {
             `;
         }
 
+        // What a move actually does, since half of them no longer deal damage
+        // and "GRASS · 15/15" says nothing about Sleep Powder.
+        const moveHint = (m) => {
+            const bits = [];
+            if (m.power) bits.push(`${m.power} pow`);
+            if (m.stages) {
+                const who = m.stagesTarget === 'self' ? 'your' : 'foe';
+                bits.push(Object.entries(m.stages)
+                    .map(([k, v]) => `${who} ${k.slice(0, 3).toUpperCase()} ${v > 0 ? '+' : ''}${v}`)
+                    .join(' '));
+            }
+            if (m.heal) bits.push(`heal ${Math.round(m.heal * 100)}%`);
+            if (m.effect && m.effect !== 'flinch') {
+                const label = m.effect === 'confuse' ? 'confuse' : this.B.STATUS_LABEL[m.effect] || m.effect;
+                bits.push(m.chance >= 1 ? label : `${label} ${Math.round((m.chance || 0) * 100)}%`);
+            }
+            return bits.join(' · ');
+        };
+
+        // Every move exhausted used to leave four disabled buttons and no legal
+        // action — a soft-lock. Struggle is what the games do instead.
+        const outOfPP = me.moves.every(m => m.ppLeft <= 0);
+        if (outOfPP) {
+            return `
+                <div class="pvp-moves">
+                    <button class="pvp-move struggle" data-move="struggle"
+                            ${this.pendingAction ? 'disabled' : ''}>
+                        <span class="pvp-move-name">Struggle</span>
+                        <span class="pvp-move-meta">NO PP LEFT · HURTS YOU</span>
+                    </button>
+                </div>
+                ${bench.length ? `
+                    <button class="pvp-btn ghost pvp-switch-open" ${this.pendingAction ? 'disabled' : ''}>
+                        SWITCH (${bench.length})
+                    </button>` : ''}`;
+        }
+
         return `
             <div class="pvp-moves">
                 ${me.moves.map(m => `
@@ -1072,6 +1129,7 @@ class FlickemonPvp {
                             ${this.pendingAction || m.ppLeft <= 0 ? 'disabled' : ''}>
                         <span class="pvp-move-name">${esc(m.name)}</span>
                         <span class="pvp-move-meta">${m.type.toUpperCase()} · ${m.ppLeft}/${m.pp}</span>
+                        <span class="pvp-move-hint">${esc(moveHint(m))}</span>
                     </button>`).join('')}
             </div>
             ${bench.length ? `

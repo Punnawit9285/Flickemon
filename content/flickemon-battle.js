@@ -34,6 +34,8 @@ const TYPE_CHART = {
 
 /** Combined multiplier of `atkType` against a defender's type list. */
 function typeEffectiveness(atkType, defTypes) {
+    // Struggle is typeless: neither resisted nor boosted by anything.
+    if (atkType === 'typeless') return 1;
     const row = TYPE_CHART[atkType] || {};
     return (defTypes || []).reduce((mult, t) => mult * (row[t] === undefined ? 1 : row[t]), 1);
 }
@@ -125,6 +127,78 @@ const MOVES = [
     { id: 'moonblast',   name: 'Moonblast',    type: 'fairy',    power: 95,  accuracy: 100, pp: 15 },
 ];
 
+// ── Tactical moves ──
+//
+// Everything above is "pick the biggest number". These are the turns you spend
+// on something other than damage, and they are where a battle stops being an
+// exchange of hit points and starts being a decision. Every type gets at least
+// one, so no line is locked out of playing that way.
+const TACTICAL_MOVES = [
+    // Setup: trade this turn for every turn after it.
+    { id: 'swords-dance', name: 'Swords Dance', type: 'normal', power: 0, accuracy: 100, pp: 20,
+      stages: { attack: 2 }, stagesTarget: 'self' },
+    { id: 'agility',      name: 'Agility',      type: 'psychic', power: 0, accuracy: 100, pp: 30,
+      stages: { speed: 2 }, stagesTarget: 'self' },
+    { id: 'iron-defense', name: 'Iron Defense', type: 'steel',   power: 0, accuracy: 100, pp: 15,
+      stages: { defense: 2 }, stagesTarget: 'self' },
+    { id: 'calm-mind',    name: 'Calm Mind',    type: 'psychic', power: 0, accuracy: 100, pp: 20,
+      stages: { attack: 1, defense: 1 }, stagesTarget: 'self' },
+    { id: 'dragon-dance', name: 'Dragon Dance', type: 'dragon',  power: 0, accuracy: 100, pp: 20,
+      stages: { attack: 1, speed: 1 }, stagesTarget: 'self' },
+
+    // Control: make the other side worse instead of yourself better.
+    { id: 'growl',        name: 'Growl',        type: 'normal',  power: 0, accuracy: 100, pp: 40,
+      stages: { attack: -1 } },
+    { id: 'screech',      name: 'Screech',      type: 'normal',  power: 0, accuracy: 85,  pp: 40,
+      stages: { defense: -2 } },
+    { id: 'string-shot',  name: 'String Shot',  type: 'bug',     power: 0, accuracy: 95,  pp: 40,
+      stages: { speed: -2 } },
+    { id: 'sand-attack',  name: 'Sand Attack',  type: 'ground',  power: 0, accuracy: 100, pp: 15,
+      stages: { attack: -1, speed: -1 } },
+
+    // Status: whole turns taken off the opponent.
+    { id: 'sleep-powder', name: 'Sleep Powder', type: 'grass',   power: 0, accuracy: 75,  pp: 15,
+      effect: 'sleep', chance: 1 },
+    { id: 'hypnosis',     name: 'Hypnosis',     type: 'psychic', power: 0, accuracy: 60,  pp: 20,
+      effect: 'sleep', chance: 1 },
+    { id: 'toxic',        name: 'Toxic',        type: 'poison',  power: 0, accuracy: 90,  pp: 10,
+      effect: 'toxic', chance: 1 },
+    { id: 'will-o-wisp',  name: 'Will-O-Wisp',  type: 'fire',    power: 0, accuracy: 85,  pp: 15,
+      effect: 'burn', chance: 1 },
+    { id: 'confuse-ray',  name: 'Confuse Ray',  type: 'ghost',   power: 0, accuracy: 100, pp: 10,
+      effect: 'confuse', chance: 1 },
+    { id: 'sweet-kiss',   name: 'Sweet Kiss',   type: 'fairy',   power: 0, accuracy: 75,  pp: 10,
+      effect: 'confuse', chance: 1 },
+    { id: 'icy-wind',     name: 'Icy Wind',     type: 'ice',     power: 55, accuracy: 95, pp: 15,
+      stages: { speed: -1 } },
+    { id: 'rock-tomb',    name: 'Rock Tomb',    type: 'rock',    power: 60, accuracy: 95, pp: 15,
+      stages: { speed: -1 } },
+    { id: 'aurora-beam',  name: 'Aurora Beam',  type: 'ice',     power: 65, accuracy: 100, pp: 20,
+      stages: { attack: -1 }, stageChance: 0.3 },
+    { id: 'crunch',       name: 'Crunch',       type: 'dark',    power: 80, accuracy: 100, pp: 15,
+      stages: { defense: -1 }, stageChance: 0.2 },
+    { id: 'low-sweep',    name: 'Low Sweep',    type: 'fighting', power: 65, accuracy: 100, pp: 20,
+      stages: { speed: -1 } },
+    { id: 'mud-shot',     name: 'Mud Shot',     type: 'ground',  power: 55, accuracy: 95,  pp: 15,
+      stages: { speed: -1 } },
+    { id: 'bubble-beam',  name: 'Bubble Beam',  type: 'water',   power: 65, accuracy: 100, pp: 20,
+      stages: { speed: -1 }, stageChance: 0.3 },
+    { id: 'charm',        name: 'Charm',        type: 'fairy',   power: 0,  accuracy: 100, pp: 20,
+      stages: { attack: -2 } },
+    { id: 'thunder-fang', name: 'Thunder Fang', type: 'electric', power: 65, accuracy: 95, pp: 15,
+      effect: 'paralyze', chance: 0.1 },
+
+    // Recovery: the reason a defensive setup can actually win.
+    { id: 'recover',      name: 'Recover',      type: 'normal',  power: 0, accuracy: 100, pp: 10,
+      heal: 0.5 },
+    { id: 'roost',        name: 'Roost',        type: 'flying',  power: 0, accuracy: 100, pp: 10,
+      heal: 0.5 },
+    { id: 'synthesis',    name: 'Synthesis',    type: 'grass',   power: 0, accuracy: 100, pp: 10,
+      heal: 0.5 },
+];
+
+MOVES.push(...TACTICAL_MOVES);
+
 const MOVES_BY_ID = MOVES.reduce((m, mv) => { m[mv.id] = mv; return m; }, {});
 const getMove = id => MOVES_BY_ID[id] || null;
 
@@ -135,22 +209,57 @@ const getMove = id => MOVES_BY_ID[id] || null;
  * padded with Normal moves. Fully deterministic: both players must derive the
  * same moveset for the same Pokémon or the battle would desync.
  */
+const TACTICAL_IDS = new Set(TACTICAL_MOVES.map(m => m.id));
+
+/**
+ * Four moves for a species at a level, chosen the same way on both clients.
+ *
+ * Three slots of damage and one tactical slot. Reserving that fourth slot is
+ * the point: sorting purely by power would fill every set with attacks, since
+ * a setup or status move has no power to sort by, and a battle of nothing but
+ * attacks has no decisions in it.
+ *
+ * Deterministic by construction — no RNG, and ties broken by id — because both
+ * clients build this independently and must agree exactly.
+ */
 function getMovesetFor(species, level = 50) {
     if (!species) return [];
-    const own = MOVES.filter(m => species.types.includes(m.type));
-    const normals = MOVES.filter(m => m.type === 'normal');
 
     // Higher-powered moves unlock with level, so a level 5 Pokémon can't open
     // with Hyper Beam.
-    const allowed = m => m.power <= Math.max(40, level * 2.2);
+    const powerAllowed = m => (m.power || 0) <= Math.max(40, level * 2.2);
+
+    // Sleep takes whole turns away from the other player, which is too swingy
+    // for the early game where a battle is only a few turns long anyway.
+    const SLEEP_LEVEL = 25;
+    const tacticalAllowed = m => m.effect !== 'sleep' || level >= SLEEP_LEVEL;
+
+    const byPowerThenId = (a, b) => (b.power - a.power) || a.id.localeCompare(b.id);
+    const own = MOVES.filter(m => species.types.includes(m.type));
+    const normals = MOVES.filter(m => m.type === 'normal');
 
     const picked = [];
-    const push = m => { if (m && picked.length < 4 && !picked.some(p => p.id === m.id)) picked.push(m); };
+    const push = (m, cap) => {
+        if (m && picked.length < cap && !picked.some(p => p.id === m.id)) picked.push(m);
+    };
 
-    own.filter(allowed).sort((a, b) => b.power - a.power).forEach(push);
-    normals.filter(allowed).sort((a, b) => b.power - a.power).forEach(push);
-    // Guarantee a usable move even at level 1.
-    push(getMove('tackle'));
+    // Three damaging slots: own types first, then Normal as filler.
+    const attacks = m => m.power > 0 && powerAllowed(m);
+    own.filter(attacks).sort(byPowerThenId).forEach(m => push(m, 3));
+    normals.filter(attacks).sort(byPowerThenId).forEach(m => push(m, 3));
+    push(getMove('tackle'), 3);          // a usable move even at level 1
+
+    // One tactical slot, taken from the species' OWN types before falling back
+    // to Normal. Sorting the two pools together instead handed almost every
+    // line Growl, because "growl" sorts ahead of "sleep-powder" — which made
+    // every Pokémon play the same way regardless of type.
+    const tacticalFrom = pool => pool
+        .filter(m => TACTICAL_IDS.has(m.id) && tacticalAllowed(m))
+        .sort((a, b) => a.id.localeCompare(b.id))[0];
+    push(tacticalFrom(own) || tacticalFrom(normals), 4);
+    // Nothing tactical available: fall back to a fourth attack.
+    own.filter(attacks).sort(byPowerThenId).forEach(m => push(m, 4));
+    normals.filter(attacks).sort(byPowerThenId).forEach(m => push(m, 4));
 
     return picked.slice(0, 4).map(m => ({ ...m, ppLeft: m.pp }));
 }
@@ -223,30 +332,121 @@ function toCombatant(pokemon, species, config) {
         attack: species.baseStats.attack,
         defense: species.baseStats.defense,
         speed: species.baseStats.speed,
-        status: null,          // 'burn' | 'paralyze' | 'poison'
+        status: null,          // burn | paralyze | poison | sleep | freeze | toxic
         flinched: false,
-        defenseStage: 0,
+        // Stage changes live together so every stat is boostable the same way.
+        stages: { attack: 0, defense: 0, speed: 0 },
+        confusedTurns: 0,
+        sleepTurns: 0,
+        toxicTurns: 0,
         moves: getMovesetFor(species, pokemon.level),
     };
 }
 
-const STATUS_LABEL = { burn: 'BRN', paralyze: 'PAR', poison: 'PSN' };
+const STATUS_LABEL = {
+    burn: 'BRN', paralyze: 'PAR', poison: 'PSN',
+    sleep: 'SLP', freeze: 'FRZ', toxic: 'TOX',
+};
+
+/**
+ * Struggle: what a Pokémon does with no PP left.
+ *
+ * Without it, a battle where every move ran dry left both players staring at
+ * four disabled buttons with no legal action — a genuine soft-lock, and
+ * reachable in 6v6 where matches run long. Typeless, so the type chart cannot
+ * make it super effective or immune.
+ */
+const STRUGGLE = {
+    id: 'struggle', name: 'Struggle', type: 'typeless',
+    power: 50, accuracy: 100, pp: Infinity, recoilUser: 0.25,
+};
+
+/** True when nothing in the moveset can still be used. */
+function isOutOfPP(c) {
+    return !!c && Array.isArray(c.moves) && c.moves.every(m => (m.ppLeft || 0) <= 0);
+}
+
+/**
+ * The move a chosen action resolves to.
+ *
+ * Struggle only stands in when EVERY move is spent. Choosing one exhausted move
+ * while others remain is still a refusal, and it reports why — silently eating
+ * the turn would leave a player pressing a button and seeing nothing happen.
+ */
+function resolveMove(c, moveId) {
+    if (isOutOfPP(c)) return { move: { ...STRUGGLE }, struggled: true };
+    const move = c.moves.find(m => m.id === moveId);
+    if (!move) return { move: null, struggled: false, reason: 'unknown' };
+    if (move.ppLeft <= 0) {
+        return { move: null, struggled: false, reason: 'nopp', name: move.name };
+    }
+    return { move, struggled: false };
+}
 
 // ─────────────────────────── Damage ───────────────────────────
 
-function effectiveAttack(c) {
-    // Burn halves physical attack, as in the games.
-    return c.status === 'burn' ? c.attack * 0.5 : c.attack;
+/**
+ * The games' stat-stage table: +1 is 1.5x, +2 is 2x, -1 is 2/3, and so on,
+ * clamped at six either way.
+ *
+ * Stages are what turn a battle into a decision. Without them every turn is
+ * "pick the strongest move", because nothing you do this turn changes what
+ * next turn is worth — a setup move that trades one turn for doubled output is
+ * the oldest tactic in the series and the cheapest depth available here.
+ */
+const STAGE_CAP = 6;
+
+function stageMultiplier(stage) {
+    const s = Math.max(-STAGE_CAP, Math.min(STAGE_CAP, stage || 0));
+    return s >= 0 ? (2 + s) / 2 : 2 / (2 - s);
 }
 
-function effectiveDefense(c) {
-    const stage = Math.max(-6, Math.min(6, c.defenseStage || 0));
-    const mult = stage >= 0 ? (2 + stage) / 2 : 2 / (2 - stage);
-    return c.defense * mult;
+/** Reads a stage off a combatant, tolerating a document written by the opponent. */
+function stageOf(c, stat) {
+    const raw = c && c.stages ? Number(c.stages[stat]) : 0;
+    if (!Number.isFinite(raw)) return 0;
+    return Math.max(-STAGE_CAP, Math.min(STAGE_CAP, Math.trunc(raw)));
+}
+
+/**
+ * Applies a stage change and reports what to say about it.
+ * Returns null when the stat was already pinned, so the log stays truthful.
+ */
+function applyStage(c, stat, delta) {
+    c.stages = c.stages || {};
+    const before = stageOf(c, stat);
+    const after = Math.max(-STAGE_CAP, Math.min(STAGE_CAP, before + delta));
+    c.stages[stat] = after;
+    if (after === before) return null;
+
+    const magnitude = Math.abs(delta) >= 2 ? ' sharply' : '';
+    return `${STAT_LABEL[stat]}${magnitude} ${delta > 0 ? 'rose' : 'fell'}`;
+}
+
+const STAT_LABEL = { attack: 'Attack', defense: 'Defense', speed: 'Speed' };
+
+function effectiveAttack(c) {
+    // Burn halves physical attack, as in the games.
+    const burn = c.status === 'burn' ? 0.5 : 1;
+    return c.attack * stageMultiplier(stageOf(c, 'attack')) * burn;
+}
+
+/**
+ * `ignoreBoost` is passed on a critical hit: the games deliberately ignore the
+ * defender's positive Defense stages on a crit, so setting up defensively is
+ * strong but not an answer to everything.
+ */
+function effectiveDefense(c, ignoreBoost = false) {
+    const stage = stageOf(c, 'defense');
+    const used = ignoreBoost && stage > 0 ? 0 : stage;
+    // Legacy saves carried a bare defenseStage before stages became a group.
+    const legacy = Number.isFinite(c.defenseStage) ? c.defenseStage : 0;
+    return c.defense * stageMultiplier(used + (stage === 0 ? legacy : 0));
 }
 
 function effectiveSpeed(c) {
-    return c.status === 'paralyze' ? c.speed * 0.5 : c.speed;
+    const para = c.status === 'paralyze' ? 0.5 : 1;
+    return c.speed * stageMultiplier(stageOf(c, 'speed')) * para;
 }
 
 // The mega bonus, clamped on READ.
@@ -297,7 +497,7 @@ function computeDamage(attacker, defender, move, rng) {
     const base = Math.floor(
         Math.floor(
             Math.floor((2 * attacker.level) / 5 + 2) * move.power *
-            (effectiveAttack(attacker) / Math.max(1, effectiveDefense(defender)))
+            (effectiveAttack(attacker) / Math.max(1, effectiveDefense(defender, crit)))
         ) / 50
     ) + 2;
 
@@ -355,15 +555,59 @@ function resolveTurn(state, actionP1, actionP2, seed) {
         if (!action || action.type !== 'move') continue;
 
         if (me.flinched) { log.push(`${me.name} flinched!`); continue; }
+
+        // Sleep and freeze cost whole turns, which is what makes them worth a
+        // move slot. Both roll to end each turn BEFORE acting, so a one-turn
+        // sleep does not also cost the turn it wore off on.
+        if (me.status === 'sleep') {
+            me.sleepTurns = Math.max(0, (me.sleepTurns || 1) - 1);
+            if (me.sleepTurns <= 0) {
+                me.status = null;
+                log.push(`${me.name} woke up!`);
+            } else {
+                log.push(`${me.name} is fast asleep.`);
+                continue;
+            }
+        }
+        if (me.status === 'freeze') {
+            if (rng() < 0.20) {
+                me.status = null;
+                log.push(`${me.name} thawed out!`);
+            } else {
+                log.push(`${me.name} is frozen solid!`);
+                continue;
+            }
+        }
         if (me.status === 'paralyze' && rng() < 0.25) {
             log.push(`${me.name} is paralysed! It can't move!`);
             continue;
         }
 
-        const move = me.moves.find(m => m.id === action.moveId);
-        if (!move) continue;
-        if (move.ppLeft <= 0) { log.push(`${me.name} has no PP left for ${move.name}!`); continue; }
-        move.ppLeft -= 1;
+        // Confusion sits alongside a status rather than replacing one, and can
+        // turn a setup turn into a wasted one — the reason it is feared.
+        if (me.confusedTurns > 0) {
+            me.confusedTurns -= 1;
+            if (me.confusedTurns === 0) {
+                log.push(`${me.name} snapped out of its confusion!`);
+            } else if (rng() < 1 / 3) {
+                const hurt = Math.max(1, Math.floor(
+                    computeDamage(me, me, { power: 40, type: 'typeless' }, rng).damage));
+                me.hp = Math.max(0, me.hp - hurt);
+                log.push(`${me.name} is confused! It hurt itself in its confusion!`);
+                if (me.hp <= 0) log.push(`${me.name} fainted!`);
+                continue;
+            } else {
+                log.push(`${me.name} is confused...`);
+            }
+        }
+
+        const { move, struggled, reason, name } = resolveMove(me, action.moveId);
+        if (!move) {
+            if (reason === 'nopp') log.push(`${me.name} has no PP left for ${name}!`);
+            continue;
+        }
+        if (struggled) log.push(`${me.name} has no moves left!`);
+        else move.ppLeft -= 1;
 
         log.push(`${me.name} used ${move.name}!`);
 
@@ -392,16 +636,41 @@ function resolveTurn(state, actionP1, actionP2, seed) {
         }
 
         if (move.selfDefenseDrop) {
-            me.defenseStage = Math.max(-6, (me.defenseStage || 0) - 1);
-            log.push(`${me.name}'s Defense fell!`);
+            const said = applyStage(me, 'defense', -1);
+            if (said) log.push(`${me.name}'s ${said}!`);
         }
 
-        // Status / flinch
+        // Stat changes. `self` moves buff the user, the rest debuff the target,
+        // and a move can carry both damage and a change.
+        if (move.stages && rng() < (move.stageChance ?? 1)) {
+            const target = move.stagesTarget === 'self' ? me : foe;
+            for (const [stat, delta] of Object.entries(move.stages)) {
+                const said = applyStage(target, stat, delta);
+                if (said) log.push(`${target.name}'s ${said}!`);
+                else log.push(`${target.name}'s ${STAT_LABEL[stat]} won't go ${delta > 0 ? 'higher' : 'lower'}!`);
+            }
+        }
+
+        if (move.heal) {
+            const before = me.hp;
+            me.hp = Math.min(me.maxHp, me.hp + Math.floor(me.maxHp * move.heal));
+            if (me.hp > before) log.push(`${me.name} regained health!`);
+            else log.push(`${me.name}'s HP is already full!`);
+        }
+
+        // Status / flinch / confusion
         if (move.effect && rng() < (move.chance ?? 1)) {
             if (move.effect === 'flinch') {
                 foe.flinched = true;
+            } else if (move.effect === 'confuse') {
+                if (!foe.confusedTurns) {
+                    foe.confusedTurns = 2 + Math.floor(rng() * 3);   // 2-4 turns
+                    log.push(`${foe.name} became confused!`);
+                }
             } else if (!foe.status && !isImmuneToStatus(foe, move.effect)) {
                 foe.status = move.effect;
+                if (move.effect === 'sleep') foe.sleepTurns = 1 + Math.floor(rng() * 3);
+                if (move.effect === 'toxic') foe.toxicTurns = 0;
                 log.push(`${foe.name} was ${statusVerb(move.effect)}!`);
             }
         }
@@ -413,12 +682,20 @@ function resolveTurn(state, actionP1, actionP2, seed) {
     for (const side of ['p1', 'p2']) {
         const c = state[side];
         if (c.hp <= 0) continue;
+
         if (c.status === 'burn' || c.status === 'poison') {
             const tick = Math.max(1, Math.floor(c.maxHp / 16));
             c.hp = Math.max(0, c.hp - tick);
             log.push(`${c.name} is hurt by ${c.status === 'burn' ? 'its burn' : 'poison'}!`);
-            if (c.hp <= 0) log.push(`${c.name} fainted!`);
+        } else if (c.status === 'toxic') {
+            // Escalating, as in the games: harmless at first, then a clock the
+            // other player is racing. That is the whole appeal of Toxic.
+            c.toxicTurns = (c.toxicTurns || 0) + 1;
+            const tick = Math.max(1, Math.floor((c.maxHp / 16) * c.toxicTurns));
+            c.hp = Math.max(0, c.hp - tick);
+            log.push(`${c.name} is hurt by poison!`);
         }
+        if (c.hp <= 0) log.push(`${c.name} fainted!`);
     }
 
     return log;
@@ -426,12 +703,18 @@ function resolveTurn(state, actionP1, actionP2, seed) {
 
 function isImmuneToStatus(c, status) {
     if (status === 'burn') return c.types.includes('fire');
-    if (status === 'poison') return c.types.includes('poison') || c.types.includes('steel');
+    if (status === 'poison' || status === 'toxic') {
+        return c.types.includes('poison') || c.types.includes('steel');
+    }
     if (status === 'paralyze') return c.types.includes('electric');
+    if (status === 'freeze') return c.types.includes('ice');
     return false;
 }
 
 function statusVerb(status) {
+    if (status === 'sleep') return 'put to sleep';
+    if (status === 'freeze') return 'frozen solid';
+    if (status === 'toxic') return 'badly poisoned';
     return status === 'burn' ? 'burned' : status === 'poison' ? 'poisoned' : 'paralysed';
 }
 
