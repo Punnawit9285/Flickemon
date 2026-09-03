@@ -37,9 +37,20 @@ repository takes on the same third-party rights question the original does.
 These are deliberate constraints, not incidental facts. Changing any of them
 changes the project's exposure, so treat each as a rule rather than a habit:
 
-- **Non-commercial.** No sale, no licensing, no advertising, no donations, no
-  paid tiers, no in-app purchases, no cryptocurrency or token of any kind. The
-  project has never taken money and must not start.
+- **Non-commercial.** Nothing here is sold. No licensing, no advertising, no
+  paid tiers, no in-app purchases, no cryptocurrency or token of any kind, and
+  no charge of any kind for the extension or anything inside it.
+
+  Voluntary donations toward running costs are accepted, and they buy nothing.
+  That boundary is the whole of the rule: a donation must never unlock a
+  feature, a Pokémon, a shop item, a boost, or early access to any of them,
+  because a donation that buys something is a paid tier under a friendlier
+  name. Every student gets the same game whether they have given money or not.
+
+  The Poké Mart is not an exception and must not become one. Its prices are in
+  Poké Dollars, which are earned only by watching lectures — there is
+  deliberately no way to acquire them faster than by studying, and adding one
+  would turn an in-game sink into a storefront.
 - **Educational, and internal.** Flickémon exists to make lecture-watching on
   Flick less of a slog for students at Chulalongkorn's Faculty of Medicine. It
   is distributed within that organisation, not to the general public.

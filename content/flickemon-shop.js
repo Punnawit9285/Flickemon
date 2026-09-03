@@ -12,9 +12,11 @@
  *
  * Nothing here costs money. The only currency is time already spent watching
  * lectures, and there is deliberately no way to acquire it faster than by
- * studying — no bundles, no top-ups, no second currency. See LEGAL.md; the
- * project's rule is no monetisation of any kind, and an in-game sink is only
- * consistent with that for as long as it stays impossible to buy into.
+ * studying — no bundles, no top-ups, no second currency. See LEGAL.md: the
+ * project takes voluntary donations, and the rule that keeps that from being a
+ * paid tier is that money buys NOTHING. Every price on these three pages is
+ * denominated in hours of lectures, and adding any way to shorten that would
+ * turn an in-game sink into a storefront.
  *
  * ── No network ──
  *

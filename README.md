@@ -54,7 +54,7 @@ No build step — it's vanilla JS loaded directly by the browser.
 - Test on an actual Flick lecture page before opening a PR — describe what you tested in the PR description.
 - Match the existing code style (vanilla JS, no framework, JSDoc-style file banners).
 - Don't add new permissions to `manifest.json` without discussing in an issue first — this extension intentionally requests only `storage`.
-- Keep the constraints in [LEGAL.md](LEGAL.md) intact: no monetisation of any kind, no official Pokémon logo or branding, no assets taken from game files or ROMs, and no public store listing without discussing it in an issue first.
+- Keep the constraints in [LEGAL.md](LEGAL.md) intact: nothing sold and nothing paywalled (voluntary donations buy nothing), no official Pokémon logo or branding, no assets taken from game files or ROMs, and no public store listing without discussing it in an issue first.
 
 ## Status
 
