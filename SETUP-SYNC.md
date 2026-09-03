@@ -124,17 +124,41 @@ Rules allow any signed-in student to *read* a battle (you must read a lobby to
 find it) but restrict *writes* to the two participants — once the guest slot is
 claimed, a third student cannot interfere.
 
-## 5. Deploy the security rules
+## 5. Deploy the security rules **and the index**
 
 ```sh
-firebase deploy --only firestore:rules
+npm install -g firebase-tools     # once
+firebase login                    # once, as the project's Google account
+firebase deploy --only firestore:rules,firestore:indexes
 ```
 
-Or paste `firestore.rules` into **Firestore → Rules** in the console.
+`firebase.json` and `.firebaserc` in the repo root point the CLI at
+`firestore.rules`, `firestore.indexes.json` and the project — without them the
+deploy fails with *"Not in a Firebase project directory"*.
+
+**Two things go up, not one.**
+
+| File | Protects / enables | If it is missing |
+|---|---|---|
+| `firestore.rules` | every privacy guarantee: audience-gated feeds, owner-only leaderboard rows, friendship membership | sync, PVP, trading and friends fail with permission errors |
+| `firestore.indexes.json` | the one ordered query in the game — today's leaderboard | the global board returns an **error**, not an empty list, while everything else looks healthy |
+
+The index takes a few minutes to build after deploying. Until it reports
+**Enabled** in the console the board still errors, so check
+**Firestore → Indexes** before concluding something is broken.
 
 **Do not skip this.** The default production ruleset denies everything (sync will
 silently fail), and a permissive ruleset would expose every student's save to every
 other student.
+
+### Without the CLI
+
+Both can be done by hand in the console:
+
+- **Rules** — paste `firestore.rules` into **Firestore → Rules** → *Publish*.
+- **Index** — **Firestore → Indexes → Composite → Add index**: collection
+  `leaderboard`, field `dayKey` Ascending, field `todayExp` Descending, scope
+  Collection.
 
 ---
 
