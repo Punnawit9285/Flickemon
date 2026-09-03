@@ -2492,6 +2492,172 @@ function totalBaseStats(species) {
 }
 
 // Expose globally for other extension scripts
+// ─────────────────────────── Friends ───────────────────────────
+//
+// Pure helpers only. Everything here is a function of its arguments, which is
+// what lets the rules for a username, a day boundary and a published label be
+// tested without a browser, an account, or Firestore.
+
+/**
+ * How many friends one account may hold.
+ *
+ * A budget, not a social judgement. Reading friends' feeds costs one Firestore
+ * read each, against a free tier of 50,000 a day shared by every student in the
+ * faculty — so one person with 200 friends would spend a visible fraction of
+ * everyone else's allowance. Thirty is more than anyone studies with.
+ */
+const FRIEND_MAX = 30;
+
+/** Requests you may have outstanding. Stops the add screen being a spam tool. */
+const FRIEND_REQUEST_MAX = 20;
+
+const USERNAME_MIN = 3;
+const USERNAME_MAX = 20;
+
+// Names that would let someone impersonate the game or a member of staff.
+const RESERVED_USERNAMES = [
+    'admin', 'administrator', 'flickemon', 'flick', 'docchula', 'staff',
+    'moderator', 'mod', 'official', 'support', 'system', 'root', 'null',
+    'undefined', 'me', 'you',
+];
+
+/**
+ * The three things a student can choose to share, and what each one means in
+ * plain words. The panel builds its own controls from this list, so adding a
+ * fourth kind of sharing is one entry rather than a hunt through the UI.
+ *
+ * `key` is also the payload field name: what is published IS what is listed
+ * here, which keeps the promise and the implementation the same object.
+ */
+const FRIEND_FIELDS = [
+    { key: 'active', label: 'Online status',
+      detail: 'Whether you are watching a lecture right now.' },
+    { key: 'mon', label: 'Current Pokémon',
+      detail: 'Which Pokémon you have out, its level and its stats.' },
+    { key: 'today', label: "Today's progress",
+      detail: 'EXP earned and levels gained today. Never how long you studied.' },
+];
+
+/** Sharing everything, which is what a new account starts with. */
+function defaultFriendPrivacy() {
+    const out = {};
+    for (const f of FRIEND_FIELDS) out[f.key] = true;
+    return out;
+}
+
+/**
+ * Minutes a student counts as "studying now" after their last lecture tick.
+ *
+ * Generous on purpose: a pause to write a note, or a tab switch to look
+ * something up, is still studying, and a status that flickers off every time
+ * someone thinks is worse than no status at all.
+ */
+const FRIEND_ACTIVE_WINDOW_MS = 6 * 60 * 1000;
+
+// ─────────────────────────── The day ───────────────────────────
+//
+// Every student's day rolls over together, on Bangkok time, regardless of what
+// their device thinks the time is.
+//
+// Not device-local, for two reasons. A streak computed from local time can be
+// farmed by moving the clock; and a shared leaderboard where one student's
+// "today" started six hours before another's is not a comparison at all.
+const ICT_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** The YYYY-MM-DD a timestamp falls in, Bangkok time. */
+function dayKeyFor(ts = Date.now()) {
+    return new Date(ts + ICT_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** The day key `n` days before the one given. Used to walk a streak backwards. */
+function dayKeyBefore(key, n = 1) {
+    // The key is already a calendar date, so this is plain date arithmetic --
+    // the ICT offset was applied when the key was made and must not be applied
+    // twice. Going back through UTC midnight also steps over daylight saving,
+    // which Bangkok does not observe but a device's local timezone might.
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d) - (n * 86400000)).toISOString().slice(0, 10);
+}
+
+// How many days of progress a save keeps. Enough to show a streak worth having,
+// short enough that the ledger never becomes the largest thing in the save.
+const DAILY_HISTORY_DAYS = 14;
+
+// ─────────────────────────── Usernames ───────────────────────────
+
+/** The form a name is stored and compared in. Case and spacing never matter. */
+function normaliseUsername(raw) {
+    return String(raw == null ? '' : raw).trim().toLowerCase();
+}
+
+/**
+ * Whether a name may be claimed, and why not when it may not.
+ *
+ * Returns a reason rather than a boolean because every rejection here is shown
+ * to a student who is trying to do something reasonable, and "invalid" is not
+ * an explanation.
+ */
+function validateUsername(raw) {
+    const name = normaliseUsername(raw);
+    if (!name) return { ok: false, reason: 'Pick a name first.' };
+    if (name.length < USERNAME_MIN) {
+        return { ok: false, reason: `At least ${USERNAME_MIN} characters.` };
+    }
+    if (name.length > USERNAME_MAX) {
+        return { ok: false, reason: `At most ${USERNAME_MAX} characters.` };
+    }
+    if (!/^[a-z0-9._]+$/.test(name)) {
+        return { ok: false, reason: 'Letters, numbers, dots and underscores only.' };
+    }
+    if (!/^[a-z0-9]/.test(name)) {
+        return { ok: false, reason: 'Start with a letter or a number.' };
+    }
+    if (RESERVED_USERNAMES.includes(name)) {
+        return { ok: false, reason: 'That name is reserved.' };
+    }
+    return { ok: true, name };
+}
+
+/**
+ * The name published on the global board.
+ *
+ * A student who set a username gets it. One who did not gets the first three
+ * characters of their address and nothing more — enough to recognise yourself
+ * in a list, not enough for anyone else to identify you.
+ *
+ * The truncation happens HERE, before the write, and never at display time.
+ * That is the whole point: a full address is never put into a document the
+ * cohort can read, so there is nothing to leak even if a rule were wrong later.
+ */
+function leaderboardLabel(username, email) {
+    const name = normaliseUsername(username);
+    if (name) return name;
+    const local = String(email || '').split('@')[0];
+    if (!local) return 'anon';
+    return local.slice(0, 3) + '…';
+}
+
+// ─────────────────────────── Streaks ───────────────────────────
+
+/**
+ * Consecutive days ending today on which any progress was made.
+ *
+ * Today not counting yet is deliberate: a streak that breaks at midnight before
+ * anyone has had a chance to study would punish sleeping. So the walk starts at
+ * today when today has progress, and at yesterday when it does not — which
+ * means a streak survives until the day it is actually missed.
+ */
+function streakFrom(totalsByDay, todayKey = dayKeyFor()) {
+    const has = (k) => (totalsByDay && totalsByDay[k] && totalsByDay[k].exp > 0);
+    let cursor = has(todayKey) ? todayKey : dayKeyBefore(todayKey, 1);
+    let streak = 0;
+    while (has(cursor) && streak <= DAILY_HISTORY_DAYS) {
+        streak++;
+        cursor = dayKeyBefore(cursor, 1);
+    }
+    return streak;
+}
+
 window.FlickemonConfig = {
     SPRITE_BASE_URL,
     getSpriteUrl,
@@ -2508,6 +2674,22 @@ window.FlickemonConfig = {
     MEGA_STONE_CHANCE,
     MEGA_STONE_SVG,
     megaFormsFor,
+    FRIEND_MAX,
+    FRIEND_REQUEST_MAX,
+    FRIEND_FIELDS,
+    FRIEND_ACTIVE_WINDOW_MS,
+    defaultFriendPrivacy,
+    USERNAME_MIN,
+    USERNAME_MAX,
+    RESERVED_USERNAMES,
+    normaliseUsername,
+    validateUsername,
+    leaderboardLabel,
+    ICT_OFFSET_MS,
+    DAILY_HISTORY_DAYS,
+    dayKeyFor,
+    dayKeyBefore,
+    streakFrom,
     isFullyEvolved,
     finalFormOf,
     megaSourceFor,

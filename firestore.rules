@@ -1,8 +1,13 @@
 rules_version = '2';
 
 // Flickémon save data.
-// Deploy with:  firebase deploy --only firestore:rules
+// Deploy with:  firebase deploy --only firestore:rules,firestore:indexes
 //   (or paste into Firebase console → Firestore → Rules → Publish)
+//
+// ⚠️ TWO things must be deployed, not one. The global leaderboard runs an
+// ordered query, and Firestore answers an un-indexed query with an ERROR rather
+// than an empty list — so firestore.indexes.json has to go up as well or the
+// board is broken while everything else looks fine.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -84,6 +89,95 @@ service cloud.firestore {
 
       // Only the host clears their own table.
       allow delete: if signedInStudent() && resource.data.host == request.auth.uid;
+    }
+
+    // ───────────────────────── The friend system ─────────────────────────
+    //
+    // These rules ARE the privacy settings. Every toggle in the friends screen
+    // works by changing what gets written, never by asking a client not to
+    // display something — because the client is on the student's own disk and
+    // can be edited. Rules gate whole documents and cannot filter fields, so
+    // the design is "publish what you chose to share": a disabled field is
+    // absent, and a blocked friend is absent from the audience list.
+
+    function isMine(uid) {
+      return signedInStudent() && request.auth.uid == uid;
+    }
+
+    // Name claims. Create-only-if-absent is what Firestore's `create` already
+    // means, so a name cannot be taken from someone who holds it; only the
+    // holder can release or repoint their own.
+    match /usernames/{name} {
+      allow read: if signedInStudent();
+      allow create: if signedInStudent()
+                    && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if signedInStudent()
+                            && resource.data.uid == request.auth.uid;
+    }
+
+    // Lookup by email WITHOUT storing an email: the document id is a hash of
+    // the address, so it can only be found by someone who already knows it.
+    // Reading the whole collection tells an attacker nothing but hashes.
+    match /emailKeys/{hash} {
+      allow read: if signedInStudent();
+      allow create: if signedInStudent()
+                    && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if signedInStudent()
+                            && resource.data.uid == request.auth.uid;
+    }
+
+    // Readable by the whole cohort, which is exactly why it must never carry an
+    // email address or any progress — only a name someone chose to publish.
+    match /profiles/{uid} {
+      allow read: if signedInStudent();
+      allow write: if isMine(uid);
+    }
+
+    // One document per pair, id-ordered so both sides address the same one.
+    // `members` is pinned on update: without that, either side could rewrite
+    // who the friendship is with and read a stranger's feed through it.
+    match /friendships/{pairKey} {
+      allow read: if signedInStudent() && request.auth.uid in resource.data.members;
+
+      allow create: if signedInStudent()
+                    && request.auth.uid in request.resource.data.members
+                    && request.resource.data.members.size() == 2
+                    && request.resource.data.requestedBy == request.auth.uid
+                    && request.resource.data.accepted == false;
+
+      allow update: if signedInStudent()
+                    && request.auth.uid in resource.data.members
+                    && request.resource.data.members == resource.data.members
+                    && request.resource.data.requestedBy == resource.data.requestedBy;
+
+      // Either side can walk away.
+      allow delete: if signedInStudent() && request.auth.uid in resource.data.members;
+    }
+
+    // The feed a student publishes about themselves. `audience` lists exactly
+    // who may read it, and it is checked from the document itself rather than
+    // with get() on the friendship — a get() would cost a read per evaluation
+    // and count against the 10-lookup limit.
+    //
+    // The audience is written by the owner, so a student who has not accepted
+    // you, or who has blocked you, simply never put you in it.
+    match /feeds/{uid} {
+      allow read: if signedInStudent()
+                  && (request.auth.uid == uid
+                      || request.auth.uid in resource.data.audience);
+      allow write: if isMine(uid);
+    }
+
+    // The global board. Cohort-readable, so:
+    //   - the row exists only once a student opts in, and deleting it is how
+    //     they leave;
+    //   - it carries a LABEL, never an email — the extension truncates before
+    //     writing, so a full address never reaches this document at all;
+    //   - only the owner may write their own row, so nobody can post a score
+    //     for someone else or tamper with a rival's.
+    match /leaderboard/{uid} {
+      allow read: if signedInStudent();
+      allow write: if isMine(uid);
     }
 
     // Default deny. Any collection not matched above is unreachable by clients.

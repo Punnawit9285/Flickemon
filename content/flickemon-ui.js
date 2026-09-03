@@ -152,6 +152,9 @@ class FlickemonUI {
         const pokeballSvg = `<svg viewBox="0 0 512 512" width="13" height="13" fill="none" stroke="currentColor" stroke-width="42" aria-hidden="true"><circle cx="256" cy="256" r="204"/><path d="M52 256h132M328 256h132" stroke-linecap="round"/><circle cx="256" cy="256" r="62"/></svg>`;
         const boltSvg = `<svg viewBox="0 0 512 512" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M394.23 197.56a20 20 0 0 0-17.15-9.56H272V32a20 20 0 0 0-36.65-11.09l-160 240A20 20 0 0 0 92 292h105v156a20 20 0 0 0 36.65 11.09l160-240a20 20 0 0 0 .58-21.53z"/></svg>`;
         const tradeSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M368 112l64 64-64 64M416 176H208M144 400l-64-64 64-64M96 336h208"/></svg>`;
+        // Two figures, because this is the one header button that is about
+        // people rather than about Pokémon.
+        const friendsSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="196" cy="152" r="60"/><path d="M100 400c0-53 43-96 96-96s96 43 96 96"/><circle cx="356" cy="176" r="48"/><path d="M300 400h112c0-45 -30-80 -70-88"/></svg>`;
         const swordsSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M424 64l-56 0-208 208 56 56L424 120zM88 64l56 0 208 208-56 56L88 120z"/><path d="M136 400l40 40M376 400l-40 40"/></svg>`;
         // Solid, like the other four. An outlined glyph sitting among filled
         // ones reads as a different weight, not a different icon.
@@ -256,6 +259,7 @@ class FlickemonUI {
                     </div>
                     <button class="pvp-header-btn" title="Battle another trainer">${swordsSvg}<span class="pvp-header-label">PVP</span></button>
                     <button class="trade-header-btn" title="Trade with another trainer">${tradeSvg}<span class="pvp-header-label">Trade</span></button>
+                    <button class="friends-header-btn" title="Friends and the global board">${friendsSvg}<span class="pvp-header-label">Friends</span></button>
                     <button class="icon-btn menu-trigger-btn" title="Options">${ellipsisSvg}</button>
                     <button class="icon-btn widget-collapse-btn" title="Toggle Collapse">${chevronUpSvg}</button>
 
@@ -389,6 +393,11 @@ class FlickemonUI {
             this.openPvp();
         });
 
+        card.querySelector('.friends-header-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.openFriends();
+        });
+
         card.querySelector('.trade-header-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
             this.openTrade();
@@ -493,6 +502,12 @@ class FlickemonUI {
         // Damage flash is a transient class, so it is toggled rather than baked in.
         const sprite = card.querySelector('.wild-mini-sprite');
         if (sprite) sprite.classList.toggle('damage-flash', !!this.isFlashingDamage);
+    }
+
+    openFriends() {
+        if (!window.FlickemonFriends) return;
+        if (!this.friends) this.friends = new window.FlickemonFriends(this.engine, this);
+        this.friends.open();
     }
 
     openTrade() {
@@ -1858,6 +1873,25 @@ class FlickemonUI {
                     you know — nothing here can verify that the other side is playing fairly.</p>`)}
 
                 ${megaBlock}
+
+                ${section('Friends', `
+                    <p>Add people by username or their @docchula.com email, and see what
+                    they have studied today. Everything shown is <strong>game progress</strong> —
+                    EXP earned, levels gained, a streak — and <strong>never how long anyone
+                    studied</strong>. Hours reward sitting still; this does not.</p>
+                    ${rows([
+                        ['Who sees you', 'Only people you accepted. A request has to be agreed.'],
+                        ['What they see', `You choose, under Friends → Privacy:
+                            ${c.FRIEND_FIELDS.map(f => f.label.toLowerCase()).join(', ')}.`],
+                        ['Turning something off', `It stops being <b>sent</b>, not just shown.
+                            Anything switched off never leaves your device at all.`],
+                        ['Streaks', 'Days in a row with any progress. Yesterday still counts today, so a streak never breaks before you have had the chance to study.'],
+                        ['The day', 'Resets at midnight Bangkok time, the same moment for everyone.'],
+                    ])}
+                    <p class="guide-note">The <b>global board</b> is separate and off unless you
+                    join it. Joining shows your username — or the first three letters of your
+                    email if you have not set one — with today's EXP and your streak, to every
+                    signed-in student. Nothing else, and leaving removes your row entirely.</p>`)}
 
                 ${section('Your progress', `
                     <p>Everything is saved to your account and follows you to any device you sign

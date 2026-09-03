@@ -33,6 +33,10 @@ const CLOUD_PUSH_DEBOUNCE_MS = 180000;
 const CLOUD_POLL_INTERVAL_MS = 300000;
 const LOCAL_SAVE_DEBOUNCE_MS = 1000;
 
+// How rarely the friend feed may be republished. See publishFriendFeed: this
+// number was chosen from a measurement, not an estimate.
+const FEED_PUBLISH_FLOOR_MS = 600000;
+
 class FlickemonEngine {
     constructor() {
         this.STORAGE_KEY = 'flickemon_ext_save_v2';
@@ -238,6 +242,37 @@ class FlickemonEngine {
             // recovered retroactively. Every other key is a source — a device,
             // or one day something that is not this extension at all.
             studyMinutes: {},
+
+            // ── Friends ──
+            //
+            // Game progress per day, per source. Feeds the friends screen and
+            // the streak, and deliberately measures EXP rather than minutes:
+            // the ask was to show how much someone LEARNED, and a figure in
+            // hours turns a study tool into a competition about sitting still.
+            //
+            // Bucketed by source for exactly the reason studyMinutes above is.
+            // A single number merged with Math.max silently discarded whatever
+            // the other device had earned in the same period; two devices in
+            // one evening must ADD UP.
+            //
+            //   { '2026-09-03': { 'device-abc': { exp, levels, caught } } }
+            //
+            // Pruned to DAILY_HISTORY_DAYS, so it can never become the largest
+            // thing in the save.
+            dailyProgress: {},
+            // The name other students see. Claimed in usernames/{name}; held
+            // here so the panel can render before the network answers.
+            username: '',
+            // Which of FRIEND_FIELDS this account publishes. Absent from the
+            // feed document entirely when off — see publishFriendFeed.
+            friendPrivacy: null,
+            // Friends who see nothing: kept out of the feed's audience list, so
+            // the refusal happens at the server rather than in our renderer.
+            blockedUids: [],
+            // Opt-in, and off until the student presses JOIN. No row exists on
+            // the global board until this is true.
+            onLeaderboard: false,
+
             lastSyncedAt: 0,
             wildOpponent: null,
             // Firebase uid this save belongs to; guards against one student's
@@ -391,6 +426,35 @@ class FlickemonEngine {
             if (!Number.isFinite(minutes) || minutes < 0) delete s.studyMinutes[source];
         }
         s.totalMinutesWatched = this.sumStudyMinutes(s.studyMinutes);
+
+        // ── Friends ──
+        if (!s.dailyProgress || typeof s.dailyProgress !== 'object'
+            || Array.isArray(s.dailyProgress)) {
+            s.dailyProgress = {};
+        }
+        s.dailyProgress = this.pruneDailyProgress(s.dailyProgress);
+        s.username = this.config.normaliseUsername(s.username);
+        if (!s.friendPrivacy || typeof s.friendPrivacy !== 'object'
+            || Array.isArray(s.friendPrivacy)) {
+            // Null means "never chosen", which is not the same as "chose to
+            // share nothing" — a new account starts sharing with the friends it
+            // has explicitly accepted, and has none yet.
+            s.friendPrivacy = this.config.defaultFriendPrivacy();
+        } else {
+            // A field this build does not know about is dropped; one it knows
+            // about that is missing defaults to shared. Booleans only, so a
+            // hand-edited save cannot smuggle an object in.
+            const clean = {};
+            for (const f of this.config.FRIEND_FIELDS) {
+                clean[f.key] = s.friendPrivacy[f.key] !== false;
+            }
+            s.friendPrivacy = clean;
+        }
+        s.blockedUids = Array.isArray(s.blockedUids)
+            ? [...new Set(s.blockedUids.filter(id => typeof id === 'string'))]
+            : [];
+        s.onLeaderboard = s.onLeaderboard === true;
+
         if (!Number.isFinite(s.lastSyncedAt)) s.lastSyncedAt = 0;
 
         // The active pointer must name a party member that actually exists.
@@ -662,6 +726,11 @@ class FlickemonEngine {
             pokedex: this.gameState.pokedex,
             totalMinutesWatched: this.gameState.totalMinutesWatched,
             studyMinutes: this.gameState.studyMinutes || {},
+            dailyProgress: this.gameState.dailyProgress || {},
+            username: this.gameState.username || '',
+            friendPrivacy: this.gameState.friendPrivacy || this.config.defaultFriendPrivacy(),
+            blockedUids: this.gameState.blockedUids || [],
+            onLeaderboard: this.gameState.onLeaderboard === true,
             battleMode: this.gameState.battleMode,
             favouriteIds: this.gameState.favouriteIds,
             teamIds: this.gameState.teamIds,
@@ -698,6 +767,45 @@ class FlickemonEngine {
         }
         this.gameState.studyMinutes = merged;
         this.gameState.totalMinutesWatched = this.sumStudyMinutes(merged);
+
+        // Daily progress merges the same way and for the same reason: max per
+        // (day, source), because each source only ever counts up on its own,
+        // and summing across sources afterwards. Taking the max of the day
+        // TOTALS would throw away a whole device's evening.
+        this.gameState.dailyProgress = this.pruneDailyProgress(
+            this.mergeDailyProgress(this.gameState.dailyProgress, cloud.dailyProgress));
+
+        // A name is claimed in Firestore, so the cloud copy is the true one --
+        // but only when there IS one. A device that has not seen the claim yet
+        // must not erase it.
+        const cloudName = this.config.normaliseUsername(cloud.username);
+        if (cloudName) this.gameState.username = cloudName;
+
+        // Privacy: the more private answer wins whenever two devices disagree.
+        // A student who turned sharing off on their phone and has not synced
+        // the laptop should not have the laptop turn it back on.
+        if (cloud.friendPrivacy && typeof cloud.friendPrivacy === 'object') {
+            const mine = this.gameState.friendPrivacy || this.config.defaultFriendPrivacy();
+            const out = {};
+            for (const f of this.config.FRIEND_FIELDS) {
+                out[f.key] = mine[f.key] !== false && cloud.friendPrivacy[f.key] !== false;
+            }
+            this.gameState.friendPrivacy = out;
+        }
+        // Blocks union, for the same reason: a block made anywhere holds
+        // everywhere, and unblocking is a deliberate act on a synced device.
+        if (Array.isArray(cloud.blockedUids)) {
+            this.gameState.blockedUids = [...new Set([
+                ...(this.gameState.blockedUids || []),
+                ...cloud.blockedUids.filter(id => typeof id === 'string'),
+            ])];
+        }
+        // Being ON the board is the less private state, so it needs BOTH sides
+        // to agree — leaving on one device takes effect everywhere.
+        if (typeof cloud.onLeaderboard === 'boolean') {
+            this.gameState.onLeaderboard = this.gameState.onLeaderboard === true
+                                        && cloud.onLeaderboard === true;
+        }
 
         // Pokédex: union. Caught outranks merely seen.
         for (const entry of cloud.pokedex || []) {
@@ -1080,6 +1188,278 @@ class FlickemonEngine {
     async tradeAck(code)            { return await this.sendToWorker({ type: 'TRADE_ACK', code }); }
     async tradeClose(code)          { return await this.sendToWorker({ type: 'TRADE_CLOSE', code }); }
 
+    // ─────────────────────────── Friends ───────────────────────────
+
+    async friendClaimName(name)   { return await this.sendToWorker({ type: 'FRIEND_CLAIM_NAME', name }); }
+    async friendReleaseName(name) { return await this.sendToWorker({ type: 'FRIEND_RELEASE_NAME', name }); }
+    async friendWriteProfile(p)   { return await this.sendToWorker({ type: 'FRIEND_PROFILE', payload: p }); }
+    async friendLookup(query)     { return await this.sendToWorker({ type: 'FRIEND_LOOKUP', query }); }
+    // These three change who may read this account's feed, so each one drops
+    // the cached list and republishes. Without the republish, accepting someone
+    // would leave them unable to see anything until the next five-minute tick,
+    // and removing someone would leave them able to see everything until then —
+    // which is the half that actually matters.
+    async friendRequest(uid) {
+        const res = await this.sendToWorker({ type: 'FRIEND_REQUEST', uid });
+        await this.afterFriendChange();
+        return res;
+    }
+
+    async friendAccept(uid) {
+        const res = await this.sendToWorker({ type: 'FRIEND_ACCEPT', uid });
+        await this.afterFriendChange();
+        return res;
+    }
+
+    async friendRemove(uid) {
+        const res = await this.sendToWorker({ type: 'FRIEND_REMOVE', uid });
+        await this.afterFriendChange();
+        return res;
+    }
+
+    async afterFriendChange() {
+        this.invalidateFriends();
+        await this.loadFriends({ fresh: true }).catch(() => {});
+        await this.publishFriendFeed({ force: true }).catch(() => {});
+    }
+    async friendList()            { return await this.sendToWorker({ type: 'FRIEND_LIST' }); }
+    async friendFeeds(uids)       { return await this.sendToWorker({ type: 'FRIEND_FEEDS', uids }); }
+    async friendBoardRead(dayKey) { return await this.sendToWorker({ type: 'FRIEND_BOARD_READ', dayKey }); }
+
+    // ─────────────────── What this account shares ───────────────────
+
+    getFriendPrivacy() {
+        return { ...(this.gameState.friendPrivacy || this.config.defaultFriendPrivacy()) };
+    }
+
+    async setFriendPrivacy(key, on) {
+        if (!this.config.FRIEND_FIELDS.some(f => f.key === key)) return { ok: false };
+        this.gameState.friendPrivacy = {
+            ...this.getFriendPrivacy(), [key]: on !== false,
+        };
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+        // Republished at once and unconditionally: turning sharing OFF must
+        // take the data down now, not at the next five-minute tick. This is the
+        // one place the rate limit is deliberately bypassed.
+        await this.publishFriendFeed({ force: true }).catch(() => {});
+        return { ok: true };
+    }
+
+    isBlocked(uid) { return (this.gameState.blockedUids || []).includes(uid); }
+
+    async setBlocked(uid, blocked) {
+        const list = new Set(this.gameState.blockedUids || []);
+        if (blocked) list.add(uid); else list.delete(uid);
+        this.gameState.blockedUids = [...list];
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+        // A block is only real once the audience list no longer names them, so
+        // this write is the block. Same reasoning as above.
+        await this.publishFriendFeed({ force: true }).catch(() => {});
+        return { ok: true };
+    }
+
+    getUsername() { return this.gameState.username || ''; }
+
+    /** Claims a name, and only records it locally once the server agreed. */
+    async setUsername(raw) {
+        const check = this.config.validateUsername(raw);
+        if (!check.ok) return { ok: false, reason: check.reason };
+
+        const previous = this.gameState.username || '';
+        if (previous === check.name) return { ok: true, name: check.name };
+
+        const res = await this.friendClaimName(check.name);
+        if (!res || !res.ok) {
+            return { ok: false, reason: res && res.reason === 'taken'
+                ? 'Somebody already has that name.'
+                : 'Could not claim that name. Try again.' };
+        }
+
+        this.gameState.username = check.name;
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+        // Best effort, and after the claim: an old name left behind is untidy,
+        // a lost new claim would be a bug.
+        if (previous) this.friendReleaseName(previous).catch(() => {});
+        await this.publishFriendFeed({ force: true }).catch(() => {});
+        return { ok: true, name: check.name };
+    }
+
+    isOnLeaderboard() { return this.gameState.onLeaderboard === true; }
+
+    /**
+     * Joins or leaves the global board.
+     *
+     * Leaving DELETES the row rather than hiding it — a document that does not
+     * exist cannot be ranked, read, or brought back by a later bug.
+     */
+    async setOnLeaderboard(joined, email) {
+        this.gameState.onLeaderboard = joined === true;
+        this.emitState();
+        await this.saveGameState({ immediate: true });
+
+        const today = this.todayProgress();
+        const res = await this.sendToWorker({
+            type: 'FRIEND_BOARD_PUBLISH',
+            payload: {
+                joined: joined === true,
+                label: this.config.leaderboardLabel(this.getUsername(), email),
+                dayKey: this.today(),
+                todayExp: today.exp,
+                levels: today.levels,
+                streak: this.currentStreak(),
+            },
+        });
+        return res || { ok: false };
+    }
+
+    /**
+     * The feed document's contents: exactly what the student has chosen to
+     * share, and nothing else.
+     *
+     * A disabled field is ABSENT rather than blank. There is nothing here for a
+     * modified client to reveal, because the information never left this device.
+     */
+    buildFriendPayload() {
+        const privacy = this.getFriendPrivacy();
+        const payload = { username: this.getUsername() };
+
+        if (privacy.active) {
+            // WHEN, not whether.
+            //
+            // Publishing a boolean would mean writing a document just to say "I
+            // stopped" — and going idle is the one state change nobody is
+            // around to trigger a write for, so it would be the least reliable
+            // and most expensive thing here. A timestamp goes stale correctly
+            // by itself: the reader compares it to the window and sees someone
+            // stop without anybody writing anything.
+            //
+            // Bucketed to five minutes so that time passing does not by itself
+            // make the payload different and spend a write on every tick.
+            const last = this.lastStudyTickAt || 0;
+            payload.activeAt = last > 0 ? Math.floor(last / 300000) * 300000 : 0;
+        }
+
+        if (privacy.mon) {
+            const active = this.getActivePokemon();
+            const species = active && this.config.getSpeciesById(active.speciesId);
+            if (species) {
+                const form = this.activeMegaForm(active);
+                payload.mon = {
+                    speciesId: species.id,
+                    spriteId: this.spriteIdFor(active),
+                    name: form ? form.name : species.name,
+                    level: active.level,
+                    shiny: active.shiny === true,
+                    legendary: species.isLegendary === true,
+                    types: [...species.types],
+                    stats: {
+                        hp: this.config.calculateRealMaxHp(species.baseStats.hp, active.level),
+                        attack: this.config.calculateRealStat(species.baseStats.attack, active.level),
+                        defense: this.config.calculateRealStat(species.baseStats.defense, active.level),
+                        speed: this.config.calculateRealStat(species.baseStats.speed, active.level),
+                    },
+                };
+            }
+        }
+
+        if (privacy.today) {
+            const today = this.todayProgress();
+            payload.today = {
+                // Rounded down to a step so an EXP figure creeping up by tens
+                // does not make every tick a new document. This is the single
+                // biggest saving in the whole feature.
+                exp: Math.floor(today.exp / 100) * 100,
+                levels: today.levels,
+                caught: today.caught,
+            };
+            payload.streak = this.currentStreak();
+            payload.dayKey = this.today();
+        }
+
+        return payload;
+    }
+
+    /**
+     * Loads the friendship list and keeps it for the session.
+     *
+     * Cached because it changes only when somebody is added, accepted or
+     * removed — all of which go through this file and refresh it. Re-reading it
+     * on every panel refresh would double the feature's read cost for a list
+     * that is almost always identical.
+     */
+    async loadFriends({ fresh = false } = {}) {
+        if (!fresh && Array.isArray(this.friendCache)) {
+            return { ok: true, friendships: this.friendCache, cached: true };
+        }
+        const res = await this.friendList();
+        if (res && res.ok) {
+            this.friendCache = res.friendships || [];
+            this.myUid = res.me || this.myUid;
+        }
+        return res || { ok: false };
+    }
+
+    /** Drops the cached list, so the next read goes to the server. */
+    invalidateFriends() { this.friendCache = null; }
+
+    /** Accepted friends, minus anyone blocked. Absence IS the block. */
+    friendAudience() {
+        return (this.friendCache || [])
+            .filter(f => f.accepted && !this.isBlocked(f.uid))
+            .map(f => f.uid)
+            .slice(0, this.config.FRIEND_MAX);
+    }
+
+    /**
+     * Writes the feed, unless nothing a friend would see has changed.
+     *
+     * The feed is a SECOND document, so it is a write the game did not
+     * previously make — left uncontrolled it would double the whole faculty's
+     * write usage. Two things hold it down, both borrowed from the cloud save:
+     * a fingerprint, so an unchanged payload costs nothing at all, and a floor
+     * on how often a changed one may go up.
+     */
+    async publishFriendFeed({ force = false } = {}) {
+        if (!Array.isArray(this.friendCache)) return { ok: false, reason: 'no-friends-loaded' };
+
+        const audience = this.friendAudience();
+        const payload = this.buildFriendPayload();
+        const fingerprint = JSON.stringify({ audience, payload });
+
+        if (!force && fingerprint === this.lastFeedFingerprint) {
+            return { ok: true, skipped: 'unchanged' };
+        }
+        // Ten minutes, measured rather than guessed: a five-minute floor came out
+        // at 60 writes per student per day, which put the faculty at 80% of the
+        // free tier's writes once the existing save is counted. Ten halves it.
+        //
+        // Nothing is lost by the wait. The only figure that moves continuously
+        // is today's EXP, and it is published rounded to the nearest hundred
+        // anyway; going idle needs no write at all now that `activeAt` is a
+        // timestamp the reader ages by itself.
+        const since = Date.now() - (this.lastFeedPublishAt || 0);
+        if (!force && since < FEED_PUBLISH_FLOOR_MS) return { ok: true, skipped: 'too-soon' };
+
+        // Nobody to publish to and nothing on the board: the write would be a
+        // document only its author can read.
+        if (audience.length === 0 && !this.isOnLeaderboard()) {
+            this.lastFeedFingerprint = fingerprint;
+            return { ok: true, skipped: 'no-audience' };
+        }
+
+        const res = await this.sendToWorker({
+            type: 'FRIEND_PUBLISH', payload: { audience, payload },
+        });
+        if (res && res.ok) {
+            this.lastFeedFingerprint = fingerprint;
+            this.lastFeedPublishAt = Date.now();
+        }
+        return res || { ok: false };
+    }
+
     // ─────────────────────── PVP line-up ───────────────────────
     //
     // Stored separately from the EXP team (see pvpTeamIds in createEmptyState).
@@ -1171,6 +1551,112 @@ class FlickemonEngine {
         const mode = this.config.getPvpMode(modeId);
         const have = this.buildPvpTeam(this.config.MAX_TEAM_SIZE).length;
         return { ok: have >= mode.size, have, need: mode.size, mode };
+    }
+
+    // ─────────────────────── Daily progress ledger ───────────────────────
+    //
+    // What the friends screen shows, and the only new thing the game measures.
+    // Deliberately EXP and levels rather than minutes: the ask was to show how
+    // much someone has learned, and a number in hours turns a study tool into a
+    // competition about sitting still.
+
+    /** Today, on Bangkok time — the same day boundary for every student. */
+    today() { return this.config.dayKeyFor(); }
+
+    /**
+     * Credits progress to today's ledger, under this device's own bucket.
+     *
+     * Per-source for the same reason studyMinutes is: two devices in one
+     * evening must add up rather than one overwriting the other.
+     */
+    creditDailyProgress({ exp = 0, levels = 0, caught = 0 } = {}) {
+        if (!exp && !levels && !caught) return;
+        const day = this.today();
+        const source = this.deviceId || 'unknown';
+
+        const days = this.gameState.dailyProgress || (this.gameState.dailyProgress = {});
+        const bySource = days[day] || (days[day] = {});
+        const row = bySource[source] || (bySource[source] = { exp: 0, levels: 0, caught: 0 });
+
+        row.exp += Math.max(0, Math.round(exp));
+        row.levels += Math.max(0, Math.round(levels));
+        row.caught += Math.max(0, Math.round(caught));
+
+        // Only when the day count changes, which is at most once a day — the
+        // cost of pruning on every EXP tick would be real.
+        if (Object.keys(days).length > this.config.DAILY_HISTORY_DAYS) {
+            this.gameState.dailyProgress = this.pruneDailyProgress(days);
+        }
+    }
+
+    /** Keeps only the most recent days, newest first by key order. */
+    pruneDailyProgress(days) {
+        if (!days || typeof days !== 'object' || Array.isArray(days)) return {};
+        const out = {};
+        // Keys are YYYY-MM-DD, so lexicographic order IS chronological order.
+        const keys = Object.keys(days)
+            .filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k))
+            .sort()
+            .slice(-this.config.DAILY_HISTORY_DAYS);
+
+        for (const key of keys) {
+            const sources = days[key];
+            if (!sources || typeof sources !== 'object' || Array.isArray(sources)) continue;
+            const clean = {};
+            for (const [source, row] of Object.entries(sources)) {
+                if (!row || typeof row !== 'object') continue;
+                const num = (v) => (Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
+                clean[source] = { exp: num(row.exp), levels: num(row.levels), caught: num(row.caught) };
+            }
+            if (Object.keys(clean).length) out[key] = clean;
+        }
+        return out;
+    }
+
+    /** Max per (day, source) — each source only counts up, so this loses nothing. */
+    mergeDailyProgress(mine, theirs) {
+        const out = JSON.parse(JSON.stringify(mine || {}));
+        if (!theirs || typeof theirs !== 'object' || Array.isArray(theirs)) return out;
+
+        for (const [day, sources] of Object.entries(theirs)) {
+            if (!sources || typeof sources !== 'object' || Array.isArray(sources)) continue;
+            const target = out[day] || (out[day] = {});
+            for (const [source, row] of Object.entries(sources)) {
+                if (!row || typeof row !== 'object') continue;
+                const a = target[source] || { exp: 0, levels: 0, caught: 0 };
+                target[source] = {
+                    exp: Math.max(a.exp || 0, Number(row.exp) || 0),
+                    levels: Math.max(a.levels || 0, Number(row.levels) || 0),
+                    caught: Math.max(a.caught || 0, Number(row.caught) || 0),
+                };
+            }
+        }
+        return out;
+    }
+
+    /** One row per day with every source summed. What the UI and streak read. */
+    dailyTotals(days = this.gameState.dailyProgress) {
+        const out = {};
+        for (const [day, sources] of Object.entries(days || {})) {
+            const row = { exp: 0, levels: 0, caught: 0 };
+            for (const s of Object.values(sources || {})) {
+                row.exp += Number(s.exp) || 0;
+                row.levels += Number(s.levels) || 0;
+                row.caught += Number(s.caught) || 0;
+            }
+            out[day] = row;
+        }
+        return out;
+    }
+
+    /** Today's figures, summed across every device this account studies on. */
+    todayProgress() {
+        return this.dailyTotals()[this.today()] || { exp: 0, levels: 0, caught: 0 };
+    }
+
+    /** Consecutive days of progress ending today. */
+    currentStreak() {
+        return this.config.streakFrom(this.dailyTotals(), this.today());
     }
 
     // ─────────────────────────── Mega Evolution ───────────────────────────
@@ -1815,6 +2301,7 @@ class FlickemonEngine {
                     this.addWildToParty(this.wildOpponent);
                     this.updatePokedex(this.wildOpponent.wildSpecies.id, true,
                                        this.wildOpponent.shiny === true);
+                    this.creditDailyProgress({ caught: 1 });
                 } else {
                     // EXP mode, or a capture that failed its roll: the encounter
                     // still counts as SEEN — the student did meet it — but it is
@@ -2067,6 +2554,10 @@ class FlickemonEngine {
 
         active.totalExp += exp;
         const newLevel = Math.min(this.config.MAX_LEVEL, this.config.levelFromExp(active.totalExp));
+        // Credited here rather than at either call site, because this method's
+        // own comment is right: every EXP gain in the game funnels through it.
+        // One hook, and nothing new to remember when a future source is added.
+        this.creditDailyProgress({ exp, levels: Math.max(0, newLevel - active.level) });
         if (newLevel > active.level) {
             active.level = newLevel;
         }
@@ -2130,10 +2621,17 @@ class FlickemonEngine {
             if (!member || member.level >= this.config.MAX_LEVEL) continue;
 
             member.totalExp += shared;
+            const before = member.level;
             member.level = Math.min(
                 this.config.MAX_LEVEL,
                 this.config.levelFromExp(member.totalExp)
             );
+            // Levels only. The EXP was already credited whole in addExpToActive
+            // before it was shared out, and counting the share again would
+            // inflate the day by the size of the team.
+            if (member.level > before) {
+                this.creditDailyProgress({ levels: member.level - before });
+            }
 
             const evo = this.config.canEvolveAt(member.speciesId, member.level);
             if (evo) {
@@ -2216,6 +2714,12 @@ class FlickemonEngine {
         this.gameState.studyMinutes = this.gameState.studyMinutes || {};
         this.gameState.studyMinutes[source] = (this.gameState.studyMinutes[source] || 0) + minutes;
         this.gameState.totalMinutesWatched = this.sumStudyMinutes(this.gameState.studyMinutes);
+
+        // "Studying now" for the friends screen. Deliberately in memory only
+        // and never saved: it says what is happening on THIS device at this
+        // moment, and a figure restored from a save would claim a student was
+        // studying because they once were.
+        this.lastStudyTickAt = Date.now();
     }
 
     updatePokedex(speciesId, caught, shiny = false) {

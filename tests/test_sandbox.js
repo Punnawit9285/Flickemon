@@ -81,6 +81,42 @@ const check=(n,c,d='')=>c?(console.log('  PASS  '+n),pass++):(console.log('  FAI
   await send(A,{type:'PVP_CLOSE',code:codeA});
   check('the host can tear it down', (await send(B,{type:'PVP_READ',code:codeA})).battle===null);
 
+  console.log('\n=== every worker route has a stand-in ===');
+  {
+    // The generalisation of the bug that broke trading: the shim had all seven
+    // PVP routes and none of the seven trade routes, and an unhandled type
+    // returns undefined -- the same thing Chrome returns when nothing is
+    // listening. Every trade call came back empty and the feature looked
+    // broken. Checking one feature's routes would not have caught the next
+    // one, so this checks them ALL, by reading the worker rather than a list
+    // somebody has to remember to update.
+    const worker = fs.readFileSync(ROOT + 'background/service-worker.js', 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const shimSrc = fs.readFileSync(ROOT + 'tests/pvp-sandbox/sandbox.js', 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    const routes = [...worker.matchAll(/^\s*async ([A-Z][A-Z0-9_]+)\(/gm)].map(m => m[1]);
+    check('the worker exposes routes to mirror', routes.length >= 20, String(routes.length));
+
+    // Routes that reach outside the page rather than talking to Firestore --
+    // the sandbox is a web page and has no extension tab to open.
+    const NOT_APPLICABLE = ['MUSIC_OPEN_TAB', 'MUSIC_LECTURE_STARTED'];
+
+    const missing = routes.filter(r => !NOT_APPLICABLE.includes(r)
+        && !shimSrc.includes(`async ${r}(`));
+    check('every one of them is answered in the sandbox', missing.length === 0,
+        missing.join(', ') + ' -- an unhandled type returns undefined, which reads as a broken feature');
+
+    // And prove it at runtime, not just in the source: a handler that exists
+    // but throws on an empty message is no better than a missing one.
+    for (const r of routes) {
+      if (NOT_APPLICABLE.includes(r)) continue;
+      const answered = await send(A, { type: r, code: '000000', uid: 'nobody',
+                                       payload: {}, query: {}, uids: [] });
+      check(`${r} answers something`, answered !== undefined);
+    }
+  }
+
   console.log('\n=== trading, held to background/trade.js ===');
   {
     // The whole reason this section exists: the shim had every PVP route and
@@ -166,6 +202,113 @@ const check=(n,c,d='')=>c?(console.log('  PASS  '+n),pass++):(console.log('  FAI
     check('and the battle on the same code is untouched',
         Boolean((await send(B, { type: 'PVP_READ', code: codeA })).battle));
     await send(A, { type: 'PVP_CLOSE', code: codeA });
+  }
+
+  console.log('\n=== friends, end to end across two tabs ===');
+  {
+    const uidA = 'sandbox-uid-a', uidB = 'sandbox-uid-b';
+
+    // ── names ──
+    check('A claims a name', (await send(A, { type: 'FRIEND_CLAIM_NAME', name: 'nan' })).ok);
+    const clash = await send(B, { type: 'FRIEND_CLAIM_NAME', name: 'nan' });
+    check('B cannot take it', clash.ok === false && clash.reason === 'taken', JSON.stringify(clash));
+    check('B claims their own', (await send(B, { type: 'FRIEND_CLAIM_NAME', name: 'beam' })).ok);
+    check('re-claiming your own name is fine',
+        (await send(A, { type: 'FRIEND_CLAIM_NAME', name: 'nan' })).ok);
+
+    // ── finding each other ──
+    const byName = await send(A, { type: 'FRIEND_LOOKUP', query: { username: 'beam' } });
+    check('found by username', byName.found && byName.uid === uidB, JSON.stringify(byName));
+    const byMail = await send(A, { type: 'FRIEND_LOOKUP',
+        query: { email: 'player-b@sandbox.test' } });
+    check('found by email too', byMail.found && byMail.uid === uidB);
+    check('finding yourself is refused',
+        (await send(A, { type: 'FRIEND_LOOKUP', query: { username: 'nan' } })).reason === 'self');
+    // A wrong name and an address nobody has used must not be distinguishable.
+    const ghost = await send(A, { type: 'FRIEND_LOOKUP', query: { email: 'nobody@sandbox.test' } });
+    const wrong = await send(A, { type: 'FRIEND_LOOKUP', query: { username: 'nosuch' } });
+    check('a missing person gives one answer, whichever way you looked',
+        ghost.reason === wrong.reason, `${ghost.reason} vs ${wrong.reason}`);
+
+    // ── requesting ──
+    check('A asks B', (await send(A, { type: 'FRIEND_REQUEST', uid: uidB })).outcome === 'requested');
+    check('asking twice does not resend',
+        (await send(A, { type: 'FRIEND_REQUEST', uid: uidB })).outcome === 'pending');
+
+    const bList = await send(B, { type: 'FRIEND_LIST' });
+    const fromA = bList.friendships.find(f => f.uid === uidA);
+    check('B sees it as incoming', fromA && fromA.incoming === true && fromA.outgoing === false);
+    const aList = await send(A, { type: 'FRIEND_LIST' });
+    check('A sees the same one as outgoing',
+        aList.friendships.find(f => f.uid === uidB).outgoing === true);
+    check('and it is ONE document, not two',
+        aList.friendships.length === 1 && bList.friendships.length === 1);
+
+    // You cannot accept your own request, or anyone could befriend anyone.
+    check('A cannot accept their own request',
+        (await send(A, { type: 'FRIEND_ACCEPT', uid: uidB })).ok === false);
+    check('B accepts', (await send(B, { type: 'FRIEND_ACCEPT', uid: uidA })).ok);
+    check('now both sides say accepted',
+        (await send(A, { type: 'FRIEND_LIST' })).friendships[0].accepted === true
+        && (await send(B, { type: 'FRIEND_LIST' })).friendships[0].accepted === true);
+
+    // ── the audience gate, which in production is a security rule ──
+    await send(A, { type: 'FRIEND_PUBLISH', payload: {
+        audience: [uidB], payload: { username: 'nan', today: { exp: 1200 } } } });
+    const seen = await send(B, { type: 'FRIEND_FEEDS', uids: [uidA] });
+    check('B can read a feed that names them', seen.feeds[uidA]
+        && seen.feeds[uidA].payload.today.exp === 1200, JSON.stringify(seen.feeds[uidA]));
+
+    // The block. Not "we stop drawing it" -- the audience no longer names them.
+    await send(A, { type: 'FRIEND_PUBLISH', payload: {
+        audience: [], payload: { username: 'nan', today: { exp: 1200 } } } });
+    const blocked = await send(B, { type: 'FRIEND_FEEDS', uids: [uidA] });
+    check('dropping them from the audience makes the feed unreadable',
+        blocked.feeds[uidA] === null,
+        'this is a security rule in production, not a rendering decision');
+
+    // ── the board ──
+    const day = '2026-09-03';
+    check('nothing is on the board to begin with',
+        (await send(A, { type: 'FRIEND_BOARD_READ', dayKey: day })).board.length === 0);
+
+    await send(A, { type: 'FRIEND_BOARD_PUBLISH', payload: {
+        joined: true, label: 'nan', dayKey: day, todayExp: 8100, levels: 2, streak: 6 } });
+    await send(B, { type: 'FRIEND_BOARD_PUBLISH', payload: {
+        joined: true, label: 'pla@docchula.com', dayKey: day, todayExp: 12400, levels: 3, streak: 12 } });
+
+    const board = (await send(A, { type: 'FRIEND_BOARD_READ', dayKey: day })).board;
+    check('both rows appear', board.length === 2, JSON.stringify(board));
+    check('ranked by EXP', board[0].todayExp === 12400 && board[1].todayExp === 8100);
+    check('an address passed by mistake is still cut down',
+        !board.some(r => r.label.includes('@')), JSON.stringify(board.map(r => r.label)));
+
+    check("yesterday's rows are not today's board",
+        (await send(A, { type: 'FRIEND_BOARD_READ', dayKey: '2026-09-02' })).board.length === 0,
+        'the day is part of the query, so a stale row cannot hold a place');
+
+    // Leaving removes the row rather than hiding it.
+    await send(A, { type: 'FRIEND_BOARD_PUBLISH', payload: { joined: false } });
+    const after = (await send(B, { type: 'FRIEND_BOARD_READ', dayKey: day })).board;
+    check('leaving takes the row away', after.length === 1 && after[0].uid === uidB,
+        JSON.stringify(after));
+
+    // ── unfriending ──
+    await send(B, { type: 'FRIEND_REMOVE', uid: uidA });
+    check('removal is symmetric — one document, one delete',
+        (await send(A, { type: 'FRIEND_LIST' })).friendships.length === 0
+        && (await send(B, { type: 'FRIEND_LIST' })).friendships.length === 0);
+
+    // ── the simultaneous-add race ──
+    // Both ask at the same moment. One document, so the second ask is an accept
+    // rather than a second pending request neither side can resolve.
+    await send(A, { type: 'FRIEND_REQUEST', uid: uidB });
+    const race = await send(B, { type: 'FRIEND_REQUEST', uid: uidA });
+    check('adding each other at once becomes a friendship', race.outcome === 'accepted',
+        JSON.stringify(race));
+    check('and not two half-requests',
+        (await send(A, { type: 'FRIEND_LIST' })).friendships.length === 1);
+    await send(A, { type: 'FRIEND_REMOVE', uid: uidB });
   }
 
   const st=await send(A,{type:'AUTH_STATUS'});

@@ -15,6 +15,9 @@ import { signIn, signOut, getStatus, switchAccount } from './auth.js';
 import { pullState, pushState, checkAdmin } from './firestore.js';
 import { codeForUid, openLobby, readBattle, joinBattle, submitAction, commitTurn, closeLobby } from './pvp.js';
 import { openTrade, readTrade, joinTrade, offerPokemon, confirmTrade, acknowledgeTrade, closeTrade } from './trade.js';
+import { claimUsername, releaseUsername, writeProfile, lookup,
+         requestFriend, acceptFriend, removeFriend, listFriendships,
+         publishFeed, readFeeds, publishLeaderboard, readLeaderboard } from './friends.js';
 
 /**
  * The music tab's id, in storage because this worker is evicted after ~30s
@@ -134,6 +137,19 @@ const handlers = {
     async TRADE_CONFIRM(msg) { return await confirmTrade(msg.code, msg.confirmed); },
     async TRADE_ACK(msg)     { return await acknowledgeTrade(msg.code); },
     async TRADE_CLOSE(msg)   { return await closeTrade(msg.code); },
+
+    async FRIEND_CLAIM_NAME(msg)  { return await claimUsername(msg.name); },
+    async FRIEND_RELEASE_NAME(msg){ return await releaseUsername(msg.name); },
+    async FRIEND_PROFILE(msg)     { return await writeProfile(msg.payload || {}); },
+    async FRIEND_LOOKUP(msg)      { return await lookup(msg.query || {}); },
+    async FRIEND_REQUEST(msg)     { return await requestFriend(msg.uid); },
+    async FRIEND_ACCEPT(msg)      { return await acceptFriend(msg.uid); },
+    async FRIEND_REMOVE(msg)      { return await removeFriend(msg.uid); },
+    async FRIEND_LIST()           { return await listFriendships(); },
+    async FRIEND_PUBLISH(msg)     { return await publishFeed(msg.payload || {}); },
+    async FRIEND_FEEDS(msg)       { return await readFeeds(msg.uids || []); },
+    async FRIEND_BOARD_PUBLISH(msg) { return await publishLeaderboard(msg.payload || {}); },
+    async FRIEND_BOARD_READ(msg)  { return await readLeaderboard(msg.dayKey); },
 
     /**
      * Opens the standalone music tab, or focuses the one already open.

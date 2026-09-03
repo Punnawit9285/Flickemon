@@ -1,0 +1,27 @@
+{
+  "//": [
+    "Composite indexes for Flickémon.",
+    "",
+    "Deploy with:  firebase deploy --only firestore:indexes",
+    "  (or Firebase console → Firestore → Indexes → Composite → Add)",
+    "",
+    "Firestore auto-indexes single fields, so almost nothing in this game needs",
+    "an entry here: every other read is a direct document get. The one exception",
+    "is the global leaderboard, which asks for today's rows in score order.",
+    "",
+    "⚠️ An un-indexed query returns an ERROR, not an empty list. Without this",
+    "deployed the board fails while every other feature looks perfectly healthy,",
+    "which is a confusing way to find out. Deploy it alongside firestore.rules."
+  ],
+  "indexes": [
+    {
+      "collectionGroup": "leaderboard",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dayKey", "order": "ASCENDING" },
+        { "fieldPath": "todayExp", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

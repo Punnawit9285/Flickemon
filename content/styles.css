@@ -181,6 +181,8 @@
      * and naming it that way keeps a reader from hunting for the significance
      * of whichever colour happened to be borrowed for it. */
     --flick-mask-show: rgba(0, 0, 0, 1);
+    --flick-friends: var(--ion-color-success, #10b981);
+    --flick-friends-rgb: var(--ion-color-success-rgb, 16, 185, 129);
     --flick-trade: var(--ion-color-tertiary, #0ea5e9);
     --flick-trade-rgb: var(--ion-color-tertiary-rgb, 14, 165, 233);
     /* Green and red read differently on the scene's dark ground than on a page,
@@ -2644,6 +2646,191 @@
 .trade-header-btn:hover { background: var(--flick-trade); color: var(--flick-on-primary); }
 .trade-header-btn svg { flex-shrink: 0; display: block; }
 @media (max-width: 560px) { .trade-header-btn .pvp-header-label { display: none; } }
+
+/* ───────────────────────────── Friends ─────────────────────────────
+   Third of the three social buttons, styled like the other two so the header
+   reads as one row rather than three decisions. */
+.friends-header-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 10px;
+    border: 1.5px solid var(--flick-friends);
+    border-radius: 8px;
+    background: rgba(var(--flick-friends-rgb), 0.12);
+    color: var(--flick-friends);
+    font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.friends-header-btn:hover { background: var(--flick-friends); color: var(--flick-on-primary); }
+.friends-header-btn svg { flex-shrink: 0; display: block; }
+@media (max-width: 560px) { .friends-header-btn .pvp-header-label { display: none; } }
+
+.friends { font-family: "Courier New", monospace; }
+
+.friends-tabs {
+    display: flex; gap: 4px;
+    border-bottom: 3px solid var(--flick-text);
+    margin-bottom: 0.75rem;
+}
+.friends-tab {
+    position: relative;
+    flex: 1;
+    padding: 8px 4px;
+    border: none;
+    background: transparent;
+    color: var(--flick-text-muted);
+    font-family: inherit;
+    font-size: 0.66rem; font-weight: 800; letter-spacing: 0.08em;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -3px;
+}
+.friends-tab.on { color: var(--flick-text); border-bottom-color: var(--flick-friends); }
+.friends-badge {
+    display: inline-block;
+    margin-left: 4px; padding: 0 5px;
+    border-radius: 8px;
+    background: var(--flick-danger);
+    color: var(--flick-on-primary);
+    font-size: 0.6rem;
+}
+
+.friends-heading {
+    margin: 0.75rem 0 0.35rem;
+    font-size: 0.6rem; font-weight: 800; letter-spacing: 0.12em;
+    color: var(--flick-text-muted);
+}
+.friends-heading.quiet { opacity: 0.7; }
+
+.friends-rank { list-style: none; margin: 0; padding: 0; }
+.friends-row {
+    display: flex; align-items: center; gap: 7px;
+    padding: 7px 8px;
+    border: 2px solid var(--flick-border);
+    margin-bottom: 5px;
+    background: var(--flick-card-bg);
+    font-size: 0.72rem;
+    color: var(--flick-text);
+}
+/* Your own row, so a ranking can be read without hunting for yourself. */
+.friends-row.me { border-color: var(--flick-friends); background: rgba(var(--flick-friends-rgb), 0.08); }
+.friends-rank-n {
+    min-width: 18px;
+    font-weight: 800;
+    color: var(--flick-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+.friends-dot {
+    width: 8px; height: 8px; flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--flick-fill-strong);
+}
+/* Studying right now. The one thing on this screen that is about the moment
+   rather than the day, so it is the one thing that moves. */
+.friends-dot.on {
+    background: var(--flick-friends);
+    animation: friends-pulse 2s ease-in-out infinite;
+}
+@keyframes friends-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(var(--flick-friends-rgb), 0.7); }
+    60%      { box-shadow: 0 0 0 5px rgba(var(--flick-friends-rgb), 0); }
+}
+.friends-name {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 700;
+}
+.friends-exp { font-weight: 800; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.friends-lv { color: var(--flick-friends); font-weight: 800; flex-shrink: 0; }
+.friends-streak { flex-shrink: 0; font-size: 0.68rem; }
+/* Not a zero and not a failure — a choice, and it should not look like a score. */
+.friends-private {
+    color: var(--flick-text-muted);
+    font-style: italic;
+    font-size: 0.66rem;
+    flex-shrink: 0;
+}
+.friends-mon { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.friends-mon img { width: 30px; height: 30px; image-rendering: pixelated; }
+.friends-mon img.is-shiny { filter: drop-shadow(0 0 4px var(--flick-shiny)); }
+.friends-mon-lv { font-size: 0.58rem; color: var(--flick-text-muted); }
+
+.friends-empty, .friends-join { text-align: center; padding: 0.5rem 0 1rem; }
+.friends-join {
+    border: 2px dashed var(--flick-border);
+    padding: 12px;
+    margin-bottom: 0.75rem;
+}
+.friends-join.in { border-style: solid; border-color: var(--flick-friends); }
+
+.friends-name-box, .friends-add-box {
+    border: 2px solid var(--flick-border);
+    padding: 10px;
+    margin-bottom: 0.75rem;
+}
+.friends-inline { display: flex; gap: 6px; margin-top: 6px; }
+.friends-inline input {
+    flex: 1; min-width: 0;
+    padding: 8px;
+    border: 2px solid var(--flick-text);
+    background: var(--flick-card-bg);
+    color: var(--flick-text);
+    font-family: inherit; font-size: 0.78rem;
+}
+.friends-inline .pvp-btn { padding: 8px 14px; font-size: 0.7rem; }
+
+.friends-requests { list-style: none; margin: 0 0 0.75rem; padding: 0; }
+.friends-request {
+    display: flex; align-items: center; gap: 7px;
+    padding: 7px 8px;
+    border: 2px solid var(--flick-border);
+    margin-bottom: 5px;
+    font-size: 0.72rem;
+}
+.friends-request.blocked { opacity: 0.6; border-style: dashed; }
+.friends-request .pvp-btn { padding: 5px 10px; font-size: 0.62rem; }
+
+.friends-privacy { list-style: none; margin: 0; padding: 0; }
+.friends-priv-row {
+    padding: 9px 8px;
+    border: 2px solid var(--flick-border);
+    margin-bottom: 5px;
+}
+.friends-priv-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.friends-priv-label { font-size: 0.76rem; font-weight: 800; color: var(--flick-text); }
+.friends-priv-detail {
+    display: block; margin-top: 4px;
+    font-size: 0.66rem; line-height: 1.4;
+    color: var(--flick-text-muted);
+}
+
+.friends-notice {
+    margin: 0 0 0.6rem;
+    padding: 7px 9px;
+    border-left: 3px solid var(--flick-friends);
+    background: rgba(var(--flick-friends-rgb), 0.08);
+    font-size: 0.7rem;
+    color: var(--flick-text);
+}
+.friends-error {
+    margin: 6px 0 0;
+    font-size: 0.68rem;
+    color: var(--flick-danger);
+    min-height: 1em;
+}
+.friends-foot {
+    margin: 0.5rem 0 0;
+    font-size: 0.64rem; line-height: 1.45;
+    color: var(--flick-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .friends-dot.on { animation: none; }
+}
+@media (max-width: 460px) {
+    .friends-tab { font-size: 0.58rem; letter-spacing: 0.04em; }
+    .friends-mon img { width: 24px; height: 24px; }
+}
 
 .trade-table { text-align: center; padding: 0.5rem 0.25rem; }
 

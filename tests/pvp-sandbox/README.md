@@ -27,10 +27,26 @@ do not reliably share localStorage, and the shared battle document lives there.
 Admin tools are enabled, so the damage multiplier buttons (10x … 10000x) can
 push a battle to its end in seconds rather than 2.5 minutes.
 
+## Friends and the board
+
+Both tabs share one "Firestore", so they can find each other:
+
+1. **Friends → ADD** in each tab. Give each a username and press SAVE.
+2. In one tab, type the other's username and press SEND.
+3. In the other tab, the ADD tab shows a badge — press ACCEPT.
+4. **TODAY** now ranks you both. Let a video run in one tab and watch that side's
+   EXP climb and its dot light up.
+5. **PRIVACY** turns a field off. Watch it vanish from the other tab's view —
+   it is not being hidden there, it has stopped being sent.
+6. **GLOBAL → JOIN THE BOARD** in both, and each appears in the other's list.
+
+The sandbox emails are `player-a@sandbox.test` and `player-b@sandbox.test`, so
+adding by email works too.
+
 ## What it actually is
 
-The **real** content scripts — config, battle, engine, ui, pvp, trade. Only two
-things are faked, both in `sandbox.js`:
+The **real** content scripts — config, battle, engine, ui, pvp, trade, friends.
+Only two things are faked, both in `sandbox.js`:
 
   - the `chrome.*` APIs (`storage.local`, `runtime.sendMessage`, `getURL`)
   - the service worker's message handlers, mirroring `background/pvp.js`
@@ -48,7 +64,14 @@ refusals, per-turn action slots, commits, and save isolation.
 ## What it does NOT test
 
 Firestore security rules, real Google auth, network latency and the retries
-built on it, and the service worker sleeping mid-battle. For those, two signed-in
+built on it, and the service worker sleeping mid-battle.
+
+That first one matters more for friends than for anything else here. Every
+privacy promise the friends screen makes is enforced by a rule — a feed is
+readable because `audience` names you, a leaderboard row is writable only by its
+owner. In this sandbox those are enforced by the shim being polite. The
+`audience` check IS mirrored in `FRIEND_FEEDS`, so a bug in how the audience is
+built shows up here; a bug in the rules themselves cannot. For those, two signed-in
 Chrome profiles on the real site are still the only answer.
 
 Nothing in this directory ships: `build.sh` copies `content/`, `background/`,

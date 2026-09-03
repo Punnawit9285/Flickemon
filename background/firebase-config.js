@@ -37,6 +37,39 @@ export const BATTLES_COLLECTION = 'battles';
 // one number to share, whether the other trainer wants to battle or to trade.
 export const TRADES_COLLECTION = 'trades';
 
+// ─────────────────────────── The friend system ───────────────────────────
+//
+// Six collections rather than one, because Firestore rules gate whole documents
+// and cannot filter fields. That single fact decides the whole shape: a piece of
+// information is protected by living in a document the wrong person cannot read,
+// never by a client agreeing not to display it.
+
+// usernames/{lowercased} -> { uid }. A claim, so a name cannot be taken twice.
+export const USERNAMES_COLLECTION = 'usernames';
+
+// emailKeys/{sha256(email)} -> { uid }. Lookup by address WITHOUT storing one:
+// you can only find someone whose email you already know, and no reader can
+// enumerate the cohort.
+export const EMAIL_KEYS_COLLECTION = 'emailKeys';
+
+// profiles/{uid} -> username, display name, avatar. Readable by any signed-in
+// student, so it deliberately holds no email and no progress.
+export const PROFILES_COLLECTION = 'profiles';
+
+// friendships/{smallerUid_largerUid} -> members, requestedBy, accepted, blocks.
+// One document per pair whichever side acts, because the id is order-independent.
+export const FRIENDSHIPS_COLLECTION = 'friendships';
+
+// feeds/{uid} -> { audience: [uid], payload }. What the owner CHOSE to share,
+// and nothing else: a disabled field is absent rather than hidden, and a blocked
+// friend is absent from `audience` so the server refuses the read.
+export const FEEDS_COLLECTION = 'feeds';
+
+// leaderboard/{uid} -> a label and today's figures. Cohort-readable, so it is
+// opt-in and exists only once a student joins. Separate from feeds because the
+// read rule differs in kind — one document cannot carry two.
+export const LEADERBOARD_COLLECTION = 'leaderboard';
+
 // ─────────────────────── OAuth client ───────────────────────
 //
 // Auth uses chrome.identity.launchWebAuthFlow, which needs a **Web application**

@@ -1,69 +1,70 @@
 {
-    "manifest_version": 3,
-    "name": "Flickémon",
-    "version": "1.0.0",
-    "description": "Unofficial fan project. Gamify FlickPlayer studying with Pokémon! Battle, catch, evolve — all while watching lectures.",
-    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4gfsEDWRArEPhEPgBq58Q8Sc6wei4iDT736CgQKuLsav2Q377Id4vxYZI9B1gyHA+MDXEaSjSWHjEAYJxRwi3KIEwVlnRGQm9N/HYghyUQglavavh2Y7RzoCpZXgTcdAJiE6U3e4BOAiSLrDf+UUHEDT6ePqguSLwZfkpH70+q6XFJnGeeG4r3F8Nt8TZSsG/nEywCAOkItZx0VWZSOvjS8YTrJ81L/yoGM4VzIASt7/tt2HR2raPjA/LIPqwKrN+FbdM4t0e82nwp8z50LkfJiBMZ9zeAb381Mr+3cQ4STTbgbLEAHGqSWEr9P8GFMI4GvNohAUJpqohCjOSuahEwIDAQAB",
-    "permissions": [
-        "storage",
-        "identity"
-    ],
-    "host_permissions": [
-        "https://identitytoolkit.googleapis.com/*",
-        "https://securetoken.googleapis.com/*",
-        "https://firestore.googleapis.com/*"
-    ],
-    "background": {
-        "service_worker": "background/service-worker.js",
-        "type": "module"
-    },
-    "content_scripts": [
-        {
-            "matches": [
-                "https://flick.docchula.com/*"
-            ],
-            "js": [
-                "content/flickemon-config.js",
-                "content/flickemon-custom.js",
-                "content/flickemon-playlist.js",
-                "content/flickemon-music.js",
-                "content/flickemon-battle.js",
-                "content/flickemon-engine.js",
-                "content/flickemon-ui.js",
-                "content/flickemon-pvp.js",
-                "content/flickemon-trade.js",
-                "content/content-script.js"
-            ],
-            "css": [
-                "content/styles.css"
-            ],
-            "run_at": "document_idle"
-        }
-    ],
-    "web_accessible_resources": [
-        {
-            "resources": [
-                "sprites/*.png",
-                "sprites/back/*.png",
-                "sprites/shiny/*.png",
-                "sprites/back/shiny/*.png",
-                "sprites/custom/*.png",
-                "icons/*.png"
-            ],
-            "matches": [
-                "https://flick.docchula.com/*"
-            ]
-        }
-    ],
-    "icons": {
-        "48": "icons/flickemon-48.png",
-        "128": "icons/flickemon-128.png"
-    },
-    "action": {
-        "default_popup": "popup/popup.html",
-        "default_icon": {
-            "48": "icons/flickemon-48.png",
-            "128": "icons/flickemon-128.png"
-        }
+  "manifest_version": 3,
+  "name": "Flickémon",
+  "version": "1.0.0",
+  "description": "Unofficial fan project. Gamify FlickPlayer studying with Pokémon! Battle, catch, evolve — all while watching lectures.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4gfsEDWRArEPhEPgBq58Q8Sc6wei4iDT736CgQKuLsav2Q377Id4vxYZI9B1gyHA+MDXEaSjSWHjEAYJxRwi3KIEwVlnRGQm9N/HYghyUQglavavh2Y7RzoCpZXgTcdAJiE6U3e4BOAiSLrDf+UUHEDT6ePqguSLwZfkpH70+q6XFJnGeeG4r3F8Nt8TZSsG/nEywCAOkItZx0VWZSOvjS8YTrJ81L/yoGM4VzIASt7/tt2HR2raPjA/LIPqwKrN+FbdM4t0e82nwp8z50LkfJiBMZ9zeAb381Mr+3cQ4STTbgbLEAHGqSWEr9P8GFMI4GvNohAUJpqohCjOSuahEwIDAQAB",
+  "permissions": [
+    "storage",
+    "identity"
+  ],
+  "host_permissions": [
+    "https://identitytoolkit.googleapis.com/*",
+    "https://securetoken.googleapis.com/*",
+    "https://firestore.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://flick.docchula.com/*"
+      ],
+      "js": [
+        "content/flickemon-config.js",
+        "content/flickemon-custom.js",
+        "content/flickemon-playlist.js",
+        "content/flickemon-music.js",
+        "content/flickemon-battle.js",
+        "content/flickemon-engine.js",
+        "content/flickemon-ui.js",
+        "content/flickemon-pvp.js",
+        "content/flickemon-trade.js",
+        "content/flickemon-friends.js",
+        "content/content-script.js"
+      ],
+      "css": [
+        "content/styles.css"
+      ],
+      "run_at": "document_idle"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "sprites/*.png",
+        "sprites/back/*.png",
+        "sprites/shiny/*.png",
+        "sprites/back/shiny/*.png",
+        "sprites/custom/*.png",
+        "icons/*.png"
+      ],
+      "matches": [
+        "https://flick.docchula.com/*"
+      ]
+    }
+  ],
+  "icons": {
+    "48": "icons/flickemon-48.png",
+    "128": "icons/flickemon-128.png"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "48": "icons/flickemon-48.png",
+      "128": "icons/flickemon-128.png"
+    }
+  }
 }
