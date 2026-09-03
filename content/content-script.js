@@ -64,9 +64,52 @@
             requestAnimationFrame(() => {
                 injectQueued = false;
                 injectUI();
+                harvestFlickProgress();
             });
         });
         observer.observe(document.body, { childList: true, subtree: true });
+
+        // ── Studying somewhere this extension is not ────────────────────────
+        //
+        // Flick records progress from every device the student uses and renders
+        // it on the course page, refreshed by its own 60-second poll and pushed
+        // live over a websocket. So a phone session is already on this screen;
+        // it just has to be read. See content/flickemon-flick-progress.js.
+        //
+        // Rides the coalesced tick above rather than a timer of its own, so the
+        // page is only re-read when it has actually changed -- but deliberately
+        // NOT inside injectUI: that returns early when there is no <video>, and
+        // the case that matters most is opening a course after a phone session,
+        // before pressing play on anything.
+        let lastHarvestAt = 0;
+        let harvesting = false;
+        function harvestFlickProgress() {
+            const engine = window.flickemonEngine;
+            if (!engine || !window.FlickProgress || harvesting) return;
+
+            const wait = (engine.config && engine.config.FLICK_HARVEST_INTERVAL_MS) || 60000;
+            const now = Date.now();
+            if (now - lastHarvestAt < wait) return;
+
+            const reading = window.FlickProgress.readCourse(document);
+            // Null means "not a course page", which must not look like "a course
+            // where nothing has been watched" -- navigating away would otherwise
+            // read as progress being lost.
+            if (!reading) return;
+
+            lastHarvestAt = now;
+            harvesting = true;
+            Promise.resolve(engine.creditFlickProgress(reading))
+                .then(result => {
+                    if (result && result.credited > 0 && flickemonUI.showFlickCredit) {
+                        flickemonUI.showFlickCredit(result);
+                    }
+                })
+                // A parser fault must never take the rest of the widget with it.
+                .catch(err => console.warn('[Flickémon] Flick progress read failed:', err))
+                .finally(() => { harvesting = false; });
+        }
+        harvestFlickProgress();
 
         /** Check if main website's Pomodoro timer is currently on a break */
         function isMainWebsitePomodoroOnBreak() {

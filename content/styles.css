@@ -4067,3 +4067,51 @@
    and add Pokémon — but never silently accepted. */
 .pvp-mode.short { opacity: 0.6; border-style: dashed; }
 .pvp-mode.short .pvp-mode-reward { color: var(--flick-danger); }
+
+/* ─────────────────── Time counted from Flick ───────────────────
+ *
+ * Shown when studying done elsewhere — a phone, a machine without the
+ * extension — is credited. It states the discount as well as the gain,
+ * because a student who is not told will read the discount as a bug.
+ *
+ * Sits with the widgets rather than floating over the lecture: it is a
+ * receipt, not an alert, and it must never cover the video. */
+.flick-credit {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 10px 14px;
+    border: 1px solid var(--flick-border);
+    border-left: 3px solid var(--flick-primary);
+    border-radius: var(--flick-radius, 10px);
+    background: var(--flick-card-bg);
+    color: var(--flick-text);
+    font-size: 13px;
+    animation: flick-credit-in 320ms ease-out both;
+}
+
+.flick-credit-mark {
+    color: var(--flick-primary);
+    font-size: 15px;
+    line-height: 1;
+}
+
+.flick-credit-text { display: flex; flex-direction: column; gap: 2px; }
+.flick-credit-text small { color: var(--flick-text-muted); font-size: 11px; }
+
+.flick-credit.is-leaving { animation: flick-credit-out 600ms ease-in both; }
+
+@keyframes flick-credit-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: none; }
+}
+
+@keyframes flick-credit-out {
+    from { opacity: 1; }
+    to   { opacity: 0; transform: translateY(-4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .flick-credit, .flick-credit.is-leaving { animation: none; }
+}

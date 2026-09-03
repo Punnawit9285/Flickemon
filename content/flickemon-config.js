@@ -336,6 +336,44 @@ const EXP_MODE_WIN_EXP_BONUS = 12;
 // worth 18x a win, and 86% of all EXP came from losing fights.
 const ESCAPE_EXP_MULTIPLIER = 0.5;
 
+// ── Studying where the extension is not ──
+//
+// A phone, an iPad, a friend's laptop. Flick records progress for all of them
+// and renders it on the course page, so the time is visible here even though
+// nothing of ours was running -- see content/flickemon-flick-progress.js.
+//
+// It is paid at a fraction because it CANNOT be verified. Flick's end_time is a
+// resume position, not watch time: scrubbing to the end of a lecture marks it
+// finished. Flick's own API takes `progress` and `speed` straight from the
+// client, so a determined student can post whatever they like. The honest thing
+// is to price the signal rather than pretend it is a measurement.
+//
+// 30% is chosen so an hour on the phone is worth about 18 minutes here: enough
+// that a real session visibly moves the party, far too little to be worth
+// forging. The bound below matters more than this number does.
+const FLICK_CREDIT_RATE = 0.30;
+
+// One bucket for every device, unlike studyMinutes' per-device keys. Two
+// devices reading the same server-side figure are not two students studying.
+const FLICK_SOURCE = 'flick';
+
+// Credit can never exceed the real time that has passed since the last reading.
+// This is what makes the feature safe almost regardless of the rate above:
+// forge three hours one minute after a check and one minute is credited. Same
+// shape as the wallet allowance in firestore.rules, for the same reason.
+//
+// Slightly over 1 so a reading taken a few seconds early is not punished for
+// clock skew between the device and Flick's server.
+const FLICK_MAX_RATE = 1.05;
+
+// Below this, a reading is noise -- a rounding wobble between two parses of the
+// same unchanged page -- and crediting it would pay for sitting still.
+const FLICK_MIN_CREDIT_MINUTES = 0.5;
+
+// How often the page is re-read. Matches FlickPlayer's own poll, because a
+// faster cadence cannot see anything newer.
+const FLICK_HARVEST_INTERVAL_MS = 60000;
+
 // ── Capture ──
 //
 // Beating a wild Pokemon in capture mode used to catch it every time. At the
@@ -2995,6 +3033,11 @@ window.FlickemonConfig = {
     EXP_MODE_WIN_EXP_BONUS,
     ESCAPE_EXP_MULTIPLIER,
     CAPTURE_CHANCE,
+    FLICK_CREDIT_RATE,
+    FLICK_SOURCE,
+    FLICK_MAX_RATE,
+    FLICK_MIN_CREDIT_MINUTES,
+    FLICK_HARVEST_INTERVAL_MS,
     INSTANT_CAPTURE_EXP_DEBT,
     BATTLE_MODES,
     MAX_TEAM_SIZE,

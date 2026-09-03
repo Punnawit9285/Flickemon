@@ -243,6 +243,25 @@ class FlickemonEngine {
             // or one day something that is not this extension at all.
             studyMinutes: {},
 
+            // ── Studying somewhere this extension is not ──
+            //
+            // How far through each lecture Flick itself believes the student
+            // has got, the last time we looked. Credit is the rise since then,
+            // so the mark only ever goes UP: restarting a lecture drops Flick's
+            // resume position, the mark holds, and nothing is paid until the
+            // student passes where they got to before. Scrubbing back and forth
+            // therefore earns nothing, and what gets paid is course progress --
+            // which is the thing actually being measured.
+            //
+            // Keys are hashes, not lecture titles. This object syncs (that is
+            // what stops two devices crediting the same hour twice), and what a
+            // medical student is studying is nobody's business but theirs.
+            flickSeen: {},
+            // When that reading was taken. The bound on how much can be
+            // credited at once, so a forged jump is worth only the real time
+            // that has passed since we last looked.
+            flickCheckedAt: 0,
+
             // ── Friends ──
             //
             // Game progress per day, per source. Feeds the friends screen and
@@ -457,6 +476,22 @@ class FlickemonEngine {
             if (!Number.isFinite(minutes) || minutes < 0) delete s.studyMinutes[source];
         }
         s.totalMinutesWatched = this.sumStudyMinutes(s.studyMinutes);
+
+        // ── Flick's own progress ──
+        // A poisoned mark is worse than a missing one: too high silently stops
+        // crediting a real lecture forever, too low pays for it twice.
+        if (!s.flickSeen || typeof s.flickSeen !== 'object' || Array.isArray(s.flickSeen)) {
+            s.flickSeen = {};
+        }
+        for (const [key, seconds] of Object.entries(s.flickSeen)) {
+            if (!Number.isFinite(seconds) || seconds < 0) delete s.flickSeen[key];
+        }
+        // A mark from the future would make every later reading look like time
+        // travel and suppress credit until the clock caught up.
+        if (!Number.isFinite(s.flickCheckedAt) || s.flickCheckedAt < 0
+            || s.flickCheckedAt > Date.now()) {
+            s.flickCheckedAt = 0;
+        }
 
         // ── Shop ──
         if (!s.shopWallet || typeof s.shopWallet !== 'object' || Array.isArray(s.shopWallet)) {
@@ -820,6 +855,8 @@ class FlickemonEngine {
             pokedex: this.gameState.pokedex,
             totalMinutesWatched: this.gameState.totalMinutesWatched,
             studyMinutes: this.gameState.studyMinutes || {},
+            flickSeen: this.gameState.flickSeen || {},
+            flickCheckedAt: this.gameState.flickCheckedAt || 0,
             dailyProgress: this.gameState.dailyProgress || {},
             username: this.gameState.username || '',
             friendPrivacy: this.gameState.friendPrivacy || this.config.defaultFriendPrivacy(),
@@ -866,6 +903,24 @@ class FlickemonEngine {
         }
         this.gameState.studyMinutes = merged;
         this.gameState.totalMinutesWatched = this.sumStudyMinutes(merged);
+
+        // Flick's marks merge with max per lecture, and this is the one place
+        // where max is right for the reason the study buckets need the opposite:
+        // both devices are reading the SAME server-side figure, so they must not
+        // add up. Whichever device harvested first keeps the credit; the other
+        // sees no rise and pays nothing. The timestamp merges the same way, so a
+        // stale device cannot reopen a window that has already been spent.
+        const cloudSeen = (cloud.flickSeen && typeof cloud.flickSeen === 'object'
+                           && !Array.isArray(cloud.flickSeen)) ? cloud.flickSeen : {};
+        const seen = { ...(this.gameState.flickSeen || {}) };
+        for (const [key, seconds] of Object.entries(cloudSeen)) {
+            if (!Number.isFinite(seconds) || seconds < 0) continue;
+            seen[key] = Math.max(seen[key] || 0, seconds);
+        }
+        this.gameState.flickSeen = seen;
+        this.gameState.flickCheckedAt = Math.max(
+            this.gameState.flickCheckedAt || 0,
+            Number.isFinite(cloud.flickCheckedAt) ? cloud.flickCheckedAt : 0);
 
         // Daily progress merges the same way and for the same reason: max per
         // (day, source), because each source only ever counts up on its own,
@@ -3204,11 +3259,150 @@ class FlickemonEngine {
         this.gameState.studyMinutes[source] = (this.gameState.studyMinutes[source] || 0) + minutes;
         this.gameState.totalMinutesWatched = this.sumStudyMinutes(this.gameState.studyMinutes);
 
+        // Watching HERE also advances Flick's own record, so the next harvest
+        // would see the same minutes again and pay for them twice. Remembering
+        // what was counted locally is what lets creditFlickProgress subtract the
+        // overlap. Flick's own credit is excluded or it would cancel itself out.
+        if (source !== this.flickBucket()) {
+            this.localMinutesSinceHarvest = (this.localMinutesSinceHarvest || 0) + minutes;
+        }
+
         // "Studying now" for the friends screen. Deliberately in memory only
         // and never saved: it says what is happening on THIS device at this
         // moment, and a figure restored from a save would claim a student was
         // studying because they once were.
         this.lastStudyTickAt = Date.now();
+    }
+
+    /**
+     * This device's bucket for time Flick saw and we did not.
+     *
+     * Per device, like every other study bucket, because buckets SUM. The marks
+     * in flickSeen are what stop the same lecture being paid for twice, and they
+     * sync -- so by the time a second device looks, the rise is already claimed
+     * and it sees nothing to credit. Sharing one bucket across devices and
+     * merging with max would instead throw away a second device's genuinely
+     * different harvest, which is the exact bug studyMinutes was split up to fix.
+     */
+    flickBucket() {
+        return this.config.FLICK_SOURCE + ':' + (this.deviceId || 'unknown-device');
+    }
+
+    /**
+     * A stable, opaque id for one lecture.
+     *
+     * Hashed because flickSeen SYNCS, and the marks would otherwise put a list
+     * of course names and lecture titles -- a record of exactly what a medical
+     * student has been studying and when -- into cloud storage to solve a
+     * problem that never needed the titles at all. Twelve hex is ample: this
+     * only has to distinguish lectures within one student's own save.
+     */
+    async flickKey(course, lecture) {
+        const raw = [course || '', lecture.title || '',
+                     lecture.durationSec === null ? '' : lecture.durationSec].join('|');
+        if (typeof crypto === 'undefined' || !crypto.subtle) {
+            // Never in Chrome; keeps the parser usable in a bare test runner.
+            let h = 5381;
+            for (let i = 0; i < raw.length; i++) h = ((h * 33) ^ raw.charCodeAt(i)) >>> 0;
+            return 'x' + h.toString(16);
+        }
+        const bytes = new TextEncoder().encode(raw);
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(new Uint8Array(digest).slice(0, 6))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    /**
+     * Credits studying that happened where this extension was not running.
+     *
+     * The rise in Flick's own figures since the last reading, priced at
+     * FLICK_CREDIT_RATE and bounded twice. EXP only -- no money and no captures.
+     * Money is capped server-side by saveWalletOk() in firestore.rules, and a
+     * backfill after a long phone session can exceed the allowance and get the
+     * whole save REJECTED; the failure would be "sync stops", not "less money".
+     * A capture nobody watched happen is also the easiest thing in the game to
+     * forge, and the thing other students trade for.
+     *
+     * Returns what was credited, or null when there was nothing to do.
+     */
+    async creditFlickProgress(reading, now = Date.now()) {
+        if (!this.gameState.hasStarted) return null;
+        if (!reading || !Array.isArray(reading.lectures) || !reading.lectures.length) return null;
+
+        // A misparse must credit nothing. The rows and the header come from the
+        // same object by different expressions, so when they disagree the markup
+        // has moved underneath us and every number here is a guess -- and the
+        // failure that matters is inventing study time, not missing some.
+        if (window.FlickProgress && !window.FlickProgress.agreesWithHeader(reading)) {
+            return { credited: 0, exp: 0, reason: 'disagree' };
+        }
+
+        const marks = this.gameState.flickSeen || (this.gameState.flickSeen = {});
+        const first = !this.gameState.flickCheckedAt;
+
+        let riseSec = 0;
+        const advance = [];
+        for (const lecture of reading.lectures) {
+            if (!Number.isFinite(lecture.playedSec) || lecture.playedSec < 0) continue;
+            const key = await this.flickKey(reading.course, lecture);
+
+            // A lecture we have never seen is RECORDED, not paid for. Otherwise
+            // opening a course for the first time would bank a whole semester of
+            // watching that happened before any of this existed.
+            if (!Object.prototype.hasOwnProperty.call(marks, key)) {
+                marks[key] = lecture.playedSec;
+                continue;
+            }
+            const rise = lecture.playedSec - marks[key];
+            if (rise > 0) { riseSec += rise; advance.push([key, lecture.playedSec]); }
+        }
+
+        if (first) {
+            // Nothing to measure a rise against yet. Start the clock instead.
+            this.gameState.flickCheckedAt = now;
+            await this.saveGameState();
+            return { credited: 0, exp: 0, reason: 'first-reading' };
+        }
+
+        // The bound that does the real work: credit can never exceed the real
+        // time that has passed, less whatever was already counted here. Forge
+        // three hours one minute after a reading and one minute is paid.
+        const elapsedMin = Math.max(0, (now - this.gameState.flickCheckedAt) / 60000);
+        const allowance = elapsedMin * this.config.FLICK_MAX_RATE
+                          - (this.localMinutesSinceHarvest || 0);
+        const raw = Math.min(riseSec / 60, Math.max(0, allowance));
+
+        // Too small to be signal. Deliberately leaves the marks and the clock
+        // ALONE so the remainder accumulates into the next reading -- advancing
+        // them here would round every short session down to nothing, forever.
+        if (raw < this.config.FLICK_MIN_CREDIT_MINUTES) {
+            return { credited: 0, exp: 0, reason: 'below-threshold' };
+        }
+
+        // Marks advance to the full observed position even when the allowance
+        // clipped the payment. That is the intended incentive: a forged jump
+        // costs the excess permanently rather than banking it for later.
+        for (const [key, played] of advance) marks[key] = played;
+        this.gameState.flickCheckedAt = now;
+        this.localMinutesSinceHarvest = 0;
+
+        const minutes = raw * this.config.FLICK_CREDIT_RATE;
+        this.creditStudyMinutes(this.flickBucket(), minutes);
+
+        // Worth what the same minutes would have been worth in a battle: one
+        // wild takes TARGET_BATTLE_SECONDS to beat and pays its level times the
+        // mode's bonus. Reusing that keeps offline time from silently becoming
+        // the better or the worse way to play as the curve is retuned.
+        const active = this.getActivePokemon();
+        const perMinute = active ? (active.level * this.getWinExpBonus()) / 2.5 : 0;
+        const exp = Math.round(perMinute * minutes);
+        // addExpToActive is the single funnel: it applies both boosts, shares
+        // with the team and credits the daily ledger. Nothing else to call.
+        const evolved = exp > 0 ? this.addExpToActive(exp) : null;
+
+        await this.saveGameState({ immediate: true });
+        this.emitState();
+        return { credited: minutes, rawMinutes: raw, exp, evolved, reason: 'credited' };
     }
 
     updatePokedex(speciesId, caught, shiny = false) {

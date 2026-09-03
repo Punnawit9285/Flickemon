@@ -1737,6 +1737,40 @@ class FlickemonUI {
         const off = music.onChange(() => { if (modal.overlay.parentNode) draw(); else off(); });
     }
 
+    /**
+     * Says that time studied elsewhere was just counted, and at what rate.
+     *
+     * A student who is not told will read the discount as a bug: they watched an
+     * hour on the phone and their Pokemon moved by eighteen minutes' worth. The
+     * rate is only defensible if it is visible, so this says both numbers.
+     */
+    showFlickCredit(result) {
+        if (!result || !(result.credited > 0)) return;
+        const wrapper = document.querySelector('.flickemon-widgets-wrapper');
+        if (!wrapper) return;
+
+        // One at a time: two harvests in quick succession should replace the
+        // notice, not stack a column of them down the page.
+        const existing = wrapper.querySelector('.flick-credit');
+        if (existing) existing.remove();
+
+        const mins = Math.max(1, Math.round(result.credited));
+        const from = Math.max(1, Math.round(result.rawMinutes || result.credited));
+        const el = document.createElement('div');
+        el.className = 'flick-credit';
+        el.innerHTML = `
+            <span class="flick-credit-mark">✦</span>
+            <span class="flick-credit-text">
+                <b>+${mins} min</b> counted from Flick
+                <small>${from} min watched elsewhere, at ${Math.round(this.config.FLICK_CREDIT_RATE * 100)}%${
+                    result.exp > 0 ? ` &middot; +${result.exp} EXP` : ''}</small>
+            </span>`;
+        wrapper.appendChild(el);
+
+        setTimeout(() => el.classList.add('is-leaving'), 7000);
+        setTimeout(() => el.remove(), 7600);
+    }
+
     // ────────────────────────── How to Play ──────────────────────────
 
     /**
@@ -1910,7 +1944,20 @@ class FlickemonUI {
 
                 ${section('Your progress', `
                     <p>Everything is saved to your account and follows you to any device you sign
-                    in on. Progress is kept locally as well, so a lost connection costs nothing.</p>`)}
+                    in on. Progress is kept locally as well, so a lost connection costs nothing.</p>
+                    <p>Watching on your <b>phone, or any device without the extension</b>, still
+                    counts. Flick keeps its own record of how far through each lecture you are,
+                    and Flickémon reads it the next time you open that course here — so a session
+                    on the bus is not lost.</p>
+                    ${rows([
+                        ['What it is worth', `${pct(c.FLICK_CREDIT_RATE)} of the same time watched
+                            with the extension open. Flick records where you got <i>to</i>, not
+                            how long you sat there, so skipping to the end of a lecture would
+                            otherwise read as having watched all of it.`],
+                        ['EXP only', 'No money and no catches — those need a battle you were actually here for.'],
+                        ['Rewatching', 'Earns nothing until you pass where you got to before. It is progress that counts, not replays.'],
+                        ['The ceiling', 'You can never be credited more than the time that has genuinely passed since Flickémon last looked.'],
+                    ])}`)}
             </div>`;
     }
 
