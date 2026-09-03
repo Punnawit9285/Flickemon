@@ -273,6 +273,37 @@ class FlickemonEngine {
             // the global board until this is true.
             onLeaderboard: false,
 
+            // ── Shop ──
+            //
+            // The wallet is two counters PER DEVICE, never one balance, and it
+            // is the same trick studyMinutes above uses for the same reason.
+            // mergeCloudState is monotonic in every other rule so a stale
+            // device can never erase a newer one — but a balance goes DOWN when
+            // you spend, and neither max() (which would refund every purchase)
+            // nor last-writer-wins (which would drop a whole evening's
+            // earnings) is correct for that.
+            //
+            // Earned and spent each only ever count up, so max() per device is
+            // right for both, and the balance is the difference of the sums.
+            //
+            //   { [deviceId]: { earned, spent } }
+            shopWallet: {},
+            // Eggs bought, hatched or not. What is INSIDE is rolled at purchase
+            // and stored here, so a second device hatches the same Pokémon
+            // rather than a different one — see buyEgg.
+            //   { eggId, itemId, speciesId, shiny, encountersLeft, hatched }
+            eggs: [],
+            // Which egg is in the incubator. One slot; the rest wait in the bag.
+            incubatingId: null,
+            // Mega forms owned at ACCOUNT level. A stone bought in the mart is
+            // bound to a species, unlike a PVP stone which lands on one
+            // individual in party[].megaStones — so every Pokémon of that line
+            // can use it, including ones caught later. Unions on merge.
+            megaSpecies: [],
+            // Permanent boost tiers, { exp, shiny, legendary } -> 0..3. Tiers
+            // only ever go up, so max() per key.
+            shopBoosts: {},
+
             lastSyncedAt: 0,
             wildOpponent: null,
             // Firebase uid this save belongs to; guards against one student's
@@ -426,6 +457,54 @@ class FlickemonEngine {
             if (!Number.isFinite(minutes) || minutes < 0) delete s.studyMinutes[source];
         }
         s.totalMinutesWatched = this.sumStudyMinutes(s.studyMinutes);
+
+        // ── Shop ──
+        if (!s.shopWallet || typeof s.shopWallet !== 'object' || Array.isArray(s.shopWallet)) {
+            s.shopWallet = {};
+        }
+        for (const [device, bucket] of Object.entries(s.shopWallet)) {
+            if (!bucket || typeof bucket !== 'object') { delete s.shopWallet[device]; continue; }
+            const clean = (n) => (Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
+            s.shopWallet[device] = { earned: clean(bucket.earned), spent: clean(bucket.spent) };
+        }
+
+        // Hatched eggs stay as tombstones so a device that has not synced since
+        // cannot put one back in the bag. Bounded like appliedTrades, and the
+        // unhatched ones are kept whatever happens — those are things a student
+        // paid for.
+        s.eggs = Array.isArray(s.eggs) ? s.eggs.filter(e =>
+            e && typeof e.eggId === 'string' && Number.isFinite(e.speciesId)) : [];
+        s.eggs.forEach(e => {
+            e.hatched = e.hatched === true;
+            e.shiny = e.shiny === true;
+            e.encountersLeft = Number.isFinite(e.encountersLeft)
+                ? Math.max(0, Math.floor(e.encountersLeft)) : 0;
+        });
+        // Sorted, for the reason party[].megaStones is: the cloud fingerprint
+        // is JSON of the whole payload, so two devices that merged the same
+        // eggs in a different order would look different forever and spend a
+        // Firestore write on every sync.
+        const byId = (a, b) => (a.eggId < b.eggId ? -1 : a.eggId > b.eggId ? 1 : 0);
+        const hatched = s.eggs.filter(e => e.hatched).sort(byId).slice(-50);
+        s.eggs = [...s.eggs.filter(e => !e.hatched).sort(byId), ...hatched];
+        if (!s.eggs.some(e => e.eggId === s.incubatingId && !e.hatched)) s.incubatingId = null;
+
+        // Deliberately NOT filtered against MEGA_FORMS, for the reason
+        // party[].megaStones is not: an older client must round-trip a key it
+        // does not recognise rather than delete something that was paid for.
+        s.megaSpecies = Array.isArray(s.megaSpecies)
+            ? [...new Set(s.megaSpecies.filter(k => typeof k === 'string'))].sort()
+            : [];
+
+        if (!s.shopBoosts || typeof s.shopBoosts !== 'object' || Array.isArray(s.shopBoosts)) {
+            s.shopBoosts = {};
+        }
+        for (const kind of Object.keys(s.shopBoosts)) {
+            if (!Object.values(this.config.REWARDS).includes(kind)) { delete s.shopBoosts[kind]; continue; }
+            const tier = Math.floor(Number(s.shopBoosts[kind]) || 0);
+            if (tier <= 0) delete s.shopBoosts[kind];
+            else s.shopBoosts[kind] = Math.min(this.config.SHOP_MAX_BOOST_TIER, tier);
+        }
 
         // ── Friends ──
         if (!s.dailyProgress || typeof s.dailyProgress !== 'object'
@@ -634,15 +713,30 @@ class FlickemonEngine {
     }
 
     /**
-     * Sign out and immediately offer a different account. Local state is
-     * discarded rather than kept: the next student to sign in must not inherit
-     * this one's party, and whatever is here has already been pushed upstream.
+     * Sign out and immediately offer a different account.
+     *
+     * The local save is deliberately NOT discarded here.
+     *
+     * It used to be wiped before Google's account chooser even opened, which
+     * made the chooser the point of no return: cancelling it, dismissing it,
+     * being offline, or picking the wrong account and backing out all left the
+     * student looking at an empty game. A snapshot was taken, but the only
+     * control that restores one is behind the admin unlock — so for an ordinary
+     * student the progress was simply gone, from a single unconfirmed tap on a
+     * button labelled "Switch account".
+     *
+     * signIn() already carries the guard this was reaching for: it discards
+     * when the account signing in is not the one that owns the save, and it
+     * does that AFTER the sign-in has actually succeeded. Signing back in as
+     * the same person keeps everything, which is also the right answer.
+     *
+     * flushCloud() still runs first, while this student is still the
+     * authenticated one, so their progress lands in their own account and not
+     * in whichever account signs in next.
      */
     async switchAccount() {
         await this.flushCloud();
         await this.sendToWorker({ type: 'AUTH_SWITCH' });
-        this.discardLocalState();
-        this.writeLocal();
         this.emitState();
         // Force Google's chooser, otherwise it silently reuses the same session.
         return await this.signIn({ prompt: 'select_account' });
@@ -737,6 +831,11 @@ class FlickemonEngine {
             pvpTeamIds: this.gameState.pvpTeamIds || [],
             rewardLockUntil: this.gameState.rewardLockUntil || 0,
             expDebt: this.getExpDebt(),
+            shopWallet: this.gameState.shopWallet || {},
+            eggs: this.gameState.eggs || [],
+            incubatingId: this.gameState.incubatingId || null,
+            megaSpecies: this.gameState.megaSpecies || [],
+            shopBoosts: this.gameState.shopBoosts || {},
             lastSyncedAt: this.gameState.lastSyncedAt,
         };
     }
@@ -970,6 +1069,75 @@ class FlickemonEngine {
             if (pvpTeam) this.gameState.pvpTeamIds = pvpTeam.slice(0, this.config.MAX_TEAM_SIZE);
         }
 
+        // ── Shop ──
+        //
+        // The wallet merges exactly like studyMinutes: max() per device per
+        // counter, then sum. Each counter is monotonic on its own, so max is
+        // safe, and summing across devices is what makes two devices earning in
+        // the same evening add up instead of competing.
+        if (cloud.shopWallet && typeof cloud.shopWallet === 'object') {
+            const wallet = { ...(this.gameState.shopWallet || {}) };
+            for (const [device, bucket] of Object.entries(cloud.shopWallet)) {
+                if (!bucket || typeof bucket !== 'object') continue;
+                const mine = wallet[device] || { earned: 0, spent: 0 };
+                wallet[device] = {
+                    earned: Math.max(mine.earned || 0, Number(bucket.earned) || 0),
+                    spent: Math.max(mine.spent || 0, Number(bucket.spent) || 0),
+                };
+            }
+            this.gameState.shopWallet = wallet;
+        }
+
+        // Eggs union by eggId. Incubation counts DOWN, so the smaller number is
+        // the further-along one and min() is the monotonic rule here; hatched
+        // is a one-way door and ORs.
+        if (Array.isArray(cloud.eggs)) {
+            if (!Array.isArray(this.gameState.eggs)) this.gameState.eggs = [];
+            const byId = new Map(this.gameState.eggs.map(e => [e.eggId, e]));
+            for (const remote of cloud.eggs) {
+                if (!remote || typeof remote.eggId !== 'string') continue;
+                const local = byId.get(remote.eggId);
+                if (!local) {
+                    const copy = { ...remote };
+                    this.gameState.eggs.push(copy);
+                    byId.set(copy.eggId, copy);
+                    continue;
+                }
+                local.encountersLeft = Math.min(local.encountersLeft || 0,
+                                                Number(remote.encountersLeft) || 0);
+                local.hatched = local.hatched === true || remote.hatched === true;
+            }
+        }
+
+        // Stones bought in the mart union unconditionally, for the reason the
+        // per-member ones at the party merge above do: a purchase made on a
+        // device that has not studied since is still a purchase.
+        if (Array.isArray(cloud.megaSpecies) && cloud.megaSpecies.length) {
+            this.gameState.megaSpecies = [...new Set([
+                ...(this.gameState.megaSpecies || []),
+                ...cloud.megaSpecies.filter(k => typeof k === 'string'),
+            ])].sort();
+        }
+
+        // Tiers only ever go up, so the higher one is the true one.
+        if (cloud.shopBoosts && typeof cloud.shopBoosts === 'object') {
+            const boosts = { ...(this.gameState.shopBoosts || {}) };
+            for (const [kind, tier] of Object.entries(cloud.shopBoosts)) {
+                const t = Math.floor(Number(tier) || 0);
+                if (t > 0) boosts[kind] = Math.max(boosts[kind] || 0, t);
+            }
+            this.gameState.shopBoosts = boosts;
+        }
+
+        // Which egg is being carried is a preference, not progress, so it
+        // follows the newest write like battleMode does — but only to an egg
+        // this device actually has and has not already hatched.
+        if ((cloud.lastSyncedAt || 0) > (this.gameState.lastSyncedAt || 0)
+            && typeof cloud.incubatingId === 'string'
+            && (this.gameState.eggs || []).some(e => e.eggId === cloud.incubatingId && !e.hatched)) {
+            this.gameState.incubatingId = cloud.incubatingId;
+        }
+
         // The LATER lockout wins, unlike the preferences above, and it is taken
         // regardless of which save is newer. A lockout is a penalty, so the
         // merge rule that matters is the one a student cannot game: picking up
@@ -1059,6 +1227,23 @@ class FlickemonEngine {
     onWildChange(cb) { this.wildListeners.push(cb); cb(this.wildOpponent); return () => this.wildListeners = this.wildListeners.filter(l => l !== cb); }
     onEncounter(cb) { this.encounterListeners.push(cb); return () => this.encounterListeners = this.encounterListeners.filter(l => l !== cb); }
     onEvolution(cb) { this.evolutionListeners.push(cb); return () => this.evolutionListeners = this.evolutionListeners.filter(l => l !== cb); }
+
+    /**
+     * Announces a hatch on the evolution channel.
+     *
+     * Deliberately not a fourth listener list. The overlay queue already solves
+     * the hard part — one scene at a time, suspended in fullscreen and replayed
+     * on exit — and a separate channel would need all of that again, or hatches
+     * would play on top of an evolution.
+     */
+    emitHatch(result) {
+        if (!result) return;
+        this.evolutionListeners.forEach(cb => cb({
+            kind: 'hatch',
+            species: result.species,
+            shiny: result.shiny === true,
+        }));
+    }
 
     emitState() { this.stateListeners.forEach(cb => cb({ ...this.gameState })); }
     emitWild() { this.wildListeners.forEach(cb => cb(this.wildOpponent ? { ...this.wildOpponent } : null)); }
@@ -1222,8 +1407,8 @@ class FlickemonEngine {
         await this.loadFriends({ fresh: true }).catch(() => {});
         await this.publishFriendFeed({ force: true }).catch(() => {});
     }
-    async friendList()            { return await this.sendToWorker({ type: 'FRIEND_LIST' }); }
-    async friendFeeds(uids)       { return await this.sendToWorker({ type: 'FRIEND_FEEDS', uids }); }
+    async friendList(opts = {})   { return await this.sendToWorker({ type: 'FRIEND_LIST', fresh: opts.fresh === true }); }
+    async friendFeeds(uids, opts = {}) { return await this.sendToWorker({ type: 'FRIEND_FEEDS', uids, fresh: opts.fresh === true }); }
     async friendBoardRead(dayKey) { return await this.sendToWorker({ type: 'FRIEND_BOARD_READ', dayKey }); }
 
     // ─────────────────── What this account shares ───────────────────
@@ -1394,7 +1579,7 @@ class FlickemonEngine {
         if (!fresh && Array.isArray(this.friendCache)) {
             return { ok: true, friendships: this.friendCache, cached: true };
         }
-        const res = await this.friendList();
+        const res = await this.friendList({ fresh });
         if (res && res.ok) {
             this.friendCache = res.friendships || [];
             this.myUid = res.me || this.myUid;
@@ -1679,7 +1864,7 @@ class FlickemonEngine {
      */
     activeMegaForm(member) {
         if (!member || !member.megaActive) return null;
-        if (!(member.megaStones || []).includes(member.megaActive)) return null;
+        if (!this.ownedStoneKeys(member).has(member.megaActive)) return null;
         return this.config.megaFormsFor(member.speciesId)
             .find(f => f.key === member.megaActive) || null;
     }
@@ -1687,8 +1872,8 @@ class FlickemonEngine {
     /** Every form this member could switch to right now, in roster order. */
     availableMegaForms(member) {
         if (!member) return [];
-        return this.config.megaFormsFor(member.speciesId)
-            .filter(f => (member.megaStones || []).includes(f.key));
+        const owned = this.ownedStoneKeys(member);
+        return this.config.megaFormsFor(member.speciesId).filter(f => owned.has(f.key));
     }
 
     /** Stones owned but not yet usable, because the member has not evolved far enough. */
@@ -1697,7 +1882,7 @@ class FlickemonEngine {
         const usable = new Set(this.config.megaFormsFor(member.speciesId).map(f => f.key));
         const source = this.config.megaSourceFor(member.speciesId);
         const forms = source === null ? [] : this.config.megaFormsFor(source);
-        return (member.megaStones || [])
+        return [...this.ownedStoneKeys(member)]
             .filter(k => !usable.has(k))
             .map(k => forms.find(f => f.key === k) || { key: k, stone: k, name: k });
     }
@@ -1756,7 +1941,7 @@ class FlickemonEngine {
     async grantMegaStone(instanceId, formKey) {
         const member = this.gameState.party.find(p => p.instanceId === instanceId);
         if (!member) return { ok: false, reason: 'unknown' };
-        if ((member.megaStones || []).includes(formKey)) return { ok: false, reason: 'owned' };
+        if (this.ownedStoneKeys(member).has(formKey)) return { ok: false, reason: 'owned' };
 
         member.megaStones = [...new Set([...(member.megaStones || []), formKey])].sort();
         this.emitState();
@@ -1869,8 +2054,8 @@ class FlickemonEngine {
         const source = this.config.megaSourceFor(member.speciesId);
         if (source === null) return { ok: false, reason: 'no-mega' };
 
-        const held = member.megaStones || [];
-        const form = this.config.megaFormsFor(source).find(f => !held.includes(f.key));
+        const held = this.ownedStoneKeys(member);
+        const form = this.config.megaFormsFor(source).find(f => !held.has(f.key));
         if (!form) return { ok: false, reason: 'maxed' };
 
         const { dormant, scene } = this.applyMegaStone(member, form);
@@ -1892,8 +2077,8 @@ class FlickemonEngine {
      */
     wakeDormantMega(member) {
         if (!member || member.megaActive) return null;
-        const form = this.config.megaFormsFor(member.speciesId)
-            .find(f => (member.megaStones || []).includes(f.key));
+        const owned = this.ownedStoneKeys(member);
+        const form = this.config.megaFormsFor(member.speciesId).find(f => owned.has(f.key));
         if (!form) return null;
         member.megaActive = form.key;
         member.megaActiveAt = Date.now();
@@ -2010,8 +2195,8 @@ class FlickemonEngine {
             const source = this.config.megaSourceFor(member.speciesId);
             if (source === null) continue;                    // no mega anywhere in this line
 
-            const missing = this.config.megaFormsFor(source)
-                .filter(f => !(member.megaStones || []).includes(f.key));
+            const owned = this.ownedStoneKeys(member);
+            const missing = this.config.megaFormsFor(source).filter(f => !owned.has(f.key));
             if (missing.length === 0) continue;               // already owns every form
 
             // Taking the first missing form is what satisfies the second-stone
@@ -2041,6 +2226,266 @@ class FlickemonEngine {
         const r = this.getActiveReward();
         return r && r.type === this.config.REWARDS.SHINY
             ? this.config.REWARD_SHINY_MULTIPLIER : 1;
+    }
+
+    // ─────────────────────── Shop: the wallet ───────────────────────
+
+    /**
+     * This device's counters, created on first use.
+     *
+     * Bucketed by the SAME device id study time is, and deliberately so: the
+     * reason is identical, which is that two devices earning in one evening
+     * have to add up rather than compete. See shopWallet in createEmptyState.
+     */
+    walletBucket() {
+        if (!this.gameState.shopWallet) this.gameState.shopWallet = {};
+        const key = this.studySource();
+        if (!this.gameState.shopWallet[key]) {
+            this.gameState.shopWallet[key] = { earned: 0, spent: 0 };
+        }
+        return this.gameState.shopWallet[key];
+    }
+
+    /** Lifetime earned minus lifetime spent, across every device. */
+    getMoney() {
+        let earned = 0;
+        let spent = 0;
+        for (const b of Object.values(this.gameState.shopWallet || {})) {
+            earned += Number(b && b.earned) || 0;
+            spent += Number(b && b.spent) || 0;
+        }
+        // Clamped because two devices offline at once can each spend the same
+        // balance. Rare, self-correcting, and a negative number on the widget
+        // would be a worse answer than zero.
+        return Math.max(0, earned - spent);
+    }
+
+    /**
+     * Credits money for an encounter.
+     *
+     * Note what is NOT here: no reward multiplier, no shop multiplier, no
+     * scaling by level. Money measures time, not power — see the Shop section
+     * of flickemon-config.js for why that is load-bearing rather than lazy.
+     */
+    addMoney(amount) {
+        const n = Math.max(0, Math.floor(Number(amount) || 0));
+        if (!n) return 0;
+        this.walletBucket().earned += n;
+        return n;
+    }
+
+    /** Deducts a price, or refuses. The single gate every purchase goes through. */
+    spendMoney(amount) {
+        const n = Math.max(0, Math.floor(Number(amount) || 0));
+        if (this.getMoney() < n) return false;
+        this.walletBucket().spent += n;
+        return true;
+    }
+
+    // ─────────────────── Shop: permanent boosts ───────────────────
+
+    shopBoostTier(kind) {
+        return Math.min(this.config.SHOP_MAX_BOOST_TIER,
+                        Math.max(0, Math.floor(Number((this.gameState.shopBoosts || {})[kind]) || 0)));
+    }
+
+    /**
+     * The permanent multipliers.
+     *
+     * Kept separate from the reward ones above rather than folded into them,
+     * because the two are multiplied together at the point of use and a single
+     * combined function would hide which half a number came from.
+     */
+    shopExpMultiplier() {
+        return this.config.shopBoostMultiplier(this.config.REWARDS.EXP,
+                                               this.shopBoostTier(this.config.REWARDS.EXP));
+    }
+
+    shopShinyMultiplier() {
+        return this.config.shopBoostMultiplier(this.config.REWARDS.SHINY,
+                                               this.shopBoostTier(this.config.REWARDS.SHINY));
+    }
+
+    shopLegendaryMultiplier() {
+        return this.config.shopBoostMultiplier(this.config.REWARDS.LEGENDARY,
+                                               this.shopBoostTier(this.config.REWARDS.LEGENDARY));
+    }
+
+    /** Buys the next tier of a permanent boost. */
+    async buyBoost(kind) {
+        if (!Object.values(this.config.REWARDS).includes(kind)) {
+            return { ok: false, reason: 'unknown' };
+        }
+        const current = this.shopBoostTier(kind);
+        const next = this.config.nextBoostTier(current);
+        if (!next) return { ok: false, reason: 'maxed' };
+        if (!this.spendMoney(next.price)) return { ok: false, reason: 'poor', price: next.price };
+
+        if (!this.gameState.shopBoosts) this.gameState.shopBoosts = {};
+        this.gameState.shopBoosts[kind] = next.tier;
+        this.emitState();
+        // Deliberately NOT an immediate cloud push. The local write happens
+        // straight away and pagehide flushes on the way out, so nothing is at
+        // risk — but somebody buying four eggs in a row should cost one
+        // Firestore write, not four. See the budget at the top of this file.
+        await this.saveGameState();
+        return { ok: true, tier: next.tier, spent: next.price };
+    }
+
+    // ─────────────────── Shop: mega stones ───────────────────
+
+    /**
+     * Every stone key this member can draw on: its own, plus the account's.
+     *
+     * A stone won in PVP lands on one individual; a stone bought in the mart
+     * belongs to the species, so a Charizard caught tomorrow can use one bought
+     * today. Account stones are filtered to this member's OWN line first, or
+     * every Pokémon in the party would report 96 dormant stones it can never use.
+     */
+    ownedStoneKeys(member) {
+        const owned = new Set((member && member.megaStones) || []);
+        if (!member) return owned;
+        const source = this.config.megaSourceFor(member.speciesId);
+        if (source === null) return owned;
+        const lineKeys = new Set(this.config.megaFormsFor(source).map(f => f.key));
+        for (const key of this.gameState.megaSpecies || []) {
+            if (lineKeys.has(key)) owned.add(key);
+        }
+        return owned;
+    }
+
+    /** Buys a stone for a species. Every Pokémon of that line gains the form. */
+    async buyMegaStone(formKey) {
+        const form = this.config.allMegaForms().find(f => f.key === formKey);
+        if (!form) return { ok: false, reason: 'unknown' };
+        if ((this.gameState.megaSpecies || []).includes(formKey)) {
+            return { ok: false, reason: 'owned' };
+        }
+        const item = this.config.shopItemById('mega-stone');
+        if (!this.spendMoney(item.price)) return { ok: false, reason: 'poor', price: item.price };
+
+        this.gameState.megaSpecies = [...new Set([
+            ...(this.gameState.megaSpecies || []), formKey])].sort();
+
+        // Anything in the party that can already use it transforms on the spot,
+        // the same way a stone won in PVP does.
+        for (const member of this.gameState.party) {
+            if (this.config.megaFormsFor(member.speciesId).some(f => f.key === formKey)) {
+                this.wakeDormantMega(member);
+            }
+        }
+
+        this.emitState();
+        await this.saveGameState();
+        return { ok: true, form, spent: item.price };
+    }
+
+    // ─────────────────── Shop: eggs ───────────────────
+
+    getEggs() {
+        return (this.gameState.eggs || []).filter(e => !e.hatched);
+    }
+
+    getIncubatingEgg() {
+        return this.getEggs().find(e => e.eggId === this.gameState.incubatingId) || null;
+    }
+
+    /**
+     * Buys an egg, rolling its contents NOW.
+     *
+     * Deciding at purchase rather than at hatch is what makes the egg safe to
+     * sync: two devices that both reach zero on the same egg produce the same
+     * species, and because the hatched Pokémon takes a deterministic instanceId
+     * derived from the eggId, the ordinary party merge collapses the two into
+     * one instead of handing the student a free duplicate.
+     */
+    async buyEgg(itemId) {
+        const item = this.config.shopItemById(itemId);
+        if (!item || item.kind !== this.config.SHOP_ITEM_KINDS.EGG) {
+            return { ok: false, reason: 'unknown' };
+        }
+        const contents = this.config.rollEggContents(itemId);
+        if (!contents) return { ok: false, reason: 'unknown' };
+        if (!this.spendMoney(item.price)) return { ok: false, reason: 'poor', price: item.price };
+
+        const egg = {
+            eggId: this.generateId(),
+            itemId,
+            speciesId: contents.speciesId,
+            shiny: contents.shiny,
+            encountersLeft: item.hatchEncounters,
+            hatched: false,
+        };
+        this.gameState.eggs.push(egg);
+        // Straight into the incubator when it is free, so the common case is
+        // one press rather than two.
+        if (!this.getIncubatingEgg()) this.gameState.incubatingId = egg.eggId;
+
+        this.emitState();
+        await this.saveGameState();
+        return { ok: true, egg, spent: item.price };
+    }
+
+    /** Swaps which egg is being carried. */
+    async setIncubating(eggId) {
+        const egg = this.getEggs().find(e => e.eggId === eggId);
+        if (!egg) return { ok: false, reason: 'unknown' };
+        this.gameState.incubatingId = eggId;
+        this.emitState();
+        await this.saveGameState();
+        return { ok: true };
+    }
+
+    /**
+     * One encounter's worth of incubation, hatching if that was the last one.
+     *
+     * Called once per RESOLVED encounter — a win or an escape, never per tick —
+     * so an egg's cost is quoted in the same unit the shop prices are.
+     * Returns what hatched, for the caller to play a scene for.
+     */
+    hatchTick() {
+        const egg = this.getIncubatingEgg();
+        if (!egg) return null;
+        egg.encountersLeft = Math.max(0, egg.encountersLeft - 1);
+        if (egg.encountersLeft > 0) return null;
+        return this.hatchEgg(egg);
+    }
+
+    hatchEgg(egg) {
+        if (!egg || egg.hatched) return null;
+        egg.hatched = true;
+        if (this.gameState.incubatingId === egg.eggId) this.gameState.incubatingId = null;
+
+        const species = this.config.getSpeciesById(egg.speciesId);
+        if (!species) return null;
+
+        // Derived from the eggId, NOT generateId(): a second device hatching the
+        // same egg must land on the same instanceId so the party merge sees one
+        // Pokémon rather than two.
+        const instanceId = 'egg_' + egg.eggId;
+        if (!this.gameState.party.some(p => p.instanceId === instanceId)) {
+            this.gameState.party.push({
+                instanceId,
+                speciesId: egg.speciesId,
+                // Hatches at 5 like a starter does. An egg is a Pokémon you are
+                // given, not one you have trained.
+                level: 5,
+                totalExp: this.config.expForLevel(5),
+                shiny: egg.shiny === true,
+                megaStones: [],
+                megaSeen: [],
+                megaActive: null,
+                megaActiveAt: 0,
+            });
+        }
+        this.updatePokedex(egg.speciesId, true, egg.shiny === true);
+
+        // Pick up the next egg automatically, so a bag of eggs keeps working
+        // without the student having to reopen the mart between each one.
+        const next = this.getEggs()[0];
+        if (next) this.gameState.incubatingId = next.eggId;
+
+        return { egg, species, shiny: egg.shiny === true, instanceId };
     }
 
     // ─────────────────────────── Trading ───────────────────────────
@@ -2238,6 +2683,11 @@ class FlickemonEngine {
                 );
                 this.wildOpponent.expGained = partialExp;
                 this.addExpToActive(partialExp);
+                // An abandoned fight still pays, and still counts as an
+                // encounter for whatever is in the incubator.
+                const escapeMoney = this.addMoney(this.config.ESCAPE_MONEY);
+                this.wildOpponent.moneyGained = escapeMoney;
+                const escapeHatch = this.hatchTick();
 
                 this.encounterListeners.forEach(cb => cb({
                     wildSpecies: this.wildOpponent.wildSpecies,
@@ -2245,8 +2695,10 @@ class FlickemonEngine {
                     won: false,
                     captured: false,
                     expGained: partialExp,
+                    moneyGained: escapeMoney,
                     evolved: false,
                 }));
+                if (escapeHatch) this.emitHatch(escapeHatch);
 
                 if (this.respawnTimer) clearTimeout(this.respawnTimer);
                 this.respawnTimer = setTimeout(() => this.spawnWildOpponent(), 3000);
@@ -2297,8 +2749,16 @@ class FlickemonEngine {
                 const winExp = this.consumeWinExp(this.wildOpponent.wildLevel);
                 this.wildOpponent.expGained = winExp;
 
+                // Money is flat and unboosted — see addMoney. A catch pays a
+                // little extra, which is what stops capture mode being strictly
+                // the poorer choice for giving up half the EXP.
+                const winMoney = this.addMoney(this.config.BATTLE_WIN_MONEY
+                    + (captured && inCaptureMode ? this.config.CAPTURE_MONEY_BONUS : 0));
+                this.wildOpponent.moneyGained = winMoney;
+
+                let joined = false;
                 if (captured) {
-                    this.addWildToParty(this.wildOpponent);
+                    joined = this.addWildToParty(this.wildOpponent);
                     this.updatePokedex(this.wildOpponent.wildSpecies.id, true,
                                        this.wildOpponent.shiny === true);
                     this.creditDailyProgress({ caught: 1 });
@@ -2310,19 +2770,27 @@ class FlickemonEngine {
                 }
 
                 const evoResult = this.addExpToActive(winExp);
+                const hatched = this.hatchTick();
 
                 this.encounterListeners.forEach(cb => cb({
                     wildSpecies: this.wildOpponent.wildSpecies,
                     wildLevel: this.wildOpponent.wildLevel,
                     won: true,
                     captured,
+                    // Whether it actually reached the party. instantCapture has
+                    // always reported this; the ordinary capture discarded it,
+                    // so a capture at the backstop announced itself and then
+                    // quietly did not happen.
+                    joined,
                     guaranteed: this.wildOpponent.guaranteed === true,
                     brokeFree: this.wildOpponent.brokeFree === true,
                     expGained: winExp,
+                    moneyGained: winMoney,
                     expDebtLeft: this.getExpDebt(),
                     evolved: !!evoResult,
                     evolvedInto: evoResult || undefined,
                 }));
+                if (hatched) this.emitHatch(hatched);
 
                 if (this.respawnTimer) clearTimeout(this.respawnTimer);
                 this.respawnTimer = setTimeout(() => this.spawnWildOpponent(), 3000);
@@ -2347,12 +2815,21 @@ class FlickemonEngine {
      * with its own level — both show in the party and either can go on a PVP
      * team. At the capacity backstop a species you have never owned still gets
      * in: losing a Pokedex entry matters, losing a duplicate does not.
+     *
+     * A shiny or a legendary is the exception to that last clause, and gets in
+     * regardless. "Duplicate" is a judgement about the SPECIES, and it is the
+     * wrong test for these two: a shiny Pikachu alongside an ordinary one is
+     * not a duplicate in any sense the student cares about. Without this the
+     * guarantee in isGuaranteedCatch would hold everywhere except the one place
+     * it is silent -- the game would say "caught!", mark the Pokedex, and hand
+     * back nothing. The backstop sits at 3000, so this is a corner rather than
+     * a common case, but a guarantee with a corner in it is not a guarantee.
      */
     addWildToParty(wild) {
         const atCapacity = this.gameState.party.length >= this.config.MAX_PARTY_SIZE;
         const isNewSpecies = !this.gameState.party
             .some(p => p.speciesId === wild.wildSpecies.id);
-        if (atCapacity && !isNewSpecies) return false;
+        if (atCapacity && !isNewSpecies && !this.isGuaranteedCatch(wild)) return false;
 
         this.gameState.party.push({
             instanceId: this.generateId(),
@@ -2478,7 +2955,12 @@ class FlickemonEngine {
             // Decided at encounter, not at capture, so the widget shows the
             // alternate colouring for the whole fight — the tell that makes a
             // student look up from their notes.
-            shiny: Math.random() < this.config.SHINY_CHANCE * this.rewardShinyMultiplier(),
+            // Clamped, or x10 from PVP times x5 from the mart would turn 1/512
+            // into roughly 1/10 and a shiny would stop being an event.
+            shiny: Math.random() < Math.min(
+                this.config.MAX_SHINY_CHANCE,
+                this.config.SHINY_CHANCE * this.rewardShinyMultiplier() * this.shopShinyMultiplier()
+            ),
         };
 
         this.gameState.wildOpponent = this.wildOpponent;
@@ -2491,8 +2973,11 @@ class FlickemonEngine {
         const active = this.getActivePokemon();
         const activeLevel = active ? active.level : 5;
 
-        // Legendary check (Lv40+, 1% base, multiplied while the radar is running)
-        const legendaryChance = Math.min(0.5, 0.01 * this.rewardLegendaryMultiplier());
+        // Legendary check (Lv40+, 1% base, multiplied by the radar and by any
+        // permanent boost). The 0.5 ceiling is what keeps x50 from turning the
+        // wild into nothing but legendaries.
+        const legendaryChance = Math.min(0.5,
+            0.01 * this.rewardLegendaryMultiplier() * this.shopLegendaryMultiplier());
         if (activeLevel >= 40 && Math.random() <= legendaryChance) {
             const legendaries = this.config.POKEMON_REGISTRY.filter(s => s.isLegendary);
             if (legendaries.length > 0) {
@@ -2548,9 +3033,13 @@ class FlickemonEngine {
         if (!active || active.level >= this.config.MAX_LEVEL) return null;
 
         // Every EXP gain in the game funnels through here — battle wins, escape
-        // consolation, and by extension the team's share — so the PVP boost is
+        // consolation, and by extension the team's share — so both boosts are
         // applied once, at the source.
-        const exp = Math.round(rawExp * this.rewardExpMultiplier());
+        //
+        // The two MULTIPLY rather than one overriding the other: a maxed
+        // permanent boost during a PVP Double EXP is x4. That is deliberate and
+        // is the reason to keep battling after buying one.
+        const exp = Math.round(rawExp * this.rewardExpMultiplier() * this.shopExpMultiplier());
 
         active.totalExp += exp;
         const newLevel = Math.min(this.config.MAX_LEVEL, this.config.levelFromExp(active.totalExp));

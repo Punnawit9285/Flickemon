@@ -46,5 +46,26 @@ check('inactive segment is muted', css.includes('color: var(--flick-text-muted)'
 check('collapses to icons on narrow widgets', css.includes('.mode-seg-label'));
 check('respects reduced motion', css.includes('prefers-reduced-motion'));
 
+console.log('\n=== the header still fits a phone ===');
+{
+    // Seven controls now share this row — two mode segments, PVP, Trade,
+    // Friends, the mart, the menu and the collapse chevron. Measured in a real
+    // browser at 380px they needed 328px of a 306px row and spilled 85px past
+    // the card. The fix is a narrow-width block that tightens the spacing and
+    // leaves wrapping on as a safety net; these assert it is still there,
+    // because the next feature to add a header button will silently re-break it.
+    const narrow = css.slice(css.indexOf('@media (max-width: 460px) { .pvp-header-label'));
+    const block = narrow.slice(0, narrow.indexOf('\n}', narrow.indexOf('.mode-seg')) + 2);
+
+    check('the header may wrap rather than overflow', /\.flickemon-header\s*\{[^}]*flex-wrap:\s*wrap/.test(block));
+    check('so may the actions row', /\.header-actions\s*\{[^}]*flex-wrap:\s*wrap/.test(block));
+    check('and the row is tightened so it usually does not need to',
+        /\.header-actions\s*\{[^}]*gap:\s*0\.1rem/.test(block));
+    check('every header button is narrowed, not just some',
+        ['pvp-header-btn', 'trade-header-btn', 'friends-header-btn', 'shop-header-btn']
+            .every(c => block.includes('.' + c)));
+    check('the icon buttons shrink too', /\.icon-btn\s*\{[^}]*padding/.test(block));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

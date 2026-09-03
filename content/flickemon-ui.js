@@ -155,6 +155,7 @@ class FlickemonUI {
         // Two figures, because this is the one header button that is about
         // people rather than about Pokémon.
         const friendsSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="196" cy="152" r="60"/><path d="M100 400c0-53 43-96 96-96s96 43 96 96"/><circle cx="356" cy="176" r="48"/><path d="M300 400h112c0-45 -30-80 -70-88"/></svg>`;
+        const shopSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M96 176h320l-28 240a32 32 0 0 1-32 28H156a32 32 0 0 1-32-28z"/><path d="M176 176v-32a80 80 0 0 1 160 0v32"/></svg>`;
         const swordsSvg = `<svg viewBox="0 0 512 512" width="15" height="15" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M424 64l-56 0-208 208 56 56L424 120zM88 64l56 0 208 208-56 56L88 120z"/><path d="M136 400l40 40M376 400l-40 40"/></svg>`;
         // Solid, like the other four. An outlined glyph sitting among filled
         // ones reads as a different weight, not a different icon.
@@ -204,6 +205,7 @@ class FlickemonUI {
         const expProg = this.engine.getExpProgress(active);
         const isCaptureMode = this.engine.isCaptureMode();
         const reward = this.engine.getActiveReward ? this.engine.getActiveReward() : null;
+        const money = this.engine.getMoney ? this.engine.getMoney() : 0;
         const expDebt = this.engine.getExpDebt ? this.engine.getExpDebt() : 0;
 
         // onVideoProgress fires ~4x/sec, and rebuilding innerHTML each time tore
@@ -230,6 +232,7 @@ class FlickemonUI {
             // Only the type, not the countdown: the minutes are patched in
             // place, so a ticking clock must not force a rebuild every minute.
             reward ? reward.type : '-',
+            money,
         ].join('|');
 
         if (card.dataset.sig === signature && card.querySelector('.widget-body')) {
@@ -260,6 +263,7 @@ class FlickemonUI {
                     <button class="pvp-header-btn" title="Battle another trainer">${swordsSvg}<span class="pvp-header-label">PVP</span></button>
                     <button class="trade-header-btn" title="Trade with another trainer">${tradeSvg}<span class="pvp-header-label">Trade</span></button>
                     <button class="friends-header-btn" title="Friends and the global board">${friendsSvg}<span class="pvp-header-label">Friends</span></button>
+                    <button class="shop-header-btn" title="Poké Mart — spend what you have earned">${shopSvg}<span class="shop-header-label">${this.config.formatMoney(money)}</span></button>
                     <button class="icon-btn menu-trigger-btn" title="Options">${ellipsisSvg}</button>
                     <button class="icon-btn widget-collapse-btn" title="Toggle Collapse">${chevronUpSvg}</button>
 
@@ -320,14 +324,14 @@ class FlickemonUI {
                                 ${wild.megaForm ? `<div class="mega-flag">◆ ${this.wildMegaName(wild)}!</div>` : ''}
                                 <div class="status-line ${wild.status}">
                                     ${wild.status === 'captured'
-                                        ? `🏆 ${wild.guaranteed ? 'Caught — too rare to lose!' : 'Caught!'}${wild.instant ? '' : ` (+${wild.expGained || 0} EXP)`}`
+                                        ? `🏆 ${wild.guaranteed ? 'Caught — too rare to lose!' : 'Caught!'}${wild.instant ? '' : ` (+${wild.expGained || 0} EXP, +${this.config.formatMoney(wild.moneyGained || 0)})`}`
                                         : wild.status === 'defeated'
                                         // A capture that missed its roll is still a win —
                                         // it just did not end with a Pokémon. Saying so is
                                         // what stops a 60% miss reading as a lost catch.
-                                        ? `${wild.brokeFree ? '💨 It broke free and fled!' : '💥 Defeated!'} (+${wild.expGained || 0} EXP)`
+                                        ? `${wild.brokeFree ? '💨 It broke free and fled!' : '💥 Defeated!'} (+${wild.expGained || 0} EXP, +${this.config.formatMoney(wild.moneyGained || 0)})`
                                         : wild.status === 'escaped'
-                                        ? `💨 Escaped! (+${wild.expGained || 0} EXP)`
+                                        ? `💨 Escaped! (+${wild.expGained || 0} EXP, +${this.config.formatMoney(wild.moneyGained || 0)})`
                                         : `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`}
                                 </div>
                                 ${wild.status === 'fighting' ? (
@@ -401,6 +405,11 @@ class FlickemonUI {
         card.querySelector('.trade-header-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
             this.openTrade();
+        });
+
+        card.querySelector('.shop-header-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.openShop();
         });
 
         const menuBtn = card.querySelector('.menu-trigger-btn');
@@ -508,6 +517,12 @@ class FlickemonUI {
         if (!window.FlickemonFriends) return;
         if (!this.friends) this.friends = new window.FlickemonFriends(this.engine, this);
         this.friends.open();
+    }
+
+    openShop() {
+        if (!window.FlickemonShop) return;
+        if (!this.shop) this.shop = new window.FlickemonShop(this.engine, this);
+        this.shop.open();
     }
 
     openTrade() {
@@ -2083,7 +2098,9 @@ class FlickemonUI {
         // One queue, two scenes. Megas and evolutions share the fullscreen
         // suspend/replay machinery because the problem is identical, but they
         // are different animations and must not overlap each other either.
-        const play = evo.kind === 'mega' ? this.playMegaOverlay : this.playEvolutionOverlay;
+        const play = evo.kind === 'mega' ? this.playMegaOverlay
+                   : evo.kind === 'hatch' ? this.playHatchOverlay
+                   : this.playEvolutionOverlay;
         const cancel = play.call(this, evo, () => {
             this.currentEvolution = null;
             this.currentOverlayEl = null;
@@ -2212,6 +2229,62 @@ class FlickemonUI {
 
         // Same three-way race as the evolution scene: the timer, a click, or an
         // abort from fullscreen. One `settled` flag so none of them can double-fire.
+        let settled = false;
+        const settle = (advance) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            overlay.remove();
+            if (advance) done();
+        };
+        const timer = setTimeout(() => settle(true), MEGA_OVERLAY_MS);
+        overlay.addEventListener('click', () => settle(true));
+
+        document.body.appendChild(overlay);
+        return () => settle(false);
+    }
+
+    /**
+     * The hatching scene.
+     *
+     * Reuses the mega overlay's shell — same flash, rings and burst — because
+     * the beat is the same one: a held breath, then a reveal. Only the thing in
+     * the middle differs, so only that is new CSS.
+     */
+    playHatchOverlay(evo, done) {
+        const overlay = document.createElement('div');
+        overlay.className = 'mega-overlay-screen hatch-overlay-screen';
+
+        const queued = this.pendingEvolutions.length;
+        const species = evo.species;
+
+        overlay.innerHTML = `
+            <div class="mega-flash"></div>
+            <div class="mega-box">
+                ${evo.deferred ? '<p class="evo-deferred">While you were watching…</p>' : ''}
+                <p class="mega-lead">The egg is hatching!</p>
+                <div class="mega-stage">
+                    <div class="mega-vortex"></div>
+                    <div class="mega-ring mega-ring-1"></div>
+                    <div class="mega-ring mega-ring-2"></div>
+                    <div class="hatch-egg"><span class="hatch-crack"></span></div>
+                    <div class="mega-burst"></div>
+                    <div class="mega-morph">
+                        <img src="${this.config.getSpriteUrl(species.id, evo.shiny)}"
+                             alt="${species.name}" class="new-sprite"/>
+                    </div>
+                    <div class="mega-shards">${this.renderMegaShards()}</div>
+                </div>
+                <div class="mega-outcome">
+                    <p class="mega-desc">It hatched into <b>${species.name}</b>!${
+                        evo.shiny ? ' <span class="hatch-shiny">✦ Shiny!</span>' : ''}</p>
+                    <div class="types-row">${species.types.map(t =>
+                        `<span class="type-pill" data-type="${t}">${t}</span>`).join('')}</div>
+                </div>
+                ${queued ? `<p class="evo-queue">+${queued} more</p>` : ''}
+                <p class="evo-skip">Click anywhere to skip</p>
+            </div>`;
+
         let settled = false;
         const settle = (advance) => {
             if (settled) return;

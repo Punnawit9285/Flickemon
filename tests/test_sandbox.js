@@ -320,6 +320,25 @@ const check=(n,c,d='')=>c?(console.log('  PASS  '+n),pass++):(console.log('  FAI
         (await A.chrome.storage.local.get('k')).k===1
         && (await B.chrome.storage.local.get('k')).k===undefined);
 
-  console.log(`\n${pass} passed, ${fail} failed`);
+  console.log('\n=== the sandbox loads what the extension ships ===');
+{
+    // The sandbox is the only place the real content scripts are ever run in a
+    // browser, so a script the manifest ships but the sandbox omits is a file
+    // nothing has ever executed. That has happened twice: friends and custom
+    // species were both missing here while being live in the manifest.
+    const html = fs.readFileSync(ROOT + 'tests/pvp-sandbox/index.html', 'utf8');
+    const shipped = JSON.parse(fs.readFileSync(ROOT + 'manifest.json', 'utf8'))
+        .content_scripts[0].js;
+    const loaded = [...html.matchAll(/\.\.\/\.\.\/(content\/[\w.-]+\.js)/g)].map(m => m[1]);
+
+    for (const f of shipped) {
+        check(`the sandbox loads ${f.split('/').pop()}`, loaded.includes(f));
+    }
+    check('and loads them in the manifest\'s own order',
+        shipped.filter(f => loaded.includes(f)).join() === loaded.join(),
+        loaded.join());
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail?1:0);
 })();

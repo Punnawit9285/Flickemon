@@ -83,6 +83,21 @@ function getBackSpriteUrl(pokemonId, shiny = false) {
 // Change this one number for a stricter rate.
 const SHINY_CHANCE = 1 / 512;
 
+// The ceiling once every multiplier has been applied.
+//
+// Shiny rate is multiplied by a PVP Shiny Charm (x10) and again by a permanent
+// Shiny boost from the shop (up to x5). Unclamped that is x50, which turns
+// 1/512 into roughly 1/10 — at 24 encounters an hour, two or three shinies
+// every hour. A shiny that common is not an event any more, and the whole
+// reason SHINY_CHANCE is 1/512 rather than the games' 1/4096 was to make it a
+// rare thing a student actually sees, not a common one.
+//
+// 1/32 is about one every 80 minutes with everything running, which stays
+// remarkable while still being a visible payoff for two expensive boosts.
+// The legendary roll has always had the equivalent cap, hardcoded as 0.5 in
+// rollWildPokemon; this is the same idea, written down.
+const MAX_SHINY_CHANCE = 1 / 32;
+
 // ─────────────────────── PVP victory rewards ───────────────────────
 //
 // Winning a PVP battle grants one of three boosts, drawn at random. How long
@@ -137,6 +152,16 @@ const BALANCE_REFERENCE = {
     maxLevelHours: { capture: 151, exp: 78 },
     // Time to defeat one wild Pokémon, whatever its level.
     battleMinutes: 2.5,
+    // Poké Dollars earned per hour of watching, measured the same way — by
+    // simulating the real engine in tests/test_guide.js, not by multiplying the
+    // award constants by an assumed encounter rate. The two differ by about
+    // 10%, because some encounters escape and pay ESCAPE_MONEY instead.
+    //
+    // Every shop price is quoted in hours and derived from SHOP_PRICE_PER_HOUR,
+    // so this is the figure the whole economy hangs on. Capture mode earns a
+    // little more because a successful catch pays CAPTURE_MONEY_BONUS on top of
+    // the win — deliberate, since capture mode already gives up half the EXP.
+    moneyPerHour: { capture: 116, exp: 101 },
     // What a block of a medical subject averages, in hours of recordings. The
     // guide uses it to express progress in something a student can picture.
     blockHours: 20,
@@ -2658,6 +2683,244 @@ function streakFrom(totalsByDay, todayKey = dayKeyFor()) {
     return streak;
 }
 
+// ─────────────────────────── Shop ───────────────────────────
+//
+// The late game had nothing to spend itself on. A student with a level 100
+// partner and a wide Pokédex has met everything the encounter table can offer,
+// and EXP — until now the only currency the game had — buys nothing once the
+// ceiling is reached.
+//
+// So a defeated or captured Pokémon now also pays Poké Dollars, and the Poké
+// Mart turns them into the things grinding cannot produce: an egg of a chosen
+// evolution stage, a Mega Stone for a species of your choosing, and three
+// permanent boosts that stack on top of the temporary ones PVP hands out.
+//
+// ── Why money is a TIME currency and not a POWER one ──
+//
+// Every award below is flat. Not scaled by wild level, not scaled by your
+// level, and — this is the important one — never multiplied by any boost, PVP
+// or shop. Two consequences follow, and both are the point:
+//
+//   1. Every price can be quoted honestly in hours of lectures, for every
+//      student, at every level. "100 hours" means 100 hours whoever reads it.
+//   2. The Legendary and Shiny boosts sold here raise how often rare things
+//      appear. If rarity paid a bonus, those boosts would multiply the income
+//      that buys them, and a maxed Legendary booster would earn several times
+//      the honest rate. A flat award closes that loop completely.
+//
+// Anyone tempted to pay a shiny a bonus should read that twice first.
+
+const BATTLE_WIN_MONEY = 5;
+
+// Paid on top of the win, capture mode only, and only when the catch roll
+// actually lands. Capture mode gives up half the EXP of exp mode; paying it a
+// little more money keeps the choice between the two a real one rather than a
+// tax on wanting a Pokédex.
+const CAPTURE_MONEY_BONUS = 2;
+
+// An abandoned fight still pays, for the same reason ESCAPE_EXP_MULTIPLIER
+// exists — and stays far below a win, for the same reason too.
+const ESCAPE_MONEY = 1;
+
+// What an hour of lectures is worth, for pricing.
+//
+// Deliberately BETWEEN the two measured rates in BALANCE_REFERENCE rather than
+// equal to either. Capture mode earns 116/h and exp mode 101/h, and a single
+// price list has to be honest to both: at 110 a capture-mode student earns
+// slightly faster than the label promises and an exp-mode one slightly slower,
+// which is the right way round — exp mode already bought its advantage in
+// levelling speed.
+//
+// tests/test_guide.js re-measures both rates against the real engine and fails
+// if either drifts more than 15%, so the hours on the price tags cannot quietly
+// stop being true.
+const SHOP_PRICE_PER_HOUR = 110;
+
+/** Hours of lectures, as a price. */
+function priceForHours(hours) {
+    return Math.round(hours * SHOP_PRICE_PER_HOUR);
+}
+
+const SHOP_ITEM_KINDS = { EGG: 'egg', STONE: 'stone', BOOST: 'boost' };
+
+/**
+ * Everything the mart sells, in the order it is shown.
+ *
+ * The panel builds itself from this list — prices, blurbs, tabs and all — so
+ * adding an item is one entry here rather than a hunt through the UI. Same
+ * property FRIEND_FIELDS has, and for the same reason.
+ *
+ * `hours` is the authored number and `price` is derived from it, never the
+ * other way round: the balance conversation is always about hours.
+ */
+const SHOP_ITEMS = [
+    {
+        id: 'egg-stage1', kind: SHOP_ITEM_KINDS.EGG, stage: 1,
+        label: 'Stage 1 Egg', icon: '○',
+        detail: 'Hatches into a random unevolved Pokémon.',
+        hours: 10, price: priceForHours(10), hatchEncounters: 20,
+    },
+    {
+        id: 'egg-stage2', kind: SHOP_ITEM_KINDS.EGG, stage: 2,
+        label: 'Stage 2 Egg', icon: '◐',
+        detail: 'Hatches into a random once-evolved Pokémon.',
+        hours: 30, price: priceForHours(30), hatchEncounters: 40,
+    },
+    {
+        id: 'egg-stage3', kind: SHOP_ITEM_KINDS.EGG, stage: 3,
+        label: 'Stage 3 Egg', icon: '●',
+        detail: 'Hatches into a random fully evolved Pokémon.',
+        hours: 50, price: priceForHours(50), hatchEncounters: 60,
+    },
+    {
+        id: 'egg-rare', kind: SHOP_ITEM_KINDS.EGG, stage: 'rare',
+        label: 'Rare Egg', icon: '✦',
+        detail: 'Hatches into a legendary, or a shiny. Yours for good either way.',
+        hours: 100, price: priceForHours(100), hatchEncounters: 100,
+    },
+    {
+        id: 'mega-stone', kind: SHOP_ITEM_KINDS.STONE,
+        label: 'Mega Stone', icon: '◈',
+        detail: 'Choose the stone. Every Pokémon of that species can Mega Evolve.',
+        hours: 100, price: priceForHours(100),
+    },
+];
+
+/**
+ * What a boost costs at each tier, and what it is worth.
+ *
+ * Three tiers, and the cost doubles each time: reaching the top of one boost is
+ * 1,400 hours, and all three is 4,200 — a target measured in years of a degree
+ * rather than a weekend, which is the only honest shape for a permanent effect.
+ * The first tier is deliberately reachable at 200 hours so the ladder starts
+ * somewhere a student can actually see from where they stand.
+ *
+ * Indexed by tier, so [0] is "not owned yet" and reads as x1 / no price.
+ */
+const SHOP_BOOST_TIERS = [
+    { tier: 0, hours: 0,   price: 0 },
+    { tier: 1, hours: 200, price: priceForHours(200) },
+    { tier: 2, hours: 400, price: priceForHours(400) },
+    { tier: 3, hours: 800, price: priceForHours(800) },
+];
+
+const SHOP_MAX_BOOST_TIER = 3;
+
+/**
+ * The permanent multipliers, indexed by tier.
+ *
+ * These MULTIPLY the temporary PVP reward rather than replacing it — a maxed
+ * EXP boost during a PVP Double EXP is x4 — which is the whole reason to keep
+ * winning battles after buying one.
+ *
+ * EXP tops out at x2 because that is already what Double EXP is worth, and a
+ * permanent version of the game's biggest reward is enough. Shiny and Legendary
+ * top out at x5 because both are clamped downstream anyway (MAX_SHINY_CHANCE
+ * and the 0.5 ceiling in rollWildPokemon), so a larger number here would only
+ * be a number.
+ */
+const SHOP_BOOST_MULTIPLIERS = {
+    [REWARDS.EXP]:       [1, 1.25, 1.5, 2],
+    [REWARDS.SHINY]:     [1, 2, 3, 5],
+    [REWARDS.LEGENDARY]: [1, 2, 3, 5],
+};
+
+/**
+ * The three boosts as the shop shows them.
+ *
+ * Keyed by the SAME ids PVP uses, so the two systems share one vocabulary and
+ * the panel can reuse REWARD_INFO's labels and icons instead of inventing a
+ * second set that would drift.
+ */
+const SHOP_BOOSTS = [
+    { id: REWARDS.EXP,       reward: REWARDS.EXP,
+      detail: 'Every EXP gain is multiplied, for good.' },
+    { id: REWARDS.SHINY,     reward: REWARDS.SHINY,
+      detail: 'Shiny encounters stay more likely, for good.' },
+    { id: REWARDS.LEGENDARY, reward: REWARDS.LEGENDARY,
+      detail: 'Legendary encounters stay more likely, for good (Lv40+).' },
+];
+
+function shopItemById(id) {
+    return SHOP_ITEMS.find(i => i.id === id) || null;
+}
+
+/** What the NEXT tier of a boost costs, or null when it is already maxed. */
+function nextBoostTier(currentTier) {
+    const next = (Number(currentTier) || 0) + 1;
+    return next <= SHOP_MAX_BOOST_TIER ? SHOP_BOOST_TIERS[next] : null;
+}
+
+/** A permanent boost's multiplier at a tier. Unknown kinds are simply x1. */
+function shopBoostMultiplier(kind, tier) {
+    const ladder = SHOP_BOOST_MULTIPLIERS[kind];
+    if (!ladder) return 1;
+    const t = Math.max(0, Math.min(SHOP_MAX_BOOST_TIER, Math.floor(Number(tier) || 0)));
+    return ladder[t] || 1;
+}
+
+/**
+ * A price or a balance, ready to render.
+ *
+ * Formatted here rather than in the panel for the reason PVP_MODES carries
+ * rewardLabel: the UI should never be the place a number gets its units, or
+ * two screens will eventually disagree about what one is.
+ */
+function formatMoney(amount) {
+    const n = Math.max(0, Math.floor(Number(amount) || 0));
+    return '₽' + n.toLocaleString('en-US');
+}
+
+/** The same figure said in the units the prices were authored in. */
+function hoursForPrice(amount) {
+    return (Number(amount) || 0) / SHOP_PRICE_PER_HOUR;
+}
+
+/**
+ * What is inside an egg, decided when it is BOUGHT rather than when it hatches.
+ *
+ * That is not flavour, it is the merge rule. An egg bought on a laptop and
+ * hatched on a phone has to produce the same Pokémon on both, or syncing hands
+ * the student two of them — so the roll has to happen once, at a point both
+ * devices agree on, and travel in the save. Purchase is that point.
+ *
+ * Legendaries are excluded from the stage eggs on purpose: they are what the
+ * Rare Egg is for, and letting a 10-hour egg produce one would make the
+ * 100-hour one pointless.
+ */
+function rollEggContents(itemId) {
+    const item = shopItemById(itemId);
+    if (!item || item.kind !== SHOP_ITEM_KINDS.EGG) return null;
+
+    const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+    if (item.stage === 'rare') {
+        // Half a legendary, half a shiny. Drawn from the same legendary pool
+        // rollWildPokemon uses, so the two can never disagree about what counts.
+        const legendaries = POKEMON_REGISTRY.filter(s => s.isLegendary);
+        if (Math.random() < 0.5 && legendaries.length) {
+            return { speciesId: pick(legendaries).id, shiny: false };
+        }
+        const ordinary = POKEMON_REGISTRY.filter(s => !s.isLegendary);
+        return { speciesId: pick(ordinary).id, shiny: true };
+    }
+
+    const pool = getSpeciesByStage(item.stage).filter(s => !s.isLegendary);
+    if (!pool.length) return null;
+    // A shop egg rolls its own shiny chance, unmodified by any boost — the
+    // boosts are about what you MEET in the wild, and an egg is not an encounter.
+    return { speciesId: pick(pool).id, shiny: Math.random() < SHINY_CHANCE };
+}
+
+/** Every mega form that exists, flattened, for the stone picker. */
+function allMegaForms() {
+    const out = [];
+    for (const [speciesId, forms] of Object.entries(MEGA_FORMS)) {
+        for (const form of forms) out.push({ ...form, speciesId: Number(speciesId) });
+    }
+    return out;
+}
+
 window.FlickemonConfig = {
     SPRITE_BASE_URL,
     getSpriteUrl,
@@ -2690,6 +2953,25 @@ window.FlickemonConfig = {
     dayKeyFor,
     dayKeyBefore,
     streakFrom,
+    MAX_SHINY_CHANCE,
+    BATTLE_WIN_MONEY,
+    CAPTURE_MONEY_BONUS,
+    ESCAPE_MONEY,
+    SHOP_PRICE_PER_HOUR,
+    SHOP_ITEM_KINDS,
+    SHOP_ITEMS,
+    SHOP_BOOSTS,
+    SHOP_BOOST_TIERS,
+    SHOP_BOOST_MULTIPLIERS,
+    SHOP_MAX_BOOST_TIER,
+    priceForHours,
+    shopItemById,
+    nextBoostTier,
+    shopBoostMultiplier,
+    formatMoney,
+    hoursForPrice,
+    rollEggContents,
+    allMegaForms,
     isFullyEvolved,
     finalFormOf,
     megaSourceFor,

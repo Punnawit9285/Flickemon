@@ -26,8 +26,74 @@ service cloud.firestore {
 
     // Each student owns exactly one save document, keyed by their Firebase uid.
     // They can read and write only their own; nobody can read anyone else's.
+    //
+    // ── The wallet ──
+    //
+    // moneyEarned and moneySpent are lifetime counters, hoisted out of the save
+    // blob by background/firestore.js precisely so these rules can see them: a
+    // rule cannot look inside a JSON string.
+    //
+    // serverAt is stamped by Firestore itself, via an updateTransform on the
+    // commit, and pinned below to request.time. That is the load-bearing part.
+    // updatedAt sits in the same document but is written from the DEVICE's
+    // clock, so a limit measured against it would be a limit the client sets —
+    // and a student whose laptop clock is wrong would be locked out of syncing
+    // altogether, which is a worse failure than being cheated.
+    //
+    // What this enforces, on the server, for real:
+    //
+    //   1. Neither counter can ever go down. A client cannot un-spend
+    //      something, and a stale device cannot walk the ledger backwards.
+    //   2. Money is minted no faster than MAX_EARN_PER_HOUR. The honest ceiling
+    //      is about 171/hour — one encounter every 2.5 minutes, every one of
+    //      them a paying capture — so 240 leaves real headroom for a good run
+    //      while still refusing anything that is not gameplay.
+    //   3. The window is capped at a day, so going dark for a week does not
+    //      bank a week's allowance to spend in one write.
+    //
+    // What it does NOT do, stated plainly: it cannot stop someone editing
+    // chrome.storage.local and spending forged money on their own machine. The
+    // same has always been true of the party, the Pokédex and expDebt. What it
+    // does mean is that forged money can never be PERSISTED or reach a second
+    // device — the commit is rejected outright — so nothing another student can
+    // see, trade with, or be matched against is affected by it.
+    function saveWalletOk() {
+      let before = resource.data;
+      let after = request.resource.data;
+      let hadWallet = 'moneyEarned' in before;
+      let earnedBefore = hadWallet ? before.moneyEarned : 0;
+      let spentBefore = hadWallet ? before.moneySpent : 0;
+      // Server time on both sides, or no time at all.
+      let elapsed = ('serverAt' in before)
+          ? request.time.toMillis() - before.serverAt.toMillis()
+          : -1;
+      let window = elapsed < 0 ? 0 : (elapsed > 86400000 ? 86400000 : elapsed);
+      // 240/hour, plus a small allowance for the rounding either side of a
+      // three-minute push. A save written before serverAt existed has no
+      // trustworthy clock to measure against, so it falls back to the coarse
+      // per-write ceiling rather than locking that student out.
+      let allowance = ('serverAt' in before) ? (240 * window) / 3600000 + 50 : 3000;
+      return after.moneyEarned >= earnedBefore
+             && after.moneySpent >= spentBefore
+             && (!hadWallet || after.moneyEarned - earnedBefore <= allowance);
+    }
+
     match /saves/{uid} {
-      allow read, write: if signedInStudent() && request.auth.uid == uid;
+      allow read: if signedInStudent() && request.auth.uid == uid;
+      // A first save has nothing to be measured against.
+      allow create: if signedInStudent() && request.auth.uid == uid;
+      allow update: if signedInStudent() && request.auth.uid == uid
+                    // serverAt, when written, must BE the commit time. Without
+                    // this the client could back-date it and hand itself an
+                    // arbitrarily large allowance on the following write.
+                    && (!('serverAt' in request.resource.data)
+                        || request.resource.data.serverAt == request.time)
+                    // The counters cannot be dropped once they exist, or a
+                    // client could clear them and start again from anything.
+                    && (!('moneyEarned' in resource.data)
+                        || 'moneyEarned' in request.resource.data)
+                    && (!('moneyEarned' in request.resource.data) || saveWalletOk());
+      allow delete: if signedInStudent() && request.auth.uid == uid;
     }
 
     // Admin roster. Presence of admins/{uid} grants admin.
@@ -145,8 +211,15 @@ service cloud.firestore {
                     && request.resource.data.requestedBy == request.auth.uid
                     && request.resource.data.accepted == false;
 
+      // The presence checks come first on purpose. Reading a field that is not
+      // in the incoming write raises an EVALUATION ERROR rather than returning
+      // false — which still denies, so the behaviour was right, but it denies
+      // by throwing. That reads as a broken rule in the emulator log and would
+      // send anyone debugging a legitimate refusal hunting in the wrong place.
       allow update: if signedInStudent()
                     && request.auth.uid in resource.data.members
+                    && 'members' in request.resource.data
+                    && 'requestedBy' in request.resource.data
                     && request.resource.data.members == resource.data.members
                     && request.resource.data.requestedBy == resource.data.requestedBy;
 

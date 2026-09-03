@@ -114,6 +114,25 @@ console.log('\n=== the hour figures still match the engine ===');
         return seconds / 3600;
     }
 
+    /**
+     * Poké Dollars per hour, measured the same way and for the same reason.
+     *
+     * Every price in the mart is quoted in hours and derived from
+     * SHOP_PRICE_PER_HOUR, so if the engine's real rate drifts from the
+     * reference, every price silently starts lying about what it costs.
+     */
+    async function moneyPerHour(mode) {
+        e.gameState = e.createEmptyState();
+        e.isLoaded = true; e.deviceId = 'sim';
+        await e.chooseStarter(1);
+        e.gameState.battleMode = mode;
+        const HOURS = 20;
+        for (let seconds = 0; seconds < 3600 * HOURS; seconds += 10) {
+            await e.onVideoProgress(10);
+        }
+        return e.getMoney() / HOURS;
+    }
+
     const bal = cfg.BALANCE_REFERENCE;
     const within = (actual, claimed, tol = 0.15) =>
         Math.abs(actual - claimed) / claimed <= tol;
@@ -130,6 +149,18 @@ console.log('\n=== the hour figures still match the engine ===');
                     `${actual.toFixed(1)}h vs claimed ${claimed}h`);
             }
         }
+        for (const mode of ['capture', 'exp']) {
+            const actual = await moneyPerHour(mode);
+            const claimed = bal.moneyPerHour[mode];
+            console.log(`      money (${mode}): reference says ${claimed}/h, engine gives ${actual.toFixed(1)}/h`);
+            check(`the ${mode}-mode money rate is accurate`, within(actual, claimed),
+                `${actual.toFixed(1)}/h vs claimed ${claimed}/h`);
+        }
+        check('shop prices are derived from a rate the engine actually pays',
+            cfg.SHOP_PRICE_PER_HOUR <= bal.moneyPerHour.capture
+            && cfg.SHOP_PRICE_PER_HOUR >= bal.moneyPerHour.exp,
+            `${cfg.SHOP_PRICE_PER_HOUR} outside ${bal.moneyPerHour.exp}..${bal.moneyPerHour.capture}`);
+
         global.setTimeout = realTimeout;
 
         console.log('\n=== support page ===');

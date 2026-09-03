@@ -297,6 +297,35 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
        && e.isGuaranteedCatch({wildSpecies:{isLegendary:false},shiny:true})===true
        && e.isGuaranteedCatch({wildSpecies:{isLegendary:false},shiny:false})===false
        && e.isGuaranteedCatch(null)===false);
+
+    // The last place the guarantee could still be broken: the party-capacity
+    // backstop, which drops duplicates. A shiny is not a duplicate.
+    const pidgey = cfg.getSpeciesById(16);
+    const mewtwo = cfg.POKEMON_REGISTRY.find(x => x.isLegendary);
+    const fill = n => {
+      e.gameState.party = [];
+      for (let i = 0; i < n; i++) e.gameState.party.push({
+        instanceId:'x'+i, speciesId:pidgey.id, level:5, totalExp:0, shiny:false});
+    };
+    const cap = cfg.MAX_PARTY_SIZE;
+
+    fill(cap);
+    check('at capacity, an ordinary duplicate is still refused',
+      e.addWildToParty({wildSpecies:pidgey,wildLevel:5,shiny:false})===false);
+
+    fill(cap);
+    check('but a SHINY duplicate gets in — species is the wrong test for it',
+      e.addWildToParty({wildSpecies:pidgey,wildLevel:5,shiny:true})===true);
+
+    fill(cap);
+    check('and so does a legendary',
+      e.addWildToParty({wildSpecies:mewtwo,wildLevel:70,shiny:false})===true);
+
+    fill(cap);
+    check('a species never owned still gets in, as before',
+      e.addWildToParty({wildSpecies:cfg.getSpeciesById(129),wildLevel:5,shiny:false})===true);
+
+    e.gameState.party = [];
   }
 
   console.log('\n=== who you meet depends on your partner ===');
@@ -1032,6 +1061,61 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
           [722, 725, 728].every(id => !cfg.getSpeciesById(id).isLegendary));
   }
 
-  console.log(`\n${pass} passed, ${fail} failed`);
+  console.log('\n=== switching account is not a trapdoor ===');
+{
+    // "Switch account" used to wipe this device's save BEFORE opening Google's
+    // account chooser, which made the chooser the point of no return: cancel
+    // it, be offline, or back out of it, and an ordinary student was left with
+    // an empty game and no reachable way back — the snapshot restore is behind
+    // the admin unlock. Found by clicking the real Settings panel in a browser.
+    const realSend = e.sendToWorker;
+    const seed = () => {
+        e.gameState = e.createEmptyState();
+        e.gameState.hasStarted = true;
+        e.gameState.ownerUid = 'uid-alice';
+        e.gameState.party = [{ instanceId: 'keep-me', speciesId: 25, level: 30,
+                               totalExp: cfg.expForLevel(30), shiny: false,
+                               megaStones: [], megaSeen: [], megaActive: null, megaActiveAt: 0 }];
+        e.gameState.activeInstanceId = 'keep-me';
+        e.isLoaded = true;
+    };
+    const worker = (signIn) => async (msg) => {
+        if (msg.type === 'AUTH_SWITCH') return { ok: true };
+        if (msg.type === 'AUTH_SIGN_IN') return signIn;
+        return null;
+    };
+
+    // 1. The student backs out of the chooser.
+    seed();
+    e.sendToWorker = worker({ ok: false, error: 'cancelled' });
+    let threw = false;
+    try { await e.switchAccount(); } catch { threw = true; }
+    check('a cancelled switch reports the failure', threw);
+    check('and leaves the party exactly where it was',
+        e.gameState.party.length === 1 && e.gameState.party[0].instanceId === 'keep-me',
+        JSON.stringify(e.gameState.party.map(p => p.instanceId)));
+    check('and leaves the game started', e.gameState.hasStarted === true);
+
+    // 2. Signing back in as the SAME student keeps everything.
+    seed();
+    e.sendToWorker = worker({ ok: true, uid: 'uid-alice', email: 'a@docchula.com' });
+    await e.switchAccount();
+    check('signing back in as the same student keeps the party',
+        e.gameState.party.length === 1, String(e.gameState.party.length));
+
+    // 3. A DIFFERENT student must not inherit the party. This is the shared-lab
+    //    guard the eager wipe was reaching for; it still holds, it just runs
+    //    after the sign-in succeeds instead of before it is attempted.
+    seed();
+    e.sendToWorker = worker({ ok: true, uid: 'uid-bob', email: 'b@docchula.com' });
+    await e.switchAccount();
+    check('a different student does NOT inherit the previous party',
+        e.gameState.party.length === 0, JSON.stringify(e.gameState.party.map(p => p.instanceId)));
+    check('and a snapshot of the discarded save was kept', !!e.peekBackup());
+
+    e.sendToWorker = realSend;
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail?1:0);
 })();

@@ -31,6 +31,7 @@ cp content/flickemon-config.js \
    content/flickemon-pvp.js \
    content/flickemon-trade.js \
    content/flickemon-friends.js \
+   content/flickemon-shop.js \
    content/flickemon-ui.js \
    content/content-script.js \
    content/styles.css        "$OUT/content/"
@@ -40,6 +41,7 @@ cp background/firebase-config.js \
    background/pvp.js \
    background/trade.js \
    background/friends.js \
+   background/cache.js \
    background/service-worker.js "$OUT/background/"
 cp icons/flickemon-48.png icons/flickemon-128.png "$OUT/icons/"
 # Optional: the support page shows this if it exists, and says so if it doesn't.

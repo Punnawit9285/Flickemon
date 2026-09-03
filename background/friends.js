@@ -42,7 +42,7 @@ import {
     LEADERBOARD_COLLECTION,
 } from './firebase-config.js';
 import { getIdToken } from './auth.js';
-import { readDoc, mutateDoc, invalidateDoc, createMemoCache } from './cache.js';
+import { readDoc, mutateDoc, invalidateDoc, createMemoCache, createSessionCache } from './cache.js';
 
 const BASE = () => `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}`
                  + `/databases/(default)/documents`;
@@ -58,7 +58,37 @@ export const LEADERBOARD_LIMIT = 25;
  * one query instead of twenty.
  */
 const BOARD_CACHE_TTL_MS = 5 * 60 * 1000;
-const boardCache = createMemoCache(BOARD_CACHE_TTL_MS);
+// Session-backed, not in-memory: the worker is evicted after ~30s idle, so a
+// five-minute in-memory TTL could never survive long enough to be hit even
+// once. This is the difference between a cache that is documented and a cache
+// that works.
+const boardCache = createSessionCache('board', BOARD_CACHE_TTL_MS);
+
+/**
+ * A friend's published feed, cached for slightly longer than the panel's
+ * fastest refresh.
+ *
+ * Feeds are the single most expensive thing in the extension: one document read
+ * per friend, per sweep, and FRIEND_MAX is 30. What they contain — EXP earned
+ * today — moves on the save's own three-minute cadence, so serving a
+ * two-minute-old copy shows the student the same number a fresh read would
+ * have, for nothing. An explicit Refresh passes fresh:true and bypasses this.
+ */
+const FEED_CACHE_TTL_MS = 2 * 60 * 1000;
+const feedCache = createSessionCache('feed', FEED_CACHE_TTL_MS);
+
+/**
+ * Who your friends are — one document read per friendship, every time the
+ * panel is opened on a page that has not asked before.
+ *
+ * The content script caches this for its own lifetime, but a student moving
+ * between lecture pages gets a fresh content script each time and paid the
+ * query again. This makes it once per two minutes per browser session instead,
+ * which is right because the answer only changes when somebody deliberately
+ * adds or removes a friend — and those paths invalidate it below.
+ */
+const FRIENDSHIPS_CACHE_TTL_MS = 2 * 60 * 1000;
+const friendshipsCache = createSessionCache('friendships', FRIENDSHIPS_CACHE_TTL_MS);
 
 async function auth() {
     const a = await getIdToken();
@@ -267,6 +297,8 @@ function friendshipFields(o) {
 /** Sends a request. Accepting one that was already sent the other way. */
 export async function requestFriend(otherUid) {
     const a = await auth();
+    // The list we hand out is cached; we are about to change it.
+    await friendshipsCache.delete(a.uid);
     if (!otherUid || otherUid === a.uid) return { ok: false, reason: 'self' };
 
     const key = pairKey(a.uid, otherUid);
@@ -304,6 +336,8 @@ export async function requestFriend(otherUid) {
 /** Accepts a request somebody else sent. */
 export async function acceptFriend(otherUid) {
     const a = await auth();
+    // The list we hand out is cached; we are about to change it.
+    await friendshipsCache.delete(a.uid);
     const key = pairKey(a.uid, otherUid);
 
     let ok = false;
@@ -321,6 +355,8 @@ export async function acceptFriend(otherUid) {
 /** Declines, cancels, or unfriends — all the same document, all a delete. */
 export async function removeFriend(otherUid) {
     const a = await auth();
+    // The list we hand out is cached; we are about to change it.
+    await friendshipsCache.delete(a.uid);
     const key = pairKey(a.uid, otherUid);
     const url = docUrl(FRIENDSHIPS_COLLECTION, key);
     invalidateDoc(url);
@@ -339,8 +375,12 @@ export async function removeFriend(otherUid) {
  * single-field index Firestore builds automatically, so this works with no
  * index deployment — unlike the leaderboard below.
  */
-export async function listFriendships() {
+export async function listFriendships({ fresh = false } = {}) {
     const a = await auth();
+    return await friendshipsCache.through(a.uid, () => queryFriendships(a), { fresh });
+}
+
+async function queryFriendships(a) {
     const res = await fetch(`${BASE()}:runQuery`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${a.idToken}`, 'Content-Type': 'application/json' },
@@ -416,19 +456,24 @@ export async function publishFeed({ audience, payload }) {
  * ordinary answer rather than an error: it means that person has not shared
  * with us, or has not published yet, and the panel shows them as quiet.
  */
-export async function readFeeds(uids) {
+export async function readFeeds(uids, { fresh = false } = {}) {
     const a = await auth();
     const wanted = [...new Set((uids || []).filter(Boolean))];
 
     const out = {};
     await Promise.all(wanted.map(async (uid) => {
         try {
-            const current = await readDoc(docUrl(FEEDS_COLLECTION, uid), a.idToken, { fresh: true });
-            if (!current) { out[uid] = null; return; }
-            const f = current.doc.fields || {};
-            let payload = {};
-            try { payload = JSON.parse(readS(f, 'payload') || '{}'); } catch { payload = {}; }
-            out[uid] = { uid, updatedAt: readI(f, 'updatedAt'), payload };
+            out[uid] = await feedCache.through(uid, async () => {
+                const current = await readDoc(docUrl(FEEDS_COLLECTION, uid), a.idToken, { fresh: true });
+                // `null` is a real answer — they have not shared with us, or
+                // have not published — and is cached like any other, so a quiet
+                // friend does not cost a read on every single sweep.
+                if (!current) return null;
+                const f = current.doc.fields || {};
+                let payload = {};
+                try { payload = JSON.parse(readS(f, 'payload') || '{}'); } catch { payload = {}; }
+                return { uid, updatedAt: readI(f, 'updatedAt'), payload };
+            }, { fresh });
         } catch {
             out[uid] = null;
         }
@@ -453,7 +498,7 @@ export async function publishLeaderboard({ joined, label, dayKey, todayExp, leve
     const a = await auth();
     const url = docUrl(LEADERBOARD_COLLECTION, a.uid);
     invalidateDoc(url);
-    boardCache.clear();
+    await boardCache.delete(`board:${dayKey}`);
 
     if (!joined) {
         const res = await fetch(url, {

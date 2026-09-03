@@ -2,7 +2,7 @@ const ROOT = new URL('..', import.meta.url).pathname;
 // Local caching, and the write shape it made verifiable.
 import fs from 'node:fs';
 const R = ROOT;
-const { createMemoCache, readDoc, mutateDoc, invalidateDoc } = await import(R + 'background/cache.js');
+const { createMemoCache, createSessionCache, readDoc, mutateDoc, invalidateDoc } = await import(R + 'background/cache.js');
 
 let pass = 0, fail = 0;
 const check = (n, c, d = '') => c
@@ -29,6 +29,52 @@ console.log('\n=== memo cache ===');
     check('clear empties it', c.get('a') === undefined && c.get('b') === undefined);
     check('null is cacheable (absence is a real answer)',
         await c.through('n', async () => null) === null && c.get('n') === null);
+}
+
+console.log('\n=== session cache (survives the worker being evicted) ===');
+{
+    // No chrome.storage.session here, so this exercises the in-memory fallback.
+    // What matters either way is the contract the friends code relies on.
+    const c = createSessionCache('t', 50);
+    let produced = 0;
+    const make = async () => { produced++; return 'v' + produced; };
+
+    check('first call produces', await c.through('k', make) === 'v1');
+    check('second call is served from cache', await c.through('k', make) === 'v1');
+    check('the producer ran once', produced === 1, String(produced));
+
+    check('fresh bypasses the cache', await c.through('k', make, { fresh: true }) === 'v2');
+
+    await new Promise(r => setTimeout(r, 70));
+    check('an expired entry is a miss', await c.get('k') === undefined);
+
+    // A friend who has published nothing reads as null, and caching that is the
+    // whole point: a quiet friend must not cost a read on every sweep.
+    check('null is cacheable, because absence is a real answer',
+        await c.through('n', async () => null) === null && await c.get('n') === null);
+
+    await c.set('d', 1);
+    await c.delete('d');
+    check('delete removes it', await c.get('d') === undefined);
+
+    // Two namespaces must not collide — feeds and friendships share the store.
+    const a = createSessionCache('a', 1000), b = createSessionCache('b', 1000);
+    await a.set('same', 'from-a');
+    await b.set('same', 'from-b');
+    check('namespaces are isolated',
+        await a.get('same') === 'from-a' && await b.get('same') === 'from-b');
+}
+
+console.log('\n=== the expensive reads are the ones that are cached ===');
+{
+    const src = fs.readFileSync(R + 'background/friends.js', 'utf8');
+    check('feeds go through the session cache', /feedCache\.through/.test(src));
+    check('a feed sweep can still be forced fresh', /readFeeds\(uids, \{ fresh/.test(src));
+    check('the friendship list is cached too', /friendshipsCache\.through/.test(src));
+    check('and invalidated whenever it is changed',
+        (src.match(/friendshipsCache\.delete/g) || []).length >= 3);
+    check('the board is cached in session storage, not memory',
+        /boardCache = createSessionCache/.test(src));
 }
 
 console.log('\n=== readDoc ===');
@@ -144,8 +190,14 @@ console.log('\n=== every Firestore write sends a Document, not bare fields ===')
     }
     check('no PATCH sends bare fields', offenders.length === 0, offenders.join(' | '));
 
+    // The save path moved from PATCH to :commit so it could carry an
+    // updateTransform for the server timestamp the wallet rule depends on. The
+    // Document still has to be wrapped — one level deeper now, inside the write.
     const fs2 = fs.readFileSync(R + 'background/firestore.js', 'utf8');
-    check('the save path still wraps correctly', /const body = \{\s*\n\s*fields:/.test(fs2));
+    check('the save path still wraps its fields in a Document',
+        /writes:\s*\[\{\s*\n\s*update:\s*\{[\s\S]{0,120}?fields:\s*\{/.test(fs2));
+    check('and still asks the server to stamp the time the rule trusts',
+        /updateTransforms:\s*\[[\s\S]{0,160}?setToServerValue:\s*'REQUEST_TIME'/.test(fs2));
 }
 
 console.log('\n=== auth reads are memoised, and invalidated on change ===');

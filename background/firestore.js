@@ -13,9 +13,17 @@
 import { FIREBASE_CONFIG, SAVES_COLLECTION, ADMINS_COLLECTION } from './firebase-config.js';
 import { getIdToken } from './auth.js';
 
+const BASE = () => `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}` +
+                   `/databases/(default)/documents`;
+
 function docUrl(uid) {
-    return `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}` +
-           `/databases/(default)/documents/${SAVES_COLLECTION}/${uid}`;
+    return `${BASE()}/${SAVES_COLLECTION}/${uid}`;
+}
+
+/** The resource name a commit addresses, which is the URL without the host. */
+function docName(uid) {
+    return `projects/${FIREBASE_CONFIG.projectId}/databases/(default)/documents` +
+           `/${SAVES_COLLECTION}/${uid}`;
 }
 
 /**
@@ -46,27 +54,62 @@ export async function pullState() {
     }
 }
 
-/** Writes the student's cloud save, replacing the whole document. */
+/**
+ * Writes the student's cloud save, replacing the whole document.
+ *
+ * Sent as a commit rather than a PATCH for one reason: `updateTransforms` is
+ * the only way a REST client can ask Firestore to stamp a field with the
+ * SERVER's clock. That stamp is what makes the wallet rule in firestore.rules
+ * enforceable — a rate limit measured against a timestamp the client wrote
+ * would be a rate limit the client sets, and a client with a skewed clock
+ * would be locked out of syncing entirely. See the rule for the full argument.
+ */
 export async function pushState(state) {
     const auth = await getIdToken();
     if (!auth) return { signedIn: false };
 
     const caughtCount = (state.pokedex || []).filter(e => e.caught).length;
 
+    // Hoisted out of the blob so security rules can see them. Rules cannot read
+    // inside a JSON string, so a number that has to be constrained server-side
+    // has to be a field of its own — see the saves/{uid} rule for what the
+    // constraint is and, just as importantly, what it is not.
+    let moneyEarned = 0;
+    let moneySpent = 0;
+    for (const bucket of Object.values(state.shopWallet || {})) {
+        moneyEarned += Number(bucket && bucket.earned) || 0;
+        moneySpent += Number(bucket && bucket.spent) || 0;
+    }
+
     const body = {
-        fields: {
-            // Queryable columns for the admin monitoring portal.
-            email: { stringValue: auth.email || '' },
-            updatedAt: { integerValue: String(Date.now()) },
-            totalMinutesWatched: { doubleValue: state.totalMinutesWatched || 0 },
-            caughtCount: { integerValue: String(caughtCount) },
-            // Full save.
-            state: { stringValue: JSON.stringify(state) },
-        },
+        writes: [{
+            update: {
+                name: docName(auth.uid),
+                fields: {
+                    // Queryable columns for the admin monitoring portal.
+                    email: { stringValue: auth.email || '' },
+                    // The device's own clock, kept because the portal has always
+                    // shown it. NOT the field the wallet rule trusts.
+                    updatedAt: { integerValue: String(Date.now()) },
+                    totalMinutesWatched: { doubleValue: state.totalMinutesWatched || 0 },
+                    caughtCount: { integerValue: String(caughtCount) },
+                    moneyEarned: { doubleValue: moneyEarned },
+                    moneySpent: { doubleValue: moneySpent },
+                    // Full save.
+                    state: { stringValue: JSON.stringify(state) },
+                },
+            },
+            // Stamped by the server, and required by the rules to equal the
+            // commit time — so it cannot be back-dated to widen the next
+            // write's allowance.
+            updateTransforms: [
+                { fieldPath: 'serverAt', setToServerValue: 'REQUEST_TIME' },
+            ],
+        }],
     };
 
-    const res = await fetch(docUrl(auth.uid), {
-        method: 'PATCH',
+    const res = await fetch(`${BASE()}:commit`, {
+        method: 'POST',
         headers: {
             Authorization: `Bearer ${auth.idToken}`,
             'Content-Type': 'application/json',

@@ -33,6 +33,7 @@
         "content/flickemon-pvp.js",
         "content/flickemon-trade.js",
         "content/flickemon-friends.js",
+        "content/flickemon-shop.js",
         "content/content-script.js"
       ],
       "css": [

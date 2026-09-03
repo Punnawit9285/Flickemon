@@ -145,9 +145,9 @@ const handlers = {
     async FRIEND_REQUEST(msg)     { return await requestFriend(msg.uid); },
     async FRIEND_ACCEPT(msg)      { return await acceptFriend(msg.uid); },
     async FRIEND_REMOVE(msg)      { return await removeFriend(msg.uid); },
-    async FRIEND_LIST()           { return await listFriendships(); },
+    async FRIEND_LIST(msg)        { return await listFriendships({ fresh: msg.fresh === true }); },
     async FRIEND_PUBLISH(msg)     { return await publishFeed(msg.payload || {}); },
-    async FRIEND_FEEDS(msg)       { return await readFeeds(msg.uids || []); },
+    async FRIEND_FEEDS(msg)       { return await readFeeds(msg.uids || [], { fresh: msg.fresh === true }); },
     async FRIEND_BOARD_PUBLISH(msg) { return await publishLeaderboard(msg.payload || {}); },
     async FRIEND_BOARD_READ(msg)  { return await readLeaderboard(msg.dayKey); },
 

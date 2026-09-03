@@ -28,9 +28,33 @@
  * removed. See the budget at the top of flickemon-engine.js.
  */
 
-const FRIENDS_POLL_MS = 30000;        // while open and visible, and only then
-const FRIENDS_POLL_MAX_MS = 120000;   // backs off as a panel is left sitting
-const FRIENDS_BACKOFF = 1.5;
+// ── The read budget ──
+//
+// A feed sweep is the most expensive thing this extension does: one Firestore
+// document read PER FRIEND, and FRIEND_MAX is 30. The free tier is 50,000 reads
+// a day shared by the whole faculty, so a panel left open on a second monitor
+// must not be able to spend an unbounded share of it.
+//
+// Three limits, deliberately overlapping, because a single one always has a
+// hole. The interval bounds the rate, the backoff bounds a panel nobody is
+// looking at, and the sweep budget bounds the TOTAL — including a student
+// hammering the refresh button, which neither of the other two can catch.
+//
+// The numbers: 90s, doubling to 10 minutes, and never more than 4 sweeps for as
+// long as the panel stays open — which covers about the first ten minutes.
+// Worst case is therefore 4 x 30 = 120 reads per open, and realistic use is one
+// or two sweeps. What is being shown is EXP earned today, which the save itself
+// only publishes every three minutes, so a faster poll could not show a fresher
+// number even if it were free.
+//
+// tests/test_theme.js models this against the whole faculty's daily quota and
+// fails if the worst case stops fitting.
+const FRIENDS_POLL_MS = 90000;
+const FRIENDS_POLL_MAX_MS = 600000;
+const FRIENDS_BACKOFF = 2;
+const FRIENDS_SWEEP_BUDGET = 4;
+/** A refresh press inside this window serves what is already on screen. */
+const FRIENDS_MANUAL_MIN_MS = 20000;
 
 /** Names arrive from other students' accounts, so nothing is trusted raw. */
 function fesc(s) {
@@ -50,6 +74,10 @@ class FlickemonFriends {
         this.tab = 'today';          // today | global | add | privacy
         this.pollTimer = null;
         this.polls = 0;
+        // Counts every feed sweep this panel has paid for, automatic or not.
+        this.sweeps = 0;
+        this.lastSweepAt = 0;
+        this.sweepPaused = false;
         this.friends = [];
         this.feeds = {};
         this.board = null;
@@ -71,6 +99,9 @@ class FlickemonFriends {
         const modal = this.ui.createModalOverlay('Friends');
         modal.overlay.classList.add('friends-overlay');
         this.modal = modal;
+        this.polls = 0;
+        this.sweeps = 0;
+        this.sweepPaused = false;
 
         modal.overlay.addEventListener('click', (e) => {
             if (e.target === modal.overlay) this.leave();
@@ -117,11 +148,15 @@ class FlickemonFriends {
                 this.friends = (res && res.friendships) || [];
                 if (this.tab === 'today') {
                     const uids = this.friends.filter(f => f.accepted).map(f => f.uid);
-                    if (uids.length) {
-                        const feeds = await this.engine.friendFeeds(uids);
-                        this.feeds = (feeds && feeds.feeds) || {};
-                    } else {
+                    if (!uids.length) {
                         this.feeds = {};
+                    } else if (this.canSweep(fresh)) {
+                        this.sweeps++;
+                        this.lastSweepAt = Date.now();
+                        // A manual refresh bypasses the worker's feed cache;
+                        // an automatic one is happy to be served from it.
+                        const feeds = await this.engine.friendFeeds(uids, { fresh });
+                        this.feeds = (feeds && feeds.feeds) || {};
                     }
                 }
             } else if (this.tab === 'global') {
@@ -143,10 +178,29 @@ class FlickemonFriends {
         this.startPolling();
     }
 
+    /**
+     * Whether this refresh may pay for a feed sweep.
+     *
+     * A manual press is allowed to skip the cache but not the budget — that is
+     * the whole point of having a budget rather than only an interval.
+     */
+    canSweep(manual) {
+        if (this.sweeps === 0) return true;                     // opening the panel
+        if (this.sweeps >= FRIENDS_SWEEP_BUDGET) {
+            this.sweepPaused = true;
+            return false;
+        }
+        if (manual) return Date.now() - this.lastSweepAt >= FRIENDS_MANUAL_MIN_MS;
+        return true;
+    }
+
     startPolling() {
         this.stopPolling();
         if (!this.modal || (typeof document !== 'undefined'
             && document.visibilityState === 'hidden')) return;
+        // Once the budget is gone the loop stops entirely rather than spinning
+        // on refreshes that are only allowed to redraw what is already here.
+        if (this.sweeps >= FRIENDS_SWEEP_BUDGET) { this.sweepPaused = true; return; }
 
         // Backs off the longer a panel is left open, because a modal somebody
         // walked away from should not cost the same as one being watched.
@@ -197,6 +251,17 @@ class FlickemonFriends {
     }
 
     // ── Today ──
+
+    /**
+     * Says when the panel stopped updating itself, rather than going quietly
+     * stale. A number that is silently frozen is worse than an old one that
+     * admits it.
+     */
+    renderSweepNote() {
+        if (!this.sweepPaused) return '';
+        return `<p class="friends-paused">Auto-refresh paused to save everyone's
+                daily quota. Reopen Friends for the latest.</p>`;
+    }
 
     renderToday() {
         const accepted = this.friends.filter(f => f.accepted);
@@ -259,6 +324,7 @@ class FlickemonFriends {
                 <ol class="friends-rank">
                     ${unranked.map(r => this.renderRow(r, null)).join('')}
                 </ol>` : ''}
+            ${this.renderSweepNote()}
             <p class="friends-foot">Progress is EXP and levels earned today, never how
             long you studied. It resets at midnight.</p>`;
     }

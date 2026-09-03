@@ -208,13 +208,64 @@ console.log('\n=== Firestore free-tier budget ===');
     const total = reads + pvpReads;
     console.log(`      pvp:   ${perBattle} reads/player/battle (was ${Math.round(oldPerBattle)}), `
               + `${pvpReads.toLocaleString()}/day @ ${BATTLERS} battlers`);
-    console.log(`      TOTAL: ${total.toLocaleString()} reads/day = `
-              + `${Math.round(total / 500)}% of the free tier`);
 
-    check('saves and PVP together stay under 60% of the read tier',
-        total <= 30000, `${total}/50000`);
     check('PVP is materially cheaper than a flat 1.5s loop',
         perBattle < oldPerBattle * 0.6, `${perBattle} vs ${Math.round(oldPerBattle)}`);
+
+    // ── Friends ──
+    //
+    // The most expensive thing in the extension, and the only one that scales
+    // with somebody else's choices: a feed sweep is ONE READ PER FRIEND, and
+    // FRIEND_MAX is 30. Budgeted at the worst case the code can actually reach,
+    // not at typical use, because the whole point of the sweep budget is that
+    // the worst case is bounded at all.
+    const friends = fs.readFileSync(R + 'content/flickemon-friends.js', 'utf8');
+    const cfgSrc = fs.readFileSync(R + 'content/flickemon-config.js', 'utf8');
+
+    const sweepBudget = num(friends, 'FRIENDS_SWEEP_BUDGET');
+    const friendPoll = num(friends, 'FRIENDS_POLL_MS');
+    const friendPollMax = num(friends, 'FRIENDS_POLL_MAX_MS');
+    const friendMax = num(cfgSrc, 'FRIEND_MAX');
+    const boardLimit = num(fs.readFileSync(R + 'background/friends.js', 'utf8'), 'LEADERBOARD_LIMIT');
+
+    check('a feed sweep is bounded per panel session', sweepBudget <= 8, String(sweepBudget));
+    check('the poll floor is slower than the save cadence that feeds it',
+        friendPoll >= push / 2, `${friendPoll}ms vs push ${push}ms`);
+    check('an abandoned panel backs off to minutes', friendPollMax >= 300000,
+        `${friendPollMax}ms`);
+    check('the budget applies to manual refreshes too, not just the timer',
+        /canSweep\(/.test(friends) && /FRIENDS_MANUAL_MIN_MS/.test(friends));
+    check('feeds are cached somewhere that survives worker eviction',
+        /createSessionCache/.test(fs.readFileSync(R + 'background/friends.js', 'utf8')));
+    check('a friends panel stops reading when the tab is hidden',
+        /visibilityState === 'hidden'/.test(friends) && /stopPolling\(\)/.test(friends));
+
+    // Worst case one student can reach: every sweep spent, a full friend list,
+    // the friendship query, and a board view.
+    const FRIEND_USERS = 40, OPENS_EACH = 2;
+    const perOpen = sweepBudget * friendMax + friendMax + boardLimit;
+    const friendReads = FRIEND_USERS * OPENS_EACH * perOpen;
+    console.log(`      friends: ${perOpen} reads/open worst case, `
+              + `${friendReads.toLocaleString()}/day @ ${FRIEND_USERS} users x${OPENS_EACH}`);
+
+    // ── Shop ──
+    //
+    // Zero reads and zero extra writes by construction: the wallet, the eggs
+    // and the boosts all ride the save blob that was already being written, and
+    // a purchase takes the ordinary debounce rather than an immediate push.
+    const shop = fs.readFileSync(R + 'content/flickemon-shop.js', 'utf8');
+    check('the shop opens no connections of its own',
+        !/fetch\(|sendMessage/.test(shop));
+    check('a shopping spree coalesces into one write',
+        !/saveGameState\(\{ immediate: true \}\)/.test(
+            engine.slice(engine.indexOf('async buyBoost'), engine.indexOf('hatchTick()'))));
+
+    const grand = total + friendReads;
+    console.log(`      TOTAL: ${grand.toLocaleString()} reads/day = `
+              + `${Math.round(grand / 500)}% of the free tier`);
+
+    check('saves, PVP and friends together stay under 60% of the read tier',
+        grand <= 30000, `${grand}/50000`);
 
     check('an unchanged save is not written at all',
         /lastPushedFingerprint/.test(engine) && /cloudFingerprint/.test(engine));
