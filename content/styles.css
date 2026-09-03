@@ -151,6 +151,36 @@
     --flick-arena-speck: rgba(120, 100, 68, 0.28);
     --flick-arena-vignette: rgba(40, 30, 12, 0.22);
     --flick-arena-plate-top: #cdb98c;
+
+    /* The trade tunnel. Fixed for the same reason the arena is: a trade scene
+     * lays down its own world, and this one is deliberately NOT the daylight
+     * the battle happens in — a link trade in the games is two Pokémon crossing
+     * somewhere else entirely, and the dark makes the light they travel in
+     * read as light rather than as a pale shape on a pale ground. */
+    --flick-tunnel-far: #0b0a1e;
+    --flick-tunnel-near: #1c1740;
+    --flick-tunnel-core: #2d2270;
+    --flick-tunnel-grid: rgba(120, 200, 255, 0.30);
+    --flick-tunnel-grid-far: rgba(120, 200, 255, 0.08);
+    --flick-tunnel-star: rgba(255, 255, 255, 0.90);
+    --flick-tunnel-star-dim: rgba(190, 215, 255, 0.45);
+    --flick-tunnel-neb-a: rgba(90, 60, 220, 0.40);
+    --flick-tunnel-neb-b: rgba(0, 190, 220, 0.26);
+    --flick-tunnel-neb-c: rgba(220, 60, 180, 0.22);
+    --flick-tunnel-vignette: rgba(4, 3, 16, 0.86);
+    --flick-tunnel-ink: #eaf2ff;
+    --flick-tunnel-beam: rgba(150, 230, 255, 0.85);
+    /* The ball rides through that fixed world, so it is fixed too — a site's
+     * dark theme must not hand us a black-and-black Poké Ball. */
+    --flick-ball-top: #e5404a;
+    --flick-ball-bottom: #f4f4f4;
+    --flick-ball-ink: #1a1a20;
+
+    /* Fully-opaque stop for mask-image gradients. A mask reads alpha and
+     * ignores hue, so this is not a colour choice — it is "show this part",
+     * and naming it that way keeps a reader from hunting for the significance
+     * of whichever colour happened to be borrowed for it. */
+    --flick-mask-show: rgba(0, 0, 0, 1);
     --flick-trade: var(--ion-color-tertiary, #0ea5e9);
     --flick-trade-rgb: var(--ion-color-tertiary-rgb, 14, 165, 233);
     /* Green and red read differently on the scene's dark ground than on a page,
@@ -2638,9 +2668,120 @@
     height: 260px;
     margin: 0.25rem 0 0.75rem;
     overflow: hidden;
-    background: var(--flick-fill-subtle);
+    /* The deep field everything else sits in: darkest at the edges, opening
+       toward a lit core on the horizon where the two paths cross. */
+    background:
+        radial-gradient(ellipse 60% 46% at 50% 50%,
+            var(--flick-tunnel-core) 0%, transparent 70%),
+        linear-gradient(180deg,
+            var(--flick-tunnel-far) 0%,
+            var(--flick-tunnel-near) 45%,
+            var(--flick-tunnel-near) 55%,
+            var(--flick-tunnel-far) 100%);
     border: 3px solid var(--flick-text);
     box-shadow: 3px 3px 0 var(--flick-shadow-strong);
+    color: var(--flick-tunnel-ink);
+}
+
+/* ── Background, in four layers ──
+
+   Stacking, bottom to top: field, nebulae, starfield, grid, vignette, then
+   everything the scene is actually about. The vignette has to sit UNDER the
+   travellers — the arena learned this the hard way, where it spent a while
+   quietly dimming the two sprites the screen existed to show. */
+.trade-neb, .trade-field { z-index: 0; }
+.trade-grid { z-index: 1; }
+.trade-scene::after { z-index: 2; }        /* vignette */
+.trade-link, .trade-stars { z-index: 3; }
+.trade-traveller { z-index: 4; }
+.trade-flash { z-index: 5; }
+.trade-scene-caption, .trade-skip { z-index: 6; }
+
+/* Two nebula banks drifting in opposite directions, slowly enough to read as
+   depth rather than as movement. This is the only thing in here with colour of
+   its own, so it is what stops the tunnel looking like a grey box. */
+.trade-neb {
+    position: absolute;
+    inset: -20%;
+    pointer-events: none;
+    background:
+        radial-gradient(ellipse 34% 40% at 22% 32%, var(--flick-tunnel-neb-a) 0%, transparent 62%),
+        radial-gradient(ellipse 30% 34% at 78% 66%, var(--flick-tunnel-neb-b) 0%, transparent 60%),
+        radial-gradient(ellipse 26% 30% at 62% 22%, var(--flick-tunnel-neb-c) 0%, transparent 58%);
+    filter: blur(6px);
+    animation: trade-neb-drift 18s ease-in-out infinite alternate;
+}
+@keyframes trade-neb-drift {
+    0%   { transform: translate3d(-3%, -2%, 0) scale(1); }
+    100% { transform: translate3d(3%, 2%, 0) scale(1.12); }
+}
+
+/* A starfield in two parallax layers: fine and far, coarse and near. Built from
+   repeating gradients, so a few hundred stars cost one element and no requests. */
+.trade-field {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+        radial-gradient(1px 1px at 12% 18%, var(--flick-tunnel-star) 50%, transparent 51%),
+        radial-gradient(1px 1px at 68% 12%, var(--flick-tunnel-star) 50%, transparent 51%),
+        radial-gradient(1px 1px at 34% 74%, var(--flick-tunnel-star) 50%, transparent 51%),
+        radial-gradient(1px 1px at 87% 82%, var(--flick-tunnel-star) 50%, transparent 51%),
+        radial-gradient(1px 1px at 52% 36%, var(--flick-tunnel-star-dim) 50%, transparent 51%),
+        radial-gradient(1px 1px at 8%  62%, var(--flick-tunnel-star-dim) 50%, transparent 51%),
+        radial-gradient(1px 1px at 92% 44%, var(--flick-tunnel-star-dim) 50%, transparent 51%),
+        radial-gradient(1px 1px at 44% 8%,  var(--flick-tunnel-star-dim) 50%, transparent 51%);
+    background-size: 180px 140px, 240px 190px, 200px 160px, 260px 210px,
+                     150px 120px, 210px 170px, 190px 150px, 230px 180px;
+    opacity: 0.9;
+    animation: trade-field-pan 9s linear infinite;
+}
+@keyframes trade-field-pan {
+    /* Each layer slides a different distance, which is what makes it parallax
+       rather than a single sheet sliding past. */
+    to {
+        background-position:
+            -180px 0, -240px 0, -200px 0, -260px 0,
+            -75px 0, -105px 0, -95px 0, -115px 0;
+    }
+}
+
+/* The conduit itself: a perspective grid rushing outward from the centre. Two
+   sets of lines, converging vertically and spreading horizontally, so the eye
+   reads a tube being travelled down rather than a flat lattice. */
+.trade-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+        repeating-linear-gradient(90deg,
+            var(--flick-tunnel-grid) 0 1px, transparent 1px 44px),
+        repeating-linear-gradient(0deg,
+            var(--flick-tunnel-grid-far) 0 1px, transparent 1px 26px);
+    /* Squeezed toward the horizon: the top and bottom edges are "far". */
+    mask-image: linear-gradient(180deg,
+        transparent 0%, var(--flick-mask-show) 26%,
+        transparent 46%, transparent 54%,
+        var(--flick-mask-show) 74%, transparent 100%);
+    -webkit-mask-image: linear-gradient(180deg,
+        transparent 0%, var(--flick-mask-show) 26%,
+        transparent 46%, transparent 54%,
+        var(--flick-mask-show) 74%, transparent 100%);
+    opacity: 0.55;
+    animation: trade-grid-rush 2.4s linear infinite;
+}
+@keyframes trade-grid-rush {
+    to { background-position: -44px 0, 0 -26px; }
+}
+
+/* Corners pulled down so the two travellers own the middle. */
+.trade-scene::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse 74% 64% at 50% 50%,
+        transparent 42%, var(--flick-tunnel-vignette) 100%);
 }
 
 /* The link itself: a lane the balls ride along, brightening as they travel. */
@@ -2650,8 +2791,9 @@
     height: 3px;
     margin-top: -1.5px;
     background: linear-gradient(90deg,
-        transparent 0%, var(--flick-trade) 12%,
-        var(--flick-trade) 88%, transparent 100%);
+        transparent 0%, var(--flick-tunnel-beam) 12%,
+        var(--flick-tunnel-beam) 88%, transparent 100%);
+    box-shadow: 0 0 12px var(--flick-tunnel-beam);
     opacity: 0;
     animation: trade-link-in 4.2s ease-in-out 1.2s both;
 }
@@ -2669,7 +2811,8 @@
     top: calc(50% - 1px);
     left: 100%;
     width: 3px; height: 3px;
-    background: var(--flick-trade);
+    background: var(--flick-tunnel-beam);
+    box-shadow: 0 0 6px var(--flick-tunnel-beam);
     opacity: 0;
     animation: trade-star 1.5s linear infinite;
 }
@@ -2710,11 +2853,11 @@
     margin: -17px 0 0 -17px;
     opacity: 0;
 }
-.tb-bottom { fill: var(--flick-card-bg); stroke: var(--flick-text); stroke-width: 2; }
-.tb-top    { fill: var(--flick-danger); }
-.tb-band   { fill: var(--flick-text); }
-.tb-button { fill: var(--flick-card-bg); stroke: var(--flick-text); stroke-width: 2; }
-.tb-centre { fill: var(--flick-text); }
+.tb-bottom { fill: var(--flick-ball-bottom); stroke: var(--flick-ball-ink); stroke-width: 2; }
+.tb-top    { fill: var(--flick-ball-top); }
+.tb-band   { fill: var(--flick-ball-ink); }
+.tb-button { fill: var(--flick-ball-bottom); stroke: var(--flick-ball-ink); stroke-width: 2; }
+.tb-centre { fill: var(--flick-ball-ink); }
 
 /* ── Leaving: recalled, then carried off to the right ── */
 .trade-traveller.going { left: 8%; animation: trade-go 2.0s ease-in-out 1.6s both; }
@@ -2780,7 +2923,8 @@
     font-family: "Courier New", monospace;
     font-size: 0.74rem; font-weight: 800;
     letter-spacing: 0.04em;
-    color: var(--flick-text);
+    color: var(--flick-tunnel-ink);
+    text-shadow: 0 1px 3px var(--flick-tunnel-far);
 }
 /* Two captions in one place, each showing for its half of the scene. */
 .trade-scene-caption span { position: absolute; left: 0; right: 0; opacity: 0; }
@@ -2799,18 +2943,29 @@
     position: absolute;
     top: 8px; right: 8px;
     padding: 3px 9px;
-    border: 2px solid var(--flick-text-muted);
-    background: var(--flick-card-bg);
-    color: var(--flick-text-muted);
+    border: 2px solid var(--flick-tunnel-star-dim);
+    background: var(--flick-tunnel-far);
+    color: var(--flick-tunnel-star-dim);
     font-family: "Courier New", monospace;
     font-size: 0.58rem; font-weight: 800; letter-spacing: 0.1em;
     cursor: pointer;
 }
-.trade-skip:hover { color: var(--flick-text); border-color: var(--flick-text); }
+.trade-skip:hover { color: var(--flick-tunnel-ink); border-color: var(--flick-tunnel-ink); }
+
+/* The scene is skipped outright under reduced motion (playTradeScene returns
+   early), but the layers are styled here too: the setting can be turned on
+   with a scene already on screen, and a rushing tunnel is precisely what it
+   exists to stop. The background stays — it just stops moving. */
+@media (prefers-reduced-motion: reduce) {
+    .trade-neb, .trade-field, .trade-grid, .trade-stars i { animation: none; }
+    .trade-stars i { opacity: 0; }
+}
 
 @media (max-width: 460px) {
     .trade-scene { height: 210px; }
     .trade-traveller { width: 76px; height: 76px; margin-top: -38px; }
+    /* Fewer, wider grid lines: at this size the full lattice is just noise. */
+    .trade-grid { background-size: 64px 100%, 100% 34px; opacity: 0.4; }
 }
 
 

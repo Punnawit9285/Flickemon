@@ -135,9 +135,15 @@ console.log('\n=== a re-themed host actually moves every colour ===');
     for (const [, name, value] of defs) {
         // Scene tokens paint the extension's own full-screen grounds and are
         // meant to be independent of the host surface.
+        // This list is the register of scenes that lay down their own world:
+        // a battle arena, a trade tunnel, the ball travelling through it. A
+        // lecture site's palette has no business repainting the ground a
+        // Pokemon is standing on, or handing a dark theme a black ball on a
+        // black sky. `mask-` is not a colour at all -- a mask reads alpha and
+        // ignores hue.
         const SCENE = ['scrim', 'shadow', 'spark', 'ray', 'burst', 'damage',
                        'on-type', 'field', 'tint-neutral', 'highlight', 'sheen', 'qr-',
-                       'video-ground', 'arena-'];
+                       'video-ground', 'arena-', 'tunnel-', 'ball-', 'mask-'];
         if (SCENE.some(k => name.includes(k))) continue;
         // A token pointing at another token inherits whatever that one does.
         if (/var\(--(?:type|flick)-[\w-]+/.test(value)) continue;

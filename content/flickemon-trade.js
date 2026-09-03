@@ -282,6 +282,14 @@ class FlickemonTrade {
         this.modal.body.innerHTML = `
             <div class="trade-scene" role="img"
                  aria-label="${tradeEsc(sentSp.name)} is traded for ${tradeEsc(gotSp.name)}">
+                <!-- The tunnel the trade travels down, back to front: drifting
+                     nebulae, a parallax starfield, and a grid rushing outward.
+                     All three are gradients on empty divs, so the whole
+                     backdrop costs three elements and no requests. -->
+                <div class="trade-neb"></div>
+                <div class="trade-field"></div>
+                <div class="trade-grid"></div>
+
                 <div class="trade-link"></div>
                 <div class="trade-stars">${'<i></i>'.repeat(9)}</div>
 

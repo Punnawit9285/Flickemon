@@ -113,6 +113,61 @@ console.log('\n=== the scene fits in the time the JS gives it ===');
     console.log(`      last to finish: ${who} at ${worst}s, budget ${budget}s`);
 }
 
+console.log('\n=== the tunnel it travels down ===');
+{
+    const block = css.slice(css.indexOf('The trade scene'), css.indexOf('.trade-slots {'));
+
+    // Three empty divs carrying gradients. If one is styled but never rendered
+    // the scene silently loses a layer, which is invisible in a diff.
+    for (const layer of ['trade-neb', 'trade-field', 'trade-grid']) {
+        check(`${layer} is drawn`, new RegExp(`class="${layer}"`).test(trade));
+        check(`${layer} is styled`, new RegExp(`\\.${layer}\\s*[,{]`).test(block));
+    }
+    check('the backdrop costs no requests', !/url\(/.test(block), 'a gradient backdrop should fetch nothing');
+
+    // The arena spent a while with its vignette over the sprites, quietly
+    // dimming the two things the screen existed to show. Same shape of scene,
+    // same mistake available, so the order is asserted rather than assumed.
+    // Comments stripped before parsing selectors, or the prose above a rule is
+    // read as part of its selector list -- which is how `.trade-neb` came back
+    // keyed by an entire paragraph the first time this ran.
+    const z = {};
+    const rules = block.replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const m of rules.matchAll(/([^{}]+)\{[^}]*?z-index:\s*(\d+)/g)) {
+        for (const sel of m[1].split(',')) {
+            const name = sel.trim().replace(/^\./, '');
+            if (name) z[name] = Number(m[2]);
+        }
+    }
+    const at = n => (n in z ? z[n] : null);
+    check('the vignette sits under the travellers',
+        at('trade-scene::after') !== null && at('trade-traveller') !== null
+        && at('trade-scene::after') < at('trade-traveller'),
+        JSON.stringify(z));
+    check('and so does every background layer',
+        ['trade-neb', 'trade-field', 'trade-grid']
+            .every(l => at(l) !== null && at(l) < at('trade-traveller')), JSON.stringify(z));
+    check('the flash is over everything it lights',
+        at('trade-flash') > at('trade-traveller'));
+    check('the caption is never covered',
+        at('trade-scene-caption') >= at('trade-flash'));
+
+    // A dark scene needs its own palette, or a site dark theme hands us a
+    // black Poké Ball on a black ground.
+    check('the tunnel commits to its own colours', /--flick-tunnel-far:/.test(css));
+    check('and so does the ball', /--flick-ball-top:/.test(css)
+        && /\.tb-top\s*\{\s*fill: var\(--flick-ball-top\)/.test(css));
+    check('nothing in the scene reads the site text colour',
+        !/var\(--flick-text\b[^-]/.test(block.replace(/border: 3px solid var\(--flick-text\);/, '')),
+        'a light-theme colour on a dark tunnel');
+
+    // Looping animations are decoration, and this setting exists to stop them.
+    const rm = css.split('@media (prefers-reduced-motion').find(b => /trade-grid/.test(b));
+    check('reduced motion stops the moving layers', Boolean(rm)
+        && ['trade-neb', 'trade-field', 'trade-grid'].every(l => rm.includes(l)),
+        'a rushing tunnel is exactly what that setting is for');
+}
+
 console.log('\n=== it looks like the rest of the game ===');
 {
     const block = css.slice(css.indexOf('The trade scene'), css.indexOf('.trade-slots {'));
