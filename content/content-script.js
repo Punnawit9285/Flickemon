@@ -101,7 +101,11 @@
             harvesting = true;
             Promise.resolve(engine.creditFlickProgress(reading))
                 .then(result => {
-                    if (result && result.credited > 0 && flickemonUI.showFlickCredit) {
+                    // The cap is surfaced too: credit that stops without a
+                    // word reads as a bug rather than a rule.
+                    const worthSaying = result
+                        && (result.credited > 0 || result.reason === 'daily-cap');
+                    if (worthSaying && flickemonUI.showFlickCredit) {
                         flickemonUI.showFlickCredit(result);
                     }
                 })

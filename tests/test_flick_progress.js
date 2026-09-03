@@ -145,6 +145,10 @@ const reset = () => {
     e.gameState.flickCheckedAt = 0;
     e.gameState.studyMinutes = {};
     e.gameState.flickLocalMinutes = 0;
+    // The daily allowance is cumulative across a day, and every block here
+    // shares one simulated day — without this each block inherits whatever the
+    // last one spent.
+    e.gameState.dailyProgress = {};
 };
 // One lecture, watched `min` minutes of a 120-minute recording.
 const watched = min => FP.readCourse(page(
@@ -494,6 +498,90 @@ console.log('\n=== the notice itself ===');
     check('nothing is drawn for a zero credit',
         render({ credited: 0, rawMinutes: 0, exp: 0 }) === null);
     global.document = prevDoc;
+}
+
+console.log('\n=== the day has a ceiling, so patience is not a strategy ===');
+{
+    // The wall-clock bound already makes one drag of the seekbar nearly
+    // worthless. It does nothing against someone dragging every few minutes all
+    // day, which is what this stops.
+    reset();
+    const CAP = cfg.FLICK_DAILY_CAP_MINUTES;
+    check('four hours is the advertised ceiling', CAP === 240, String(CAP));
+
+    // Cheating must be strictly worse than studying: the very best a full day
+    // of dragging can yield has to sit below an honest session.
+    check('a maxed-out day of dragging is worth less than five hours of studying',
+        CAP * cfg.FLICK_CREDIT_RATE < 5 * 60,
+        `${CAP * cfg.FLICK_CREDIT_RATE} min vs 300 min`);
+
+    await e.creditFlickProgress(watched(0), NOW - 600 * MIN);
+    check('nothing spent yet today', e.flickMinutesToday() === 0);
+
+    // Ten hours of "progress" with ten hours of clock behind it, so only the
+    // daily cap can stop it.
+    const long = min => FP.readCourse(page(
+        [row({ title: 'Marathon', durationMin: 600, leftMin: 600 - min })],
+        `${((600 - min) / 60).toFixed(1)} hours left (${((min / 600) * 100).toFixed(1)}%)`));
+    await e.creditFlickProgress(long(0), NOW - 600 * MIN);
+    const r = await e.creditFlickProgress(long(600), NOW);
+
+    check('the day pays out at most the cap', near(r.rawMinutes, CAP, 1), String(r.rawMinutes));
+    check('which is the cap times the rate', near(r.credited, CAP * cfg.FLICK_CREDIT_RATE, 1),
+        String(r.credited));
+    check('and the allowance is now spent', e.flickMinutesLeftToday() === 0,
+        String(e.flickMinutesLeftToday()));
+
+    const after = await e.creditFlickProgress(long(600), NOW + 60 * MIN);
+    check('further watching the same day earns nothing',
+        after.credited === 0 && after.reason === 'daily-cap', after.reason);
+    check('and the notice can say what the limit was', after.capMinutes === CAP);
+
+    // A cap that banks its excess for tomorrow is not a cap.
+    check('minutes past the ceiling are gone, not carried',
+        e.flickMinutesToday() >= CAP, String(e.flickMinutesToday()));
+}
+
+console.log('\n=== the allowance is shared across devices ===');
+{
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 300 * MIN);
+    await e.creditFlickProgress(watched(120), NOW);
+    const spent = e.flickMinutesToday();
+    check('the first device spent part of the allowance', spent >= 119, String(spent));
+
+    // Without this the cap would be per device rather than per student, and two
+    // laptops would hand out two allowances.
+    const cloud = JSON.parse(JSON.stringify(e.gameState.dailyProgress));
+    e.gameState.dailyProgress = {};
+    e.deviceId = 'dev_other';
+    e.mergeCloudState({ dailyProgress: cloud });
+    check('a second device sees the minutes already spent',
+        e.flickMinutesToday() >= 119, String(e.flickMinutesToday()));
+    e.deviceId = 'dev_test';
+
+    // Three separate places rebuild a ledger row field by field — the merge,
+    // the totals and the prune — and each drops anything it does not name. The
+    // prune was the one that got missed, and the symptom was silent: every sync
+    // reset the day's allowance, so the cap could be cleared on demand.
+    const row = { '2026-09-04': { dev: { exp: 5, levels: 1, caught: 2, flickMin: 90 } } };
+    check('the prune keeps the minutes it does not understand',
+        e.pruneDailyProgress(row)['2026-09-04'].dev.flickMin === 90);
+    check('the merge keeps them too',
+        e.mergeDailyProgress({}, row)['2026-09-04'].dev.flickMin === 90);
+    check('and the totals sum them',
+        e.dailyTotals(row)['2026-09-04'].flickMin === 90);
+}
+
+console.log('\n=== the allowance is nobody else\'s business ===');
+{
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 300 * MIN);
+    await e.creditFlickProgress(watched(120), NOW);
+    e.friendCache = [{ uid: 'friend1', accepted: true, blockedByThem: false }];
+    const payload = JSON.stringify(e.buildFriendPayload());
+    check('the friend feed carries no off-extension minutes',
+        !payload.includes('flickMin'), payload.slice(0, 160));
 }
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');

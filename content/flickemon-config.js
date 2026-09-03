@@ -379,6 +379,24 @@ const FLICK_HARVEST_INTERVAL_MS = 60000;
 // lectures, so this is headroom rather than a limit anyone should reach.
 const FLICK_MAX_MARKS = 4000;
 
+// The most off-extension watching that can be banked in one day, before the
+// rate above is applied.
+//
+// The wall-clock ceiling already stops a single drag of the seekbar being worth
+// anything much -- it can never pay more than the real time since the last
+// reading. What it does NOT stop is patience: someone willing to drag through
+// lectures every few minutes, all day, collects at roughly real time without
+// watching anything. This is the bound on that.
+//
+// Four hours is chosen so the ceiling sits BELOW honest play rather than beside
+// it. Maxed out it yields 240 x 30% = 72 minutes of credit, while five hours
+// studied with the extension open yields 300 -- so the very best a cheat can do
+// is a quarter of what simply studying does, and cheating is strictly the worse
+// way to play. It is also well above a real day of watching on a phone, so a
+// student who genuinely studies on the bus and again in the evening will not
+// meet it.
+const FLICK_DAILY_CAP_MINUTES = 240;
+
 // ── Capture ──
 //
 // Beating a wild Pokemon in capture mode used to catch it every time. At the
@@ -3044,6 +3062,7 @@ window.FlickemonConfig = {
     FLICK_MIN_CREDIT_MINUTES,
     FLICK_HARVEST_INTERVAL_MS,
     FLICK_MAX_MARKS,
+    FLICK_DAILY_CAP_MINUTES,
     INSTANT_CAPTURE_EXP_DEBT,
     BATTLE_MODES,
     MAX_TEAM_SIZE,

@@ -1890,18 +1890,22 @@ class FlickemonEngine {
      * Per-source for the same reason studyMinutes is: two devices in one
      * evening must add up rather than one overwriting the other.
      */
-    creditDailyProgress({ exp = 0, levels = 0, caught = 0 } = {}) {
-        if (!exp && !levels && !caught) return;
+    creditDailyProgress({ exp = 0, levels = 0, caught = 0, flickMin = 0 } = {}) {
+        if (!exp && !levels && !caught && !flickMin) return;
         const day = this.today();
         const source = this.deviceId || 'unknown';
 
         const days = this.gameState.dailyProgress || (this.gameState.dailyProgress = {});
         const bySource = days[day] || (days[day] = {});
-        const row = bySource[source] || (bySource[source] = { exp: 0, levels: 0, caught: 0 });
+        const row = bySource[source]
+            || (bySource[source] = { exp: 0, levels: 0, caught: 0, flickMin: 0 });
 
         row.exp += Math.max(0, Math.round(exp));
         row.levels += Math.max(0, Math.round(levels));
         row.caught += Math.max(0, Math.round(caught));
+        // Rounded up rather than to nearest, so a stream of half-minutes can
+        // never spend less of the allowance than it actually used.
+        row.flickMin = (row.flickMin || 0) + Math.max(0, Math.ceil(flickMin));
 
         // Only when the day count changes, which is at most once a day — the
         // cost of pruning on every EXP tick would be real.
@@ -1927,7 +1931,15 @@ class FlickemonEngine {
             for (const [source, row] of Object.entries(sources)) {
                 if (!row || typeof row !== 'object') continue;
                 const num = (v) => (Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
-                clean[source] = { exp: num(row.exp), levels: num(row.levels), caught: num(row.caught) };
+                // flickMin belongs here for a reason worth stating: this rebuilds
+                // rows field by field, so anything not named is silently dropped.
+                // Left out, every sync reset the day's off-extension allowance —
+                // which would have made the cap resettable on demand, and so no
+                // cap at all.
+                clean[source] = {
+                    exp: num(row.exp), levels: num(row.levels), caught: num(row.caught),
+                    flickMin: num(row.flickMin),
+                };
             }
             if (Object.keys(clean).length) out[key] = clean;
         }
@@ -1944,11 +1956,15 @@ class FlickemonEngine {
             const target = out[day] || (out[day] = {});
             for (const [source, row] of Object.entries(sources)) {
                 if (!row || typeof row !== 'object') continue;
-                const a = target[source] || { exp: 0, levels: 0, caught: 0 };
+                const a = target[source] || { exp: 0, levels: 0, caught: 0, flickMin: 0 };
                 target[source] = {
                     exp: Math.max(a.exp || 0, Number(row.exp) || 0),
                     levels: Math.max(a.levels || 0, Number(row.levels) || 0),
                     caught: Math.max(a.caught || 0, Number(row.caught) || 0),
+                    // The daily cap is only a cap if it survives a sync: without
+                    // this, a second device would see none of the first's
+                    // off-extension minutes and hand out the allowance twice.
+                    flickMin: Math.max(a.flickMin || 0, Number(row.flickMin) || 0),
                 };
             }
         }
@@ -1959,11 +1975,12 @@ class FlickemonEngine {
     dailyTotals(days = this.gameState.dailyProgress) {
         const out = {};
         for (const [day, sources] of Object.entries(days || {})) {
-            const row = { exp: 0, levels: 0, caught: 0 };
+            const row = { exp: 0, levels: 0, caught: 0, flickMin: 0 };
             for (const s of Object.values(sources || {})) {
                 row.exp += Number(s.exp) || 0;
                 row.levels += Number(s.levels) || 0;
                 row.caught += Number(s.caught) || 0;
+                row.flickMin += Number(s.flickMin) || 0;
             }
             out[day] = row;
         }
@@ -1972,7 +1989,19 @@ class FlickemonEngine {
 
     /** Today's figures, summed across every device this account studies on. */
     todayProgress() {
-        return this.dailyTotals()[this.today()] || { exp: 0, levels: 0, caught: 0 };
+        return this.dailyTotals()[this.today()]
+            || { exp: 0, levels: 0, caught: 0, flickMin: 0 };
+    }
+
+    /** Off-extension minutes already banked today, across every device. */
+    flickMinutesToday() {
+        return this.todayProgress().flickMin || 0;
+    }
+
+    /** What is left of today's off-extension allowance. */
+    flickMinutesLeftToday() {
+        return Math.max(0,
+            this.config.FLICK_DAILY_CAP_MINUTES - this.flickMinutesToday());
     }
 
     /** Consecutive days of progress ending today. */
@@ -3504,7 +3533,23 @@ class FlickemonEngine {
         // the whole window. Applied to the whole window it handed back 5% of
         // every locally-watched hour as unearned offline credit.
         const allowance = Math.max(0, elapsedMin - localMin) * this.config.FLICK_MAX_RATE;
-        const raw = Math.min(riseSec / 60, Math.max(0, allowance));
+
+        // The day's ceiling. The wall-clock bound above already makes a single
+        // drag of the seekbar nearly worthless, because it can never pay more
+        // than the real time since the last reading -- but it does nothing
+        // against patience, and someone dragging through lectures every few
+        // minutes all day would collect at close to real time without watching.
+        // This is the bound on that, and it is a CAP: minutes past it are gone,
+        // not banked for tomorrow, or it would not be a cap at all.
+        const leftToday = this.flickMinutesLeftToday();
+        if (leftToday <= 0) {
+            return {
+                credited: 0, exp: 0, reason: 'daily-cap',
+                capMinutes: this.config.FLICK_DAILY_CAP_MINUTES,
+            };
+        }
+
+        const raw = Math.min(riseSec / 60, Math.max(0, allowance), leftToday);
 
         // Too small to be signal. Deliberately leaves the marks and the clock
         // ALONE so the remainder accumulates into the next reading -- advancing
@@ -3522,6 +3567,10 @@ class FlickemonEngine {
 
         const minutes = raw * this.config.FLICK_CREDIT_RATE;
         this.creditStudyMinutes(this.flickBucket(), minutes);
+        // Spend the day's allowance in RAW minutes — what was watched, not what
+        // it converted to — so the cap means the same thing whatever the rate is
+        // later tuned to.
+        this.creditDailyProgress({ flickMin: raw });
 
         // Worth what the same minutes would have been worth in a battle: one
         // wild takes TARGET_BATTLE_SECONDS to beat and pays its level times the
@@ -3559,6 +3608,10 @@ class FlickemonEngine {
         await this.saveGameState();
         return {
             credited: minutes, rawMinutes: raw, exp, evolved, partner,
+            // So the notice can say when today's allowance is running out,
+            // rather than letting it stop without explanation.
+            leftToday: this.flickMinutesLeftToday(),
+            capMinutes: this.config.FLICK_DAILY_CAP_MINUTES,
             // How long this device was not watching. What separates "welcome
             // back, here is your afternoon" from a minute-by-minute trickle
             // while a phone plays in the next room.

@@ -1745,9 +1745,19 @@ class FlickemonUI {
      * rate is only defensible if it is visible, so this says both numbers.
      */
     showFlickCredit(result) {
-        if (!result || !(result.credited > 0)) return;
+        if (!result) return;
+        const capped = result.reason === 'daily-cap';
+        if (!capped && !(result.credited > 0)) return;
         const wrapper = document.querySelector('.flickemon-widgets-wrapper');
         if (!wrapper) return;
+
+        // Credit that stops without a word reads as a bug. Say it once, on the
+        // day it happens, rather than on every reading for the rest of the day.
+        if (capped) {
+            const today = this.engine && this.engine.today ? this.engine.today() : '';
+            if (this.flickCapNoticeDay === today) return;
+            this.flickCapNoticeDay = today;
+        }
 
         // One at a time: two harvests in quick succession should replace the
         // notice, not stack a column of them down the page.
@@ -1771,9 +1781,18 @@ class FlickemonUI {
 
         const p = result.partner;
         const el = document.createElement('div');
-        el.className = 'flick-credit' + (returning ? ' is-return' : '');
+        el.className = 'flick-credit' + (returning && !capped ? ' is-return' : '');
 
-        if (returning) {
+        if (capped) {
+            el.innerHTML = `
+                <span class="flick-credit-mark">✦</span>
+                <span class="flick-credit-text">
+                    <b>That is today's limit from Flick</b>
+                    <small>${Math.round(result.capMinutes / 60)} hours of watching
+                        elsewhere counts each day. It resets at midnight —
+                        and watching here has no limit at all.</small>
+                </span>`;
+        } else if (returning) {
             // The headline is the studying, not the discount. A student who
             // watched two hours on the bus did two hours of work, and being
             // told the game only counted part of it is a footnote to that,
@@ -1792,7 +1811,10 @@ class FlickemonUI {
                         ${p && p.levelsGained > 0 ? ` &middot; +${result.exp} EXP` : ''}</span>
                     ${bits.length ? `<span class="flick-credit-line">${bits[0]}</span>` : ''}
                     <small>Counted at ${Math.round(this.config.FLICK_CREDIT_RATE * 100)}% —
-                        watching here is worth more</small>
+                        watching here is worth more${
+                        result.leftToday !== undefined && result.leftToday < 60
+                            ? ` &middot; ${Math.round(result.leftToday)} min left today`
+                            : ''}</small>
                 </span>`;
         } else {
             const mins = Math.max(1, Math.round(result.credited));
@@ -2002,6 +2024,9 @@ class FlickemonUI {
                         ['EXP only', 'No money and no catches — those need a battle you were actually here for.'],
                         ['Rewatching', 'Earns nothing until you pass where you got to before. It is progress that counts, not replays.'],
                         ['The ceiling', 'You can never be credited more than the time that has genuinely passed since Flickémon last looked.'],
+                        ['Each day', `Up to ${Math.round(c.FLICK_DAILY_CAP_MINUTES / 60)} hours
+                            of watching elsewhere counts per day, resetting at midnight Bangkok
+                            time. Watching with the extension open has no limit.`],
                     ])}`)}
             </div>`;
     }
