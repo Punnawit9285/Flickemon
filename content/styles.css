@@ -2478,8 +2478,12 @@
 /* The transformation itself: a flash on the sprite, played once. Deliberately
    NOT the fullscreen mega overlay — that runs for seconds and would cover the
    arena mid-turn while the other trainer sits polling and waiting. */
-.pvp-sprite.just-megaed { animation: mega-burst 1.2s ease-out 1; }
-@keyframes mega-burst {
+/* Named for where it lives: `mega-burst` was already taken by the fullscreen
+   mega evolution scene, and a duplicate @keyframes name silently overrides the
+   earlier one everywhere it is used -- so this was quietly replacing that
+   scene's flash with a sprite animation. */
+.pvp-sprite.just-megaed { animation: pvp-mega-burst 1.2s ease-out 1; }
+@keyframes pvp-mega-burst {
     0%   { filter: drop-shadow(0 0 0 var(--flick-mega)) brightness(3); transform: scale(1.18); }
     35%  { filter: drop-shadow(0 0 14px var(--flick-mega)) brightness(1.6); transform: scale(0.94); }
     70%  { filter: drop-shadow(0 0 8px var(--flick-mega-glow)) brightness(1.2); transform: scale(1.05); }
@@ -2612,6 +2616,203 @@
 @media (max-width: 560px) { .trade-header-btn .pvp-header-label { display: none; } }
 
 .trade-table { text-align: center; padding: 0.5rem 0.25rem; }
+
+/* ───────────────────────── The trade scene ─────────────────────────
+
+   The animation the games have: each Pokémon is recalled into a ball, the two
+   balls travel the link in opposite directions and cross in the middle, and
+   the one that arrives opens to let the new Pokémon out.
+
+   Every timing here is a fraction of the 6.2s the JS waits before showing the
+   result (TRADE_SCENE_MS in flickemon-trade.js). A test asserts the last thing
+   to finish still lands inside that, so the two cannot drift apart.
+
+     0.0-1.1   both Pokémon on screen
+     1.1-1.8   recalled into their balls
+     1.8-3.6   the balls travel and cross
+     3.6-4.1   flash
+     4.1-5.4   the arriving ball opens, its Pokémon grows out of the light
+     5.4-6.6   held, so the arrival can actually be read              */
+.trade-scene {
+    position: relative;
+    height: 260px;
+    margin: 0.25rem 0 0.75rem;
+    overflow: hidden;
+    background: var(--flick-fill-subtle);
+    border: 3px solid var(--flick-text);
+    box-shadow: 3px 3px 0 var(--flick-shadow-strong);
+}
+
+/* The link itself: a lane the balls ride along, brightening as they travel. */
+.trade-link {
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    height: 3px;
+    margin-top: -1.5px;
+    background: linear-gradient(90deg,
+        transparent 0%, var(--flick-trade) 12%,
+        var(--flick-trade) 88%, transparent 100%);
+    opacity: 0;
+    animation: trade-link-in 4.2s ease-in-out 1.2s both;
+}
+@keyframes trade-link-in {
+    0%   { opacity: 0; transform: scaleX(0.2); }
+    18%  { opacity: 0.9; transform: scaleX(1); }
+    80%  { opacity: 0.9; }
+    100% { opacity: 0; }
+}
+
+/* Stars streaming backwards down the link -- the sense of distance covered. */
+.trade-stars { position: absolute; inset: 0; pointer-events: none; }
+.trade-stars i {
+    position: absolute;
+    top: calc(50% - 1px);
+    left: 100%;
+    width: 3px; height: 3px;
+    background: var(--flick-trade);
+    opacity: 0;
+    animation: trade-star 1.5s linear infinite;
+}
+.trade-stars i:nth-child(1) { animation-delay: 1.5s;  top: calc(50% - 22px); }
+.trade-stars i:nth-child(2) { animation-delay: 1.8s;  top: calc(50% + 15px); }
+.trade-stars i:nth-child(3) { animation-delay: 2.0s;  top: calc(50% - 8px); }
+.trade-stars i:nth-child(4) { animation-delay: 2.25s; top: calc(50% + 28px); }
+.trade-stars i:nth-child(5) { animation-delay: 2.5s;  top: calc(50% - 33px); }
+.trade-stars i:nth-child(6) { animation-delay: 2.7s;  top: calc(50% + 6px); }
+.trade-stars i:nth-child(7) { animation-delay: 2.9s;  top: calc(50% - 15px); }
+.trade-stars i:nth-child(8) { animation-delay: 3.1s;  top: calc(50% + 22px); }
+.trade-stars i:nth-child(9) { animation-delay: 3.3s;  top: calc(50% - 28px); }
+@keyframes trade-star {
+    0%   { opacity: 0; transform: translateX(0) scaleX(1); }
+    10%  { opacity: 0.85; }
+    90%  { opacity: 0.85; }
+    100% { opacity: 0; transform: translateX(-110vw) scaleX(6); }
+}
+
+/* A traveller is one Pokémon and its ball, stacked in the same place: the
+   sprite fades down into the ball rather than beside it, which is what makes
+   it read as being recalled. */
+.trade-traveller {
+    position: absolute;
+    top: 50%;
+    width: 96px; height: 96px;
+    margin-top: -48px;
+}
+.trade-traveller .trade-mon {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    image-rendering: pixelated;
+}
+.trade-ball {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 34px; height: 34px;
+    margin: -17px 0 0 -17px;
+    opacity: 0;
+}
+.tb-bottom { fill: var(--flick-card-bg); stroke: var(--flick-text); stroke-width: 2; }
+.tb-top    { fill: var(--flick-danger); }
+.tb-band   { fill: var(--flick-text); }
+.tb-button { fill: var(--flick-card-bg); stroke: var(--flick-text); stroke-width: 2; }
+.tb-centre { fill: var(--flick-text); }
+
+/* ── Leaving: recalled, then carried off to the right ── */
+.trade-traveller.going { left: 8%; animation: trade-go 2.0s ease-in-out 1.6s both; }
+.trade-traveller.going .trade-mon { animation: trade-recall 0.7s ease-in 1.1s both; }
+.trade-traveller.going .trade-ball { animation: trade-ball-in 0.5s ease-out 1.3s both; }
+
+@keyframes trade-recall {
+    0%   { opacity: 1; transform: scale(1); }
+    60%  { opacity: 0.7; transform: scale(0.35) translateY(6px); }
+    100% { opacity: 0; transform: scale(0.05) translateY(10px); }
+}
+@keyframes trade-ball-in {
+    0%   { opacity: 0; transform: scale(0.2) rotate(-40deg); }
+    100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+@keyframes trade-go {
+    0%   { left: 8%; }
+    100% { left: 84%; }
+}
+
+/* ── Arriving: the mirror, ending with the ball opening ── */
+.trade-traveller.coming { left: 84%; animation: trade-come 2.0s ease-in-out 1.6s both; }
+.trade-traveller.coming .trade-ball { animation: trade-ball-out 1.0s ease-in 4.1s both; }
+.trade-traveller.coming .trade-mon { animation: trade-release 1.3s ease-out 4.2s both; }
+
+@keyframes trade-come {
+    0%   { left: 84%; }
+    100% { left: 8%; }
+}
+/* The ball shakes, then bursts open and is gone. */
+@keyframes trade-ball-out {
+    0%   { opacity: 1; transform: scale(1) rotate(0deg); }
+    20%  { transform: scale(1.05) rotate(-12deg); }
+    40%  { transform: scale(1.05) rotate(12deg); }
+    60%  { opacity: 1; transform: scale(1.15) rotate(0deg); }
+    100% { opacity: 0; transform: scale(2.2) rotate(0deg); }
+}
+/* Out of the light: white first, then its own colours arrive. */
+@keyframes trade-release {
+    0%   { opacity: 0; transform: scale(0.1); filter: brightness(6) saturate(0); }
+    35%  { opacity: 1; transform: scale(1.18); filter: brightness(4) saturate(0); }
+    65%  { transform: scale(0.96); filter: brightness(1.4) saturate(0.7); }
+    100% { opacity: 1; transform: scale(1); filter: none; }
+}
+
+/* The crossing point. */
+.trade-flash {
+    position: absolute; inset: 0;
+    background: var(--flick-burst);
+    opacity: 0; pointer-events: none;
+    animation: trade-flash 0.55s ease-out 3.55s both;
+}
+@keyframes trade-flash {
+    0%   { opacity: 0; transform: scale(0.4); }
+    35%  { opacity: 0.95; transform: scale(1.1); }
+    100% { opacity: 0; transform: scale(1.4); }
+}
+
+.trade-scene-caption {
+    position: absolute;
+    left: 0; right: 0; bottom: 10px;
+    margin: 0;
+    font-family: "Courier New", monospace;
+    font-size: 0.74rem; font-weight: 800;
+    letter-spacing: 0.04em;
+    color: var(--flick-text);
+}
+/* Two captions in one place, each showing for its half of the scene. */
+.trade-scene-caption span { position: absolute; left: 0; right: 0; opacity: 0; }
+.trade-cap-a { animation: trade-cap 3.3s ease-in-out 0.5s both; }
+.trade-cap-b { animation: trade-cap 2.0s ease-in-out 4.4s both; }
+@keyframes trade-cap {
+    0%   { opacity: 0; transform: translateY(6px); }
+    18%  { opacity: 1; transform: translateY(0); }
+    82%  { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-4px); }
+}
+
+/* Skippable, because a student who has seen this forty times should not have
+   to sit through the forty-first. */
+.trade-skip {
+    position: absolute;
+    top: 8px; right: 8px;
+    padding: 3px 9px;
+    border: 2px solid var(--flick-text-muted);
+    background: var(--flick-card-bg);
+    color: var(--flick-text-muted);
+    font-family: "Courier New", monospace;
+    font-size: 0.58rem; font-weight: 800; letter-spacing: 0.1em;
+    cursor: pointer;
+}
+.trade-skip:hover { color: var(--flick-text); border-color: var(--flick-text); }
+
+@media (max-width: 460px) {
+    .trade-scene { height: 210px; }
+    .trade-traveller { width: 76px; height: 76px; margin-top: -38px; }
+}
+
 
 .trade-slots {
     display: flex; align-items: center; justify-content: center;

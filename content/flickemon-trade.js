@@ -17,6 +17,25 @@ const TRADE_POLL_MAX_MS    = 15000;
 const TRADE_BACKOFF        = 1.6;
 const TRADE_GIVE_UP_MS     = 300000;  // five minutes unanswered
 
+// How long the trade scene runs, start to finish. Kept beside the stylesheet's
+// timings rather than derived from them: a test asserts the two agree.
+const TRADE_SCENE_MS = 6600;
+
+/**
+ * Names reach the scene from flickemon-custom.js, which students edit by hand,
+ * and one apostrophe in a species name would otherwise break out of the
+ * aria-label attribute it sits in.
+ *
+ * Deliberately its own copy rather than the identical `esc` in
+ * flickemon-pvp.js: that is a bare global that happens to be in scope because
+ * of the order in manifest.json, and a trade blowing up with a ReferenceError
+ * because someone reordered a list is not a failure worth risking.
+ */
+function tradeEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 class FlickemonTrade {
     constructor(engine, ui) {
         this.engine = engine;
@@ -222,8 +241,96 @@ class FlickemonTrade {
 
         const result = await this.engine.applyTrade(st.tradeId, mine.instanceId, theirs);
         this.applied = true;
+        // Acknowledged BEFORE the animation, never after. The other trainer is
+        // polling for exactly this, and making them wait out our six seconds of
+        // scenery would be rude at best; if this tab is closed mid-scene, the
+        // trade has still landed on both sides.
         this.engine.tradeAck(this.code).catch(() => {});
-        this.renderResult(result, theirs, mine);
+
+        if (result && result.ok) {
+            this.playTradeScene(mine, theirs, () => this.renderResult(result, theirs, mine));
+        } else {
+            this.renderResult(result, theirs, mine);
+        }
+    }
+
+    /**
+     * The trade animation.
+     *
+     * The one the games have: each Pokémon is recalled into a ball, the two
+     * balls travel the link in opposite directions and cross in the middle,
+     * and the one that arrives opens to let the new Pokémon out.
+     *
+     * Played only AFTER the swap has landed and been acknowledged, so it is
+     * pure theatre -- nothing here can fail in a way that costs a Pokémon, and
+     * skipping it costs nothing either. It is skippable for that reason: this
+     * is a study extension, and a student who has seen it forty times should
+     * not have to sit through the forty-first.
+     */
+    playTradeScene(sent, received, done) {
+        const cfg = this.config;
+        const sentSp = cfg.getSpeciesById(sent.speciesId);
+        const gotSp = cfg.getSpeciesById(received.speciesId);
+
+        // Reduced motion gets the outcome without the journey. Same for a
+        // species the roster cannot resolve -- an empty frame is worse than
+        // no frame.
+        const reduced = typeof window !== 'undefined' && window.matchMedia
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (reduced || !sentSp || !gotSp) return done();
+
+        this.modal.body.innerHTML = `
+            <div class="trade-scene" role="img"
+                 aria-label="${tradeEsc(sentSp.name)} is traded for ${tradeEsc(gotSp.name)}">
+                <div class="trade-link"></div>
+                <div class="trade-stars">${'<i></i>'.repeat(9)}</div>
+
+                <!-- Leaving: shown, recalled into its ball, then carried right. -->
+                <div class="trade-traveller going">
+                    <img class="trade-mon" alt=""
+                         src="${cfg.getSpriteUrl(sent.speciesId, sent.shiny)}"/>
+                    ${this.ballSvg()}
+                </div>
+
+                <!-- Arriving: the mirror, ending with the ball opening. -->
+                <div class="trade-traveller coming">
+                    ${this.ballSvg()}
+                    <img class="trade-mon" alt=""
+                         src="${cfg.getSpriteUrl(received.speciesId, received.shiny)}"/>
+                </div>
+
+                <div class="trade-flash"></div>
+                <p class="trade-scene-caption">
+                    <span class="trade-cap-a">${tradeEsc(sentSp.name)} is on its way…</span>
+                    <span class="trade-cap-b">${tradeEsc(gotSp.name)} arrived!</span>
+                </p>
+                <button class="trade-skip">SKIP</button>
+            </div>`;
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(this.sceneTimer);
+            this.sceneTimer = null;
+            done();
+        };
+        // Time-based rather than animationend: the scene has a dozen animated
+        // parts and the last one to end is a detail of the stylesheet, not
+        // something this file should have to know.
+        this.sceneTimer = setTimeout(finish, TRADE_SCENE_MS);
+        this.modal.body.querySelector('.trade-skip').addEventListener('click', finish);
+    }
+
+    /** The ball both travellers ride in. Drawn, so it needs no image. */
+    ballSvg() {
+        return `<svg class="trade-ball" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+            <circle class="tb-bottom" cx="16" cy="16" r="14"/>
+            <path class="tb-top" d="M2,16 a14,14 0 0,1 28,0 z"/>
+            <rect class="tb-band" x="1" y="14" width="30" height="4"/>
+            <circle class="tb-button" cx="16" cy="16" r="4.5"/>
+            <circle class="tb-centre" cx="16" cy="16" r="2"/>
+        </svg>`;
     }
 
     onPartnerLeft() {

@@ -81,6 +81,93 @@ const check=(n,c,d='')=>c?(console.log('  PASS  '+n),pass++):(console.log('  FAI
   await send(A,{type:'PVP_CLOSE',code:codeA});
   check('the host can tear it down', (await send(B,{type:'PVP_READ',code:codeA})).battle===null);
 
+  console.log('\n=== trading, held to background/trade.js ===');
+  {
+    // The whole reason this section exists: the shim had every PVP route and
+    // not one trade route, and an unhandled type returns undefined -- exactly
+    // what Chrome returns when no listener exists. So every trade call came
+    // back empty and the UI said "Could not open a trade", which reads as a
+    // broken feature rather than a missing test double.
+    const worker = fs.readFileSync(ROOT + 'background/service-worker.js', 'utf8');
+    const routes = [...worker.matchAll(/async (TRADE_[A-Z_]+)\(/g)].map(m => m[1]);
+    check('the worker has trade routes to mirror', routes.length === 7, routes.join(','));
+    for (const r of routes) {
+      const answered = await send(A, { type: r, code: '000000', payload: {} });
+      check(`the shim answers ${r}`, answered !== undefined,
+          'undefined is what Chrome returns for an unhandled type');
+    }
+
+    const t = await send(A, { type: 'TRADE_OPEN', payload: { displayName: 'A' } });
+    check('a table opens at the host code', t.code === codeA, JSON.stringify(t));
+
+    // Same code for both features, so they must not evict each other.
+    await send(A, { type: 'PVP_OPEN', payload: { displayName: 'A', team: [{ instanceId: 'x' }], mode: '1v1', rulesVersion: 3 } });
+    check('a battle and a trade coexist on one code',
+        Boolean((await send(B, { type: 'TRADE_READ', code: codeA })).trade)
+        && Boolean((await send(B, { type: 'PVP_READ', code: codeA })).battle));
+
+    const read = await send(B, { type: 'TRADE_READ', code: codeA });
+    check('the other tab sees it waiting', read.trade.state.phase === 'waiting');
+    check('with nothing on the table',
+        read.trade.state.hostOffer === null && read.trade.state.guestOffer === null);
+
+    check('you cannot sit at your own table',
+        (await send(A, { type: 'TRADE_JOIN', code: codeA, payload: {} })).ok === false);
+    const joined = await send(B, { type: 'TRADE_JOIN', code: codeA, payload: { displayName: 'B' } });
+    check('the guest sits down', joined.role === 'guest', JSON.stringify(joined));
+    check('and it moves to offering',
+        (await send(A, { type: 'TRADE_READ', code: codeA })).trade.state.phase === 'offering');
+
+    const mine = { instanceId: 'a1', speciesId: 1, level: 30, shiny: false };
+    const theirs = { instanceId: 'b1', speciesId: 4, level: 31, shiny: true };
+    await send(A, { type: 'TRADE_OFFER', code: codeA, offer: mine });
+    await send(B, { type: 'TRADE_OFFER', code: codeA, offer: theirs });
+    const table = (await send(A, { type: 'TRADE_READ', code: codeA })).trade.state;
+    check('both offers land on the right sides',
+        table.hostOffer.instanceId === 'a1' && table.guestOffer.instanceId === 'b1');
+    check('a shiny survives the table', table.guestOffer.shiny === true);
+
+    // One confirmation is not a trade.
+    const half = await send(A, { type: 'TRADE_CONFIRM', code: codeA, confirmed: true });
+    check('one side confirming does not seal it', half.sealed === false);
+
+    // Changing an offer clears BOTH confirmations, or someone could confirm,
+    // wait for the other, then swap in something worthless.
+    await send(B, { type: 'TRADE_OFFER', code: codeA, offer: { ...theirs, level: 5 } });
+    const cleared = (await send(A, { type: 'TRADE_READ', code: codeA })).trade.state;
+    check('changing an offer clears both confirmations',
+        cleared.hostConfirmed === false && cleared.guestConfirmed === false);
+
+    await send(A, { type: 'TRADE_CONFIRM', code: codeA, confirmed: true });
+    const sealed = await send(B, { type: 'TRADE_CONFIRM', code: codeA, confirmed: true });
+    check('both confirming seals it', sealed.sealed === true, JSON.stringify(sealed));
+    const done = (await send(A, { type: 'TRADE_READ', code: codeA })).trade.state;
+    check('the phase is done', done.phase === 'done');
+    check('and it carries a tradeId, which is what makes applying it idempotent',
+        typeof done.tradeId === 'string' && done.tradeId.length > 0, String(done.tradeId));
+
+    // The table outlives the first acknowledgement so a tab that reloaded
+    // mid-trade comes back and finishes rather than silently losing it.
+    const ack1 = await send(A, { type: 'TRADE_ACK', code: codeA });
+    check('one acknowledgement is not both', ack1.bothApplied === false);
+    check('the table is still there', Boolean((await send(B, { type: 'TRADE_READ', code: codeA })).trade));
+    const ack2 = await send(B, { type: 'TRADE_ACK', code: codeA });
+    check('the second finishes it', ack2.bothApplied === true);
+
+    check('an unknown code reads as no trade',
+        (await send(B, { type: 'TRADE_READ', code: '000000' })).trade === null);
+    const badJoinT = await send(B, { type: 'TRADE_JOIN', code: '000000', payload: {} });
+    check('and joining one fails saying trade, not battle',
+        badJoinT.ok === false && /No trade/.test(badJoinT.error), JSON.stringify(badJoinT));
+
+    await send(A, { type: 'TRADE_CLOSE', code: codeA });
+    check('the host can clear the table',
+        (await send(B, { type: 'TRADE_READ', code: codeA })).trade === null);
+    check('and the battle on the same code is untouched',
+        Boolean((await send(B, { type: 'PVP_READ', code: codeA })).battle));
+    await send(A, { type: 'PVP_CLOSE', code: codeA });
+  }
+
   const st=await send(A,{type:'AUTH_STATUS'});
   check('auth reports signed in and configured', st.signedIn===true&&st.configured===true);
   check('admin tools are on', (await send(A,{type:'AUTH_IS_ADMIN'})).isAdmin===true);

@@ -59,15 +59,23 @@
     // a lost race here fails the way it would in production rather than
     // silently clobbering.
     function mutate(code, fn) {
+        // Trades share this, so the noun follows the key rather than being
+        // hardcoded to "battle" — "No battle with that code" in a trade dialog
+        // is the kind of wrong that makes people think they used the wrong screen.
+        const noun = String(code).startsWith('t:') ? 'trade' : 'battle';
         const before = lobbies.get(code);
-        if (!before) throw new Error('No battle with that code. Check the digits.');
+        if (!before) throw new Error(`No ${noun} with that code. Check the digits.`);
         const next = fn(before);
         const now = lobbies.get(code);
         if ((now?.version || 0) !== (before.version || 0)) {
-            throw new Error('That battle moved on — try again.');
+            throw new Error(`That ${noun} moved on — try again.`);
         }
         lobbies.put(code, { ...next, version: (before.version || 0) + 1, updatedAt: Date.now() });
     }
+
+    // Battles and trades share one store and one 6-digit code, so trades are
+    // namespaced. Without this, opening a trade would evict your own PVP lobby.
+    const tradeKey = (code) => `t:${code}`;
 
     const handlers = {
         // ── auth ──
@@ -166,6 +174,106 @@
         },
 
         async PVP_CLOSE(msg) { lobbies.drop(msg.code); return { ok: true }; },
+
+        // ── Trading: mirrors background/trade.js ──
+        //
+        // These were missing entirely, and the shim answers an unknown type
+        // with `undefined` — the same thing Chrome returns when no listener
+        // exists. So every trade call came back empty and the UI said "Could
+        // not open a trade", which looked like a broken feature rather than a
+        // missing test double.
+        //
+        // Trades live in the same store as battles, under a "t:" prefix. Same
+        // 6-digit code as PVP, as in the real thing.
+        async TRADE_OPEN(msg) {
+            const code = codeForUid(PLAYER.uid);
+            lobbies.put(tradeKey(code), {
+                host: PLAYER.uid,
+                hostName: msg.payload?.displayName || PLAYER.email,
+                guest: '', guestName: '',
+                state: {
+                    phase: 'waiting',
+                    hostOffer: null, guestOffer: null,
+                    hostConfirmed: false, guestConfirmed: false,
+                    hostApplied: false, guestApplied: false,
+                    tradeId: null,
+                },
+                version: 0, updatedAt: Date.now(),
+            });
+            return { code, uid: PLAYER.uid };
+        },
+
+        async TRADE_READ(msg) {
+            const t = lobbies.get(tradeKey(msg.code));
+            return { trade: t ? { ...t, code: msg.code, me: PLAYER.uid } : null };
+        },
+
+        async TRADE_JOIN(msg) {
+            mutate(tradeKey(msg.code), (t) => {
+                if (t.host === PLAYER.uid) throw new Error("That's your own code — share it with someone else.");
+                if (t.guest && t.guest !== PLAYER.uid) throw new Error('That trainer is already trading.');
+                return {
+                    ...t,
+                    guest: PLAYER.uid,
+                    guestName: msg.payload?.displayName || PLAYER.email,
+                    state: { ...t.state, phase: 'offering' },
+                };
+            });
+            return { code: msg.code, uid: PLAYER.uid, role: 'guest' };
+        },
+
+        // Changing an offer clears BOTH confirmations, or a trainer could
+        // confirm, wait, then swap in something worthless.
+        async TRADE_OFFER(msg) {
+            mutate(tradeKey(msg.code), (t) => {
+                const isHost = t.host === PLAYER.uid;
+                return { ...t, state: {
+                    ...t.state,
+                    [isHost ? 'hostOffer' : 'guestOffer']: msg.offer,
+                    hostConfirmed: false, guestConfirmed: false,
+                } };
+            });
+            return { ok: true };
+        },
+
+        async TRADE_CONFIRM(msg) {
+            let sealed = false;
+            mutate(tradeKey(msg.code), (t) => {
+                const isHost = t.host === PLAYER.uid;
+                const state = {
+                    ...t.state,
+                    [isHost ? 'hostConfirmed' : 'guestConfirmed']: msg.confirmed !== false,
+                };
+                if (state.hostConfirmed && state.guestConfirmed
+                    && state.hostOffer && state.guestOffer) {
+                    state.phase = 'done';
+                    state.tradeId = state.tradeId
+                        || `${msg.code}-${Date.now()}-${t.host.slice(0, 6)}`;
+                }
+                sealed = state.phase === 'done';
+                return { ...t, state };
+            });
+            return { ok: true, sealed };
+        },
+
+        // The table survives until BOTH sides have applied the swap, so a tab
+        // that reloaded mid-trade comes back and finishes instead of losing it.
+        async TRADE_ACK(msg) {
+            let bothApplied = false;
+            try {
+                mutate(tradeKey(msg.code), (t) => {
+                    const isHost = t.host === PLAYER.uid;
+                    const state = { ...t.state, [isHost ? 'hostApplied' : 'guestApplied']: true };
+                    bothApplied = Boolean(state.hostApplied && state.guestApplied);
+                    return { ...t, state };
+                });
+            } catch {
+                return { ok: true, gone: true };
+            }
+            return { ok: true, bothApplied };
+        },
+
+        async TRADE_CLOSE(msg) { lobbies.drop(tradeKey(msg.code)); return { ok: true }; },
     };
 
     // ── the chrome shim ─────────────────────────────────────────────────────
