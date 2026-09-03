@@ -261,6 +261,10 @@ class FlickemonEngine {
             // credited at once, so a forged jump is worth only the real time
             // that has passed since we last looked.
             flickCheckedAt: 0,
+            // Minutes already counted by this device since that reading, so
+            // watching here is not also paid for as watching elsewhere. Local
+            // to the machine: deliberately never synced.
+            flickLocalMinutes: 0,
 
             // ── Friends ──
             //
@@ -491,6 +495,11 @@ class FlickemonEngine {
         if (!Number.isFinite(s.flickCheckedAt) || s.flickCheckedAt < 0
             || s.flickCheckedAt > Date.now()) {
             s.flickCheckedAt = 0;
+        }
+        // Too high suppresses credit that was earned; negative would hand out an
+        // allowance nobody watched for.
+        if (!Number.isFinite(s.flickLocalMinutes) || s.flickLocalMinutes < 0) {
+            s.flickLocalMinutes = 0;
         }
 
         // ── Shop ──
@@ -3263,8 +3272,18 @@ class FlickemonEngine {
         // would see the same minutes again and pay for them twice. Remembering
         // what was counted locally is what lets creditFlickProgress subtract the
         // overlap. Flick's own credit is excluded or it would cancel itself out.
+        // PERSISTED, not held in memory: flickCheckedAt survives a restart and
+        // this has to survive with it. Held in memory only, closing the browser
+        // after an hour's watching reset the subtraction to zero while the clock
+        // it is subtracted from kept running -- and the next reading paid a
+        // second time for the hour that was already counted.
+        //
+        // Deliberately absent from buildCloudPayload: it is this device's
+        // accounting against its own clock, and merging it across devices would
+        // subtract one machine's watching from another's allowance.
         if (source !== this.flickBucket()) {
-            this.localMinutesSinceHarvest = (this.localMinutesSinceHarvest || 0) + minutes;
+            this.gameState.flickLocalMinutes =
+                (this.gameState.flickLocalMinutes || 0) + minutes;
         }
 
         // "Studying now" for the friends screen. Deliberately in memory only
@@ -3286,6 +3305,26 @@ class FlickemonEngine {
      */
     flickBucket() {
         return this.config.FLICK_SOURCE + ':' + (this.deviceId || 'unknown-device');
+    }
+
+    /**
+     * Keeps the marks from growing without limit.
+     *
+     * One entry per lecture ever opened, and a save has a 1 MiB ceiling it
+     * shares with the party and the Pokedex. A student who never hits the cap
+     * pays nothing for this; one who does loses the marks with the LEAST
+     * progress behind them, because those are the ones with the least to
+     * re-credit if the lecture is opened again.
+     */
+    pruneFlickSeen() {
+        const marks = this.gameState.flickSeen || {};
+        const keys = Object.keys(marks);
+        if (keys.length <= this.config.FLICK_MAX_MARKS) return;
+
+        keys.sort((a, b) => marks[b] - marks[a]);
+        const kept = {};
+        for (const key of keys.slice(0, this.config.FLICK_MAX_MARKS)) kept[key] = marks[key];
+        this.gameState.flickSeen = kept;
     }
 
     /**
@@ -3340,22 +3379,32 @@ class FlickemonEngine {
         const marks = this.gameState.flickSeen || (this.gameState.flickSeen = {});
         const first = !this.gameState.flickCheckedAt;
 
-        let riseSec = 0;
-        const advance = [];
+        // Two lectures in one course can share a title and a length -- a
+        // repeated session, a re-recording -- and would then share a key. Folded
+        // to the furthest of the two first: comparing one against the other's
+        // mark would invent a rise out of nothing every time the page is read.
+        const positions = new Map();
         for (const lecture of reading.lectures) {
             if (!Number.isFinite(lecture.playedSec) || lecture.playedSec < 0) continue;
             const key = await this.flickKey(reading.course, lecture);
+            positions.set(key, Math.max(positions.get(key) || 0, lecture.playedSec));
+        }
 
+        let riseSec = 0;
+        const advance = [];
+        for (const [key, playedSec] of positions) {
             // A lecture we have never seen is RECORDED, not paid for. Otherwise
             // opening a course for the first time would bank a whole semester of
             // watching that happened before any of this existed.
             if (!Object.prototype.hasOwnProperty.call(marks, key)) {
-                marks[key] = lecture.playedSec;
+                marks[key] = playedSec;
                 continue;
             }
-            const rise = lecture.playedSec - marks[key];
-            if (rise > 0) { riseSec += rise; advance.push([key, lecture.playedSec]); }
+            const rise = playedSec - marks[key];
+            if (rise > 0) { riseSec += rise; advance.push([key, playedSec]); }
         }
+
+        this.pruneFlickSeen();
 
         if (first) {
             // Nothing to measure a rise against yet. Start the clock instead.
@@ -3368,8 +3417,11 @@ class FlickemonEngine {
         // time that has passed, less whatever was already counted here. Forge
         // three hours one minute after a reading and one minute is paid.
         const elapsedMin = Math.max(0, (now - this.gameState.flickCheckedAt) / 60000);
-        const allowance = elapsedMin * this.config.FLICK_MAX_RATE
-                          - (this.localMinutesSinceHarvest || 0);
+        const localMin = Math.max(0, this.gameState.flickLocalMinutes || 0);
+        // The skew margin applies to what is LEFT after local watching, not to
+        // the whole window. Applied to the whole window it handed back 5% of
+        // every locally-watched hour as unearned offline credit.
+        const allowance = Math.max(0, elapsedMin - localMin) * this.config.FLICK_MAX_RATE;
         const raw = Math.min(riseSec / 60, Math.max(0, allowance));
 
         // Too small to be signal. Deliberately leaves the marks and the clock
@@ -3384,7 +3436,7 @@ class FlickemonEngine {
         // costs the excess permanently rather than banking it for later.
         for (const [key, played] of advance) marks[key] = played;
         this.gameState.flickCheckedAt = now;
-        this.localMinutesSinceHarvest = 0;
+        this.gameState.flickLocalMinutes = 0;
 
         const minutes = raw * this.config.FLICK_CREDIT_RATE;
         this.creditStudyMinutes(this.flickBucket(), minutes);
@@ -3400,8 +3452,13 @@ class FlickemonEngine {
         // with the team and credits the daily ledger. Nothing else to call.
         const evolved = exp > 0 ? this.addExpToActive(exp) : null;
 
-        await this.saveGameState({ immediate: true });
-        this.emitState();
+        // NOT an immediate flush. `immediate` skips the three-minute push
+        // debounce, and a harvest can land every 60 seconds -- a phone playing
+        // while this course page is open would then write to Firestore once a
+        // minute, three times the rate of ordinary play, for a trickle of credit
+        // that nothing is waiting on. Riding the debounce costs no extra writes
+        // at all: the push was already going to happen.
+        await this.saveGameState();
         return { credited: minutes, rawMinutes: raw, exp, evolved, reason: 'credited' };
     }
 

@@ -374,6 +374,11 @@ const FLICK_MIN_CREDIT_MINUTES = 0.5;
 // faster cadence cannot see anything newer.
 const FLICK_HARVEST_INTERVAL_MS = 60000;
 
+// One mark per lecture ever opened, in a save that shares a 1 MiB ceiling with
+// the party and the Pokedex. Six years of medical school is a few thousand
+// lectures, so this is headroom rather than a limit anyone should reach.
+const FLICK_MAX_MARKS = 4000;
+
 // ── Capture ──
 //
 // Beating a wild Pokemon in capture mode used to catch it every time. At the
@@ -3038,6 +3043,7 @@ window.FlickemonConfig = {
     FLICK_MAX_RATE,
     FLICK_MIN_CREDIT_MINUTES,
     FLICK_HARVEST_INTERVAL_MS,
+    FLICK_MAX_MARKS,
     INSTANT_CAPTURE_EXP_DEBT,
     BATTLE_MODES,
     MAX_TEAM_SIZE,

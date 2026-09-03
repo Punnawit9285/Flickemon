@@ -143,7 +143,7 @@ const reset = () => {
     e.gameState.flickSeen = {};
     e.gameState.flickCheckedAt = 0;
     e.gameState.studyMinutes = {};
-    e.localMinutesSinceHarvest = 0;
+    e.gameState.flickLocalMinutes = 0;
 };
 // One lecture, watched `min` minutes of a 120-minute recording.
 const watched = min => FP.readCourse(page(
@@ -309,6 +309,111 @@ console.log('\n=== a poisoned save is repaired, not trusted ===');
 
     const s2 = e.normalizeState({ flickSeen: 'nope' });
     check('a corrupt container becomes an empty one', JSON.stringify(s2.flickSeen) === '{}');
+}
+
+console.log('\n=== a real course, where most lectures are already finished ===');
+{
+    // Past 95% Flick prints a checkmark instead of a number, so a finished
+    // lecture can only be read as "all of it" while the header still counts the
+    // true position. A flat tolerance rejected that -- which meant rejecting
+    // almost every real course, and the feature would have looked perfectly
+    // healthy while silently never crediting anything.
+    const done = n => Array.from({ length: n }, (_, i) =>
+        row({ title: 'Lecture ' + i, durationMin: 60, check: true }));
+    const doc = page([...done(20),
+        row({ title: 'Current', durationMin: 60, leftMin: 30, barValue: 0.5 })],
+        '1.1 hours left (94.8%)');
+    const reading = FP.readCourse(doc);
+    check('twenty finished lectures still agree with the header',
+        FP.agreesWithHeader(reading) === true);
+
+    // But the check must still catch a parse that has actually gone wrong.
+    const broken = FP.readCourse(page([...done(20),
+        row({ title: 'Current', durationMin: 60, leftMin: 30 })], '18 hours left (11%)'));
+    check('a header that genuinely disagrees is still rejected',
+        FP.agreesWithHeader(broken) === false);
+
+    check('a row records how it was read', reading.lectures[0].from === 'complete'
+        && reading.lectures[20].from === 'bar',
+        reading.lectures[0].from + '/' + reading.lectures[20].from);
+}
+
+console.log('\n=== closing the browser must not re-pay for the same hour ===');
+{
+    // flickCheckedAt survives a restart, so the local subtraction has to as
+    // well. Held in memory it reset to zero while the clock it is subtracted
+    // from kept running, and the next reading paid a second time for an hour
+    // that had already been counted.
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 60 * MIN);
+    e.creditStudyMinutes(e.studySource(), 60);      // an hour watched HERE
+    check('the local tally is on the save, not in memory',
+        e.gameState.flickLocalMinutes === 60, String(e.gameState.flickLocalMinutes));
+
+    // Reload: gameState comes back from storage, instance fields do not.
+    const persisted = e.normalizeState(JSON.parse(JSON.stringify(e.gameState)));
+    check('and it survives normalizeState', persisted.flickLocalMinutes === 60);
+
+    e.gameState = persisted;
+    const r = await e.creditFlickProgress(watched(60), NOW);
+    check('so the hour is not paid for a second time after a restart',
+        r.credited === 0, String(r.credited));
+}
+
+console.log('\n=== local watching is subtracted before the skew margin ===');
+{
+    // Applied to the whole window instead, the 5% clock-skew margin handed back
+    // 5% of every locally-watched hour as unearned offline credit.
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 60 * MIN);
+    e.creditStudyMinutes(e.studySource(), 60);
+    const r = await e.creditFlickProgress(watched(60), NOW);
+    check('an hour watched here yields exactly nothing extra',
+        r.credited === 0, String(r.credited));
+}
+
+console.log('\n=== two lectures that hash alike cannot invent a rise ===');
+{
+    reset();
+    // Same title, same length, twice in one course.
+    const twice = (aLeft, bLeft) => FP.readCourse(page([
+        row({ title: 'Practical Session', durationMin: 60, leftMin: aLeft }),
+        row({ title: 'Practical Session', durationMin: 60, leftMin: bLeft }),
+    ], `${((aLeft + bLeft) / 60).toFixed(1)} hours left (${(((120 - aLeft - bLeft) / 120) * 100).toFixed(1)}%)`));
+
+    await e.creditFlickProgress(twice(60, 30), NOW - 60 * MIN);
+    check('one mark is kept for the pair', Object.keys(e.gameState.flickSeen).length === 1);
+    const r = await e.creditFlickProgress(twice(60, 30), NOW);
+    check('re-reading the same page invents nothing', r.credited === 0, String(r.credited));
+}
+
+console.log('\n=== the marks cannot grow without limit ===');
+{
+    reset();
+    const marks = {};
+    for (let i = 0; i < cfg.FLICK_MAX_MARKS + 50; i++) marks['k' + i] = i;
+    e.gameState.flickSeen = marks;
+    e.pruneFlickSeen();
+    const kept = Object.keys(e.gameState.flickSeen);
+    check('pruned to the cap', kept.length === cfg.FLICK_MAX_MARKS, String(kept.length));
+    check('the marks with the most progress behind them are the ones kept',
+        e.gameState.flickSeen['k' + (cfg.FLICK_MAX_MARKS + 49)] !== undefined
+        && e.gameState.flickSeen.k0 === undefined);
+    check('under the cap it does nothing', (() => {
+        e.gameState.flickSeen = { a: 1, b: 2 };
+        e.pruneFlickSeen();
+        return Object.keys(e.gameState.flickSeen).length === 2;
+    })());
+}
+
+console.log('\n=== the local tally never leaves the device ===');
+{
+    reset();
+    e.creditStudyMinutes(e.studySource(), 42);
+    const flat = JSON.stringify(e.buildCloudPayload());
+    check('flickLocalMinutes is not synced', !flat.includes('flickLocalMinutes'));
+    check('a negative tally is repaired',
+        e.normalizeState({ flickLocalMinutes: -5 }).flickLocalMinutes === 0);
 }
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');

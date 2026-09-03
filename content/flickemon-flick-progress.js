@@ -101,10 +101,10 @@
         // A lecture whose duration Flick does not know is the only case where it
         // prints minutes PLAYED directly.
         if (playedMin !== null) {
-            return { title, durationSec, playedSec: playedMin * 60 };
+            return { title, durationSec, playedSec: playedMin * 60, from: 'played' };
         }
 
-        if (durationSec === null) return { title, durationSec: null, playedSec: 0 };
+        if (durationSec === null) return { title, durationSec: null, playedSec: 0, from: 'none' };
 
         // The bar carries the raw ratio rather than a rounded minute, so it is
         // the better number wherever it exists.
@@ -112,21 +112,22 @@
         const rawValue = bar && (bar.getAttribute('value') ?? bar.value);
         const ratio = rawValue === null || rawValue === undefined ? NaN : Number(rawValue);
         if (Number.isFinite(ratio) && ratio >= 0 && ratio <= 1) {
-            return { title, durationSec, playedSec: Math.round(ratio * durationSec) };
+            return { title, durationSec, playedSec: Math.round(ratio * durationSec), from: 'bar' };
         }
 
         if (leftMin !== null) {
-            return { title, durationSec, playedSec: Math.max(0, durationSec - leftMin * 60) };
+            return { title, durationSec, playedSec: Math.max(0, durationSec - leftMin * 60),
+                     from: 'left' };
         }
 
         // 95% or more. Counting it as complete slightly over-credits the tail,
         // which is the right way to be wrong: the alternative is telling a
         // student who finished a lecture that they did not.
         if (item.querySelector('.check-icon')) {
-            return { title, durationSec, playedSec: durationSec };
+            return { title, durationSec, playedSec: durationSec, from: 'complete' };
         }
 
-        return { title, durationSec, playedSec: 0 };
+        return { title, durationSec, playedSec: 0, from: 'none' };
     }
 
     /**
@@ -158,13 +159,22 @@
     /**
      * Does the sum of the rows agree with the header?
      *
-     * The two are rendered from the same object by different expressions, so
-     * they should agree to within their rounding. When they do not, the markup
-     * has moved and the parse is guesswork -- and the right response to a
-     * misparse is to credit nothing, because the failure that matters is
-     * inventing study time, not missing some.
+     * Both are rendered from the same object by different expressions, so they
+     * should agree to within their rounding. When they do not, the markup has
+     * moved and the parse is guesswork -- and the right response to a misparse
+     * is to credit nothing, because the failure that matters is inventing study
+     * time, not missing some.
+     *
+     * The tolerance is asymmetric, and has to be. Past 95% Flick stops printing
+     * a number and prints a checkmark, so a finished lecture can only be read as
+     * "all of it" while the header still counts the real position -- a course
+     * with twenty finished hour-long lectures legitimately reads up to an hour
+     * high. A flat tolerance rejected that, which meant rejecting almost every
+     * real course: the feature would have looked healthy and silently never paid
+     * anything. Rows may therefore run OVER by the slack each checkmark hides,
+     * and under only by the rounding.
      */
-    function agreesWithHeader(reading, toleranceSec = 20 * 60) {
+    function agreesWithHeader(reading) {
         if (!reading || !reading.header) return true;   // nothing to check against
         const known = reading.lectures.filter(l => l.durationSec !== null);
         if (!known.length) return true;
@@ -172,7 +182,17 @@
         const total = known.reduce((a, l) => a + l.durationSec, 0);
         const viewed = known.reduce((a, l) => a + l.playedSec, 0);
         const headerViewed = total - reading.header.hoursLeft * 3600;
-        return Math.abs(viewed - headerViewed) <= toleranceSec;
+        const drift = viewed - headerViewed;
+
+        // Every row is rounded to a whole minute, and the header to a tenth of
+        // an hour, which is three minutes either way.
+        const rounding = known.length * 30 + 4 * 60;
+        // A checkmark means "95% or more", so it can hide up to 5% of a lecture.
+        const hidden = known
+            .filter(l => l.from === 'complete')
+            .reduce((a, l) => a + l.durationSec * 0.05, 0);
+
+        return drift <= rounding + hidden && drift >= -rounding;
     }
 
     window.FlickProgress = {
