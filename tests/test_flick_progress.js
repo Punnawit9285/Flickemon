@@ -14,6 +14,7 @@ global.document = { visibilityState: 'visible', addEventListener: () => {} };
 global.setTimeout = f => { f(); return 0; }; global.clearTimeout = () => {}; global.setInterval = () => 0;
 require(ROOT + 'content/flickemon-flick-progress.js');
 require(ROOT + 'content/flickemon-engine.js');
+require(ROOT + 'content/flickemon-ui.js');
 
 const e = global.window.flickemonEngine;
 const cfg = global.window.FlickemonConfig;
@@ -414,6 +415,85 @@ console.log('\n=== the local tally never leaves the device ===');
     check('flickLocalMinutes is not synced', !flat.includes('flickLocalMinutes'));
     check('a negative tally is repaired',
         e.normalizeState({ flickLocalMinutes: -5 }).flickLocalMinutes === 0);
+}
+
+console.log('\n=== coming back is told as a summary, not a receipt ===');
+{
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 120 * MIN);
+    const before = e.getActivePokemon().level;
+    const r = await e.creditFlickProgress(watched(115), NOW);
+
+    check('it reports how long the device was away',
+        near(r.awayMinutes, 120, 1), String(r.awayMinutes));
+    check('it names the partner that gained the EXP',
+        r.partner && typeof r.partner.name === 'string' && r.partner.name.length > 0,
+        JSON.stringify(r.partner));
+    check('and reports the levels it actually gained',
+        r.partner.levelsGained === e.getActivePokemon().level - before,
+        r.partner.levelsGained + ' vs ' + (e.getActivePokemon().level - before));
+    check('the level reported is the level after the award',
+        r.partner.level === e.getActivePokemon().level);
+    check('every figure comes from memory — no extra document is written',
+        r.reason === 'credited');
+
+    // A phone playing in the next room is not a return, and must not be
+    // announced as one.
+    const trickle = await e.creditFlickProgress(watched(118), NOW + 3 * MIN);
+    check('a three-minute gap is not a homecoming',
+        trickle.credited > 0 && trickle.awayMinutes < 20, String(trickle.awayMinutes));
+}
+
+console.log('\n=== the notice itself ===');
+{
+    const { parseHTML } = require('linkedom');
+    const dom = parseHTML('<div class="flickemon-widgets-wrapper"></div>');
+    const prevDoc = global.document;
+    global.document = dom.document;
+    // The UI module needs a document at load time.
+    const ui = Object.create(global.window.FlickemonUI
+        ? global.window.FlickemonUI.prototype : {});
+    ui.config = cfg;
+
+    // This suite runs setTimeout callbacks synchronously, which would fire the
+    // notice's own dismissal the instant it is added. Hold them.
+    const render = res => {
+        dom.document.querySelector('.flickemon-widgets-wrapper').innerHTML = '';
+        const realTimeout = global.setTimeout;
+        global.setTimeout = () => 0;
+        try { global.window.FlickemonUI.prototype.showFlickCredit.call(ui, res); }
+        finally { global.setTimeout = realTimeout; }
+        return dom.document.querySelector('.flick-credit');
+    };
+
+    const back = render({ credited: 36, rawMinutes: 120, exp: 900, awayMinutes: 130,
+        partner: { name: 'Ivysaur', level: 21, levelsGained: 3, evolvedInto: null } });
+    check('a return says how long was studied, in hours',
+        back && /2h 0m studied on Flick/.test(back.innerHTML), back && back.textContent.trim());
+    check('and names the partner and its new level',
+        /Ivysaur/.test(back.innerHTML) && /Lv\.21/.test(back.innerHTML));
+    check('and still states the rate, as a footnote rather than the headline',
+        /30%/.test(back.innerHTML));
+    check('it is marked as a return', back.className.includes('is-return'));
+
+    const drip = render({ credited: 1, rawMinutes: 3, exp: 20, awayMinutes: 3, partner: null });
+    check('a trickle stays a one-liner', !drip.className.includes('is-return')
+        && /counted from Flick/.test(drip.innerHTML));
+
+    const evo = render({ credited: 36, rawMinutes: 120, exp: 900, awayMinutes: 130,
+        partner: { name: 'Venusaur', level: 33, levelsGained: 2, evolvedInto: 'Venusaur' } });
+    check('an evolution leads the summary', /Venusaur<\/b> evolved/.test(evo.innerHTML));
+
+    // A player-drawn Pokemon's name is whatever its author typed.
+    const nasty = render({ credited: 36, rawMinutes: 120, exp: 900, awayMinutes: 130,
+        partner: { name: '<img src=x onerror=alert(1)>', level: 9, levelsGained: 1,
+                   evolvedInto: null } });
+    check('a custom name cannot inject markup',
+        !/<img/.test(nasty.innerHTML) && /&lt;img/.test(nasty.innerHTML));
+
+    check('nothing is drawn for a zero credit',
+        render({ credited: 0, rawMinutes: 0, exp: 0 }) === null);
+    global.document = prevDoc;
 }
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');

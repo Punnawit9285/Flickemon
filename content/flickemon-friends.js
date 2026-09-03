@@ -49,7 +49,11 @@
 //
 // tests/test_theme.js models this against the whole faculty's daily quota and
 // fails if the worst case stops fitting.
-const FRIENDS_POLL_MS = 90000;
+// Three minutes, which has to stay at or above half the save cadence it is
+// reading -- polling faster than the data can possibly change buys nothing but
+// reads. When the push debounce went from three minutes to five, ninety
+// seconds stopped being defensible and a test said so.
+const FRIENDS_POLL_MS = 180000;
 const FRIENDS_POLL_MAX_MS = 600000;
 const FRIENDS_BACKOFF = 2;
 const FRIENDS_SWEEP_BUDGET = 4;

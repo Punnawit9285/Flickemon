@@ -1754,21 +1754,66 @@ class FlickemonUI {
         const existing = wrapper.querySelector('.flick-credit');
         if (existing) existing.remove();
 
-        const mins = Math.max(1, Math.round(result.credited));
-        const from = Math.max(1, Math.round(result.rawMinutes || result.credited));
+        // Coming back to the game is a different moment from a phone playing in
+        // the next room, and deserves different words. Twenty minutes is the
+        // line: below it this is a trickle nobody left the room for.
+        const away = result.awayMinutes || 0;
+        const returning = away >= 20;
+        const dur = m => m >= 60
+            ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m`
+            : `${Math.max(1, Math.round(m))}m`;
+
+        // Species names are usually from the registry, but a player-drawn one
+        // in flickemon-custom.js is whatever its author typed.
+        const esc = t => String(t == null ? '' : t)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+        const p = result.partner;
         const el = document.createElement('div');
-        el.className = 'flick-credit';
-        el.innerHTML = `
-            <span class="flick-credit-mark">✦</span>
-            <span class="flick-credit-text">
-                <b>+${mins} min</b> counted from Flick
-                <small>${from} min watched elsewhere, at ${Math.round(this.config.FLICK_CREDIT_RATE * 100)}%${
-                    result.exp > 0 ? ` &middot; +${result.exp} EXP` : ''}</small>
-            </span>`;
+        el.className = 'flick-credit' + (returning ? ' is-return' : '');
+
+        if (returning) {
+            // The headline is the studying, not the discount. A student who
+            // watched two hours on the bus did two hours of work, and being
+            // told the game only counted part of it is a footnote to that,
+            // not the news.
+            const bits = [];
+            if (p && p.evolvedInto) bits.push(`<b>${esc(p.evolvedInto)}</b> evolved`);
+            else if (p && p.levelsGained > 0) {
+                bits.push(`<b>${esc(p.name)}</b> reached <b>Lv.${p.level}</b>`);
+            } else if (p) bits.push(`<b>${esc(p.name)}</b> gained <b>${result.exp} EXP</b>`);
+
+            el.innerHTML = `
+                <span class="flick-credit-mark">✦</span>
+                <span class="flick-credit-text">
+                    <b>While you were away</b>
+                    <span class="flick-credit-line">${dur(result.rawMinutes)} studied on Flick
+                        ${p && p.levelsGained > 0 ? ` &middot; +${result.exp} EXP` : ''}</span>
+                    ${bits.length ? `<span class="flick-credit-line">${bits[0]}</span>` : ''}
+                    <small>Counted at ${Math.round(this.config.FLICK_CREDIT_RATE * 100)}% —
+                        watching here is worth more</small>
+                </span>`;
+        } else {
+            const mins = Math.max(1, Math.round(result.credited));
+            const from = Math.max(1, Math.round(result.rawMinutes || result.credited));
+            el.innerHTML = `
+                <span class="flick-credit-mark">✦</span>
+                <span class="flick-credit-text">
+                    <b>+${mins} min</b> counted from Flick
+                    <small>${from} min watched elsewhere, at ${
+                        Math.round(this.config.FLICK_CREDIT_RATE * 100)}%${
+                        result.exp > 0 ? ` &middot; +${result.exp} EXP` : ''}</small>
+                </span>`;
+        }
+
         wrapper.appendChild(el);
 
-        setTimeout(() => el.classList.add('is-leaving'), 7000);
-        setTimeout(() => el.remove(), 7600);
+        // A summary of a whole afternoon is worth reading twice; a one-line
+        // trickle is not.
+        const life = returning ? 16000 : 7000;
+        setTimeout(() => el.classList.add('is-leaving'), life);
+        setTimeout(() => el.remove(), life + 600);
     }
 
     // ────────────────────────── How to Play ──────────────────────────

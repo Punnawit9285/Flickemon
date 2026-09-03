@@ -29,13 +29,24 @@
 //
 // Local saves are unaffected by any of this: chrome.storage.local is free and
 // unmetered, and it runs at 1s so a crash can never cost more than a second.
-const CLOUD_PUSH_DEBOUNCE_MS = 180000;
+// Paired with the poll below rather than set independently: a push that lands
+// faster than the other device looks for it buys nothing but writes. Three
+// minutes against a five-minute poll meant a third of the pushes could not be
+// seen by anyone before the next one replaced them.
+const CLOUD_PUSH_DEBOUNCE_MS = 300000;
 const CLOUD_POLL_INTERVAL_MS = 300000;
 const LOCAL_SAVE_DEBOUNCE_MS = 1000;
 
 // How rarely the friend feed may be republished. See publishFriendFeed: this
 // number was chosen from a measurement, not an estimate.
 const FEED_PUBLISH_FLOOR_MS = 600000;
+
+// The board's own, slower cadence. It used to be written ONLY when a student
+// joined or left, which meant everyone on it was ranked by whatever their EXP
+// happened to be at the moment they pressed join -- a board that looked live
+// and was frozen. It needs a heartbeat, and half an hour is invisible on a
+// figure that resets daily while costing ten writes across a long study day.
+const BOARD_PUBLISH_FLOOR_MS = 1800000;
 
 class FlickemonEngine {
     constructor() {
@@ -501,6 +512,12 @@ class FlickemonEngine {
         if (!Number.isFinite(s.flickLocalMinutes) || s.flickLocalMinutes < 0) {
             s.flickLocalMinutes = 0;
         }
+        // Published to the whole cohort, so it must never carry an address —
+        // truncation happens before the write, and this is the backstop.
+        if (typeof s.leaderboardLabel !== 'string' || s.leaderboardLabel.includes('@')) {
+            s.leaderboardLabel = '';
+        }
+        s.leaderboardLabel = s.leaderboardLabel.slice(0, 24);
 
         // ── Shop ──
         if (!s.shopWallet || typeof s.shopWallet !== 'object' || Array.isArray(s.shopWallet)) {
@@ -871,6 +888,7 @@ class FlickemonEngine {
             friendPrivacy: this.gameState.friendPrivacy || this.config.defaultFriendPrivacy(),
             blockedUids: this.gameState.blockedUids || [],
             onLeaderboard: this.gameState.onLeaderboard === true,
+            leaderboardLabel: this.gameState.leaderboardLabel || '',
             battleMode: this.gameState.battleMode,
             favouriteIds: this.gameState.favouriteIds,
             teamIds: this.gameState.teamIds,
@@ -1232,6 +1250,10 @@ class FlickemonEngine {
 
         const payload = this.buildCloudPayload();
 
+        // Rides the push rather than a timer of its own: this is already the
+        // moment the game decided something was worth telling the server.
+        if (this.isOnLeaderboard()) this.publishBoardRow().catch(() => {});
+
         // saveGameState runs on every video tick, so the dirty flag says only
         // that *something* called it — not that anything actually changed. A
         // paused video, an open menu or a idle tab would otherwise write an
@@ -1546,6 +1568,12 @@ class FlickemonEngine {
      */
     async setOnLeaderboard(joined, email) {
         this.gameState.onLeaderboard = joined === true;
+        // Kept so publishBoardRow can republish without asking for the address
+        // again. Already truncated, and already public to everyone on the board.
+        this.gameState.leaderboardLabel =
+            this.config.leaderboardLabel(this.getUsername(), email);
+        this.lastBoardPublishAt = 0;
+        this.lastBoardFingerprint = null;
         this.emitState();
         await this.saveGameState({ immediate: true });
 
@@ -1561,6 +1589,50 @@ class FlickemonEngine {
                 streak: this.currentStreak(),
             },
         });
+        return res || { ok: false };
+    }
+
+    /**
+     * Re-publishes this student's row on the global board.
+     *
+     * Floored at half an hour, and dropped when nothing in the row has changed,
+     * so a student who studies all day costs ten writes and one who is idle
+     * costs none.
+     *
+     * The label is stored rather than rebuilt because it needs an email address
+     * the engine does not otherwise hold, and asking for one every half hour to
+     * derive three letters would be a worse trade than remembering them. A
+     * username, once set, wins over it.
+     */
+    async publishBoardRow({ force = false } = {}) {
+        if (!this.isOnLeaderboard()) return { ok: true, skipped: 'not-joined' };
+
+        // A username, once chosen, always wins; the stored fragment is only the
+        // fallback for a student who never set one.
+        const today = this.todayProgress();
+        const row = {
+            joined: true,
+            label: this.getUsername()
+                || this.gameState.leaderboardLabel
+                || 'anon',
+            dayKey: this.today(),
+            todayExp: today.exp,
+            levels: today.levels,
+            streak: this.currentStreak(),
+        };
+
+        const fingerprint = JSON.stringify(row);
+        if (!force && fingerprint === this.lastBoardFingerprint) {
+            return { ok: true, skipped: 'unchanged' };
+        }
+        const since = Date.now() - (this.lastBoardPublishAt || 0);
+        if (!force && since < BOARD_PUBLISH_FLOOR_MS) return { ok: true, skipped: 'too-soon' };
+
+        const res = await this.sendToWorker({ type: 'FRIEND_BOARD_PUBLISH', payload: row });
+        if (res && res.ok) {
+            this.lastBoardFingerprint = fingerprint;
+            this.lastBoardPublishAt = Date.now();
+        }
         return res || { ok: false };
     }
 
@@ -2767,8 +2839,15 @@ class FlickemonEngine {
                 if (this.respawnTimer) clearTimeout(this.respawnTimer);
                 this.respawnTimer = setTimeout(() => this.spawnWildOpponent(), 3000);
                 this.emitWild();
-                // Encounter resolved with EXP gained — worth persisting now.
-                await this.saveGameState({ immediate: true });
+                // Rides the debounce like everything else. This used to flush
+                // immediately, and with an encounter resolving roughly every two
+                // and a half minutes that meant a cloud write per battle: 127 of
+                // 129 daily writes skipped the pacing entirely, which was 68% of
+                // the whole free-tier budget. Nothing is lost by waiting --
+                // chrome.storage.local still has it within a second, and the
+                // only cost is that a SECOND device can be a few minutes stale,
+                // which it already is, because it polls at five.
+                await this.saveGameState();
                 return;
             }
 
@@ -2865,7 +2944,10 @@ class FlickemonEngine {
 
         this.gameState.wildOpponent = this.wildOpponent;
         this.creditStudyMinutes(this.studySource(), secondsWatched / 60);
-        await this.saveGameState({ immediate: capturedThisTick });
+        // Not `immediate: capturedThisTick` — see the escape path above. A catch
+        // is the most common event in the game, so making it the trigger for an
+        // unpaced write made the debounce almost decorative.
+        await this.saveGameState();
     }
 
     /**
@@ -3448,9 +3530,25 @@ class FlickemonEngine {
         const active = this.getActivePokemon();
         const perMinute = active ? (active.level * this.getWinExpBonus()) / 2.5 : 0;
         const exp = Math.round(perMinute * minutes);
+        // Read BEFORE the award, because addExpToActive mutates the same object.
+        const levelBefore = active ? active.level : 0;
+        const speciesId = active ? active.speciesId : null;
         // addExpToActive is the single funnel: it applies both boosts, shares
         // with the team and credits the daily ledger. Nothing else to call.
         const evolved = exp > 0 ? this.addExpToActive(exp) : null;
+
+        // What to tell the student on their return. Every figure here is
+        // already in memory, so saying it costs nothing: no extra read, no
+        // extra write, no second document.
+        const after = this.getActivePokemon();
+        const species = speciesId ? this.config.getSpeciesById(speciesId) : null;
+        const partner = species ? {
+            // addExpToActive returns the NEW species on an evolution, or null.
+            name: (evolved && evolved.name) || species.name,
+            level: after ? after.level : levelBefore,
+            levelsGained: Math.max(0, (after ? after.level : levelBefore) - levelBefore),
+            evolvedInto: evolved ? evolved.name : null,
+        } : null;
 
         // NOT an immediate flush. `immediate` skips the three-minute push
         // debounce, and a harvest can land every 60 seconds -- a phone playing
@@ -3459,7 +3557,14 @@ class FlickemonEngine {
         // that nothing is waiting on. Riding the debounce costs no extra writes
         // at all: the push was already going to happen.
         await this.saveGameState();
-        return { credited: minutes, rawMinutes: raw, exp, evolved, reason: 'credited' };
+        return {
+            credited: minutes, rawMinutes: raw, exp, evolved, partner,
+            // How long this device was not watching. What separates "welcome
+            // back, here is your afternoon" from a minute-by-minute trickle
+            // while a phone plays in the next room.
+            awayMinutes: elapsedMin - localMin,
+            reason: 'credited',
+        };
     }
 
     updatePokedex(speciesId, caught, shiny = false) {

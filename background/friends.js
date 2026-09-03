@@ -74,7 +74,10 @@ const boardCache = createSessionCache('board', BOARD_CACHE_TTL_MS);
  * two-minute-old copy shows the student the same number a fresh read would
  * have, for nothing. An explicit Refresh passes fresh:true and bypasses this.
  */
-const FEED_CACHE_TTL_MS = 2 * 60 * 1000;
+// Five minutes. A feed cannot change faster than FEED_PUBLISH_FLOOR_MS lets its
+// owner republish it, which is ten, so anything up to that is cache the reader
+// was never going to learn anything by skipping.
+const FEED_CACHE_TTL_MS = 5 * 60 * 1000;
 const feedCache = createSessionCache('feed', FEED_CACHE_TTL_MS);
 
 /**

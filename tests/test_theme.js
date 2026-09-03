@@ -229,6 +229,34 @@ console.log('\n=== Firestore free-tier budget ===');
     const boardLimit = num(fs.readFileSync(R + 'background/friends.js', 'utf8'), 'LEADERBOARD_LIMIT');
 
     check('a feed sweep is bounded per panel session', sweepBudget <= 8, String(sweepBudget));
+
+    // ── What actually decides the bill ──
+    //
+    // A measurement through the shipped code put 127 of 129 daily writes on
+    // saveGameState({immediate:true}) at encounter resolution: the debounce was
+    // decorative, and the saves alone were 68% of the free tier's writes. These
+    // three assertions are what stop that coming back.
+    // Comments stripped first: the code that fixed this describes what it no
+    // longer does, and a naive grep matches the explanation instead of the bug.
+    const engineCode = engine.replace(/\/\*[^]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    check('an encounter resolution does NOT jump the push queue',
+        !/immediate:\s*capturedThisTick/.test(engineCode),
+        (/immediate:[^,)\n]*/.exec(engineCode) || [''])[0]);
+    check('the push debounce is at least as slow as the poll that reads it',
+        push >= num(engine, 'CLOUD_POLL_INTERVAL_MS'),
+        `${push}ms push vs ${num(engine, 'CLOUD_POLL_INTERVAL_MS')}ms poll`);
+
+    // The board used to be written only on join and leave, which ranked every
+    // student by whatever their EXP happened to be at the moment they pressed
+    // the button — a board that looked live and was frozen all day.
+    const boardFloor = num(engine, 'BOARD_PUBLISH_FLOOR_MS');
+    check('the global board has a heartbeat, not just a join', /publishBoardRow/.test(engine)
+        && /publishBoardRow\(\)/.test(engine));
+    check('and it is slower than the feed it used to be confused with',
+        boardFloor >= num(engine, 'FEED_PUBLISH_FLOOR_MS'),
+        `${boardFloor}ms board vs ${num(engine, 'FEED_PUBLISH_FLOOR_MS')}ms feed`);
+    check('the board row carries no email, only a label',
+        /leaderboardLabel/.test(engine) && /includes\('@'\)/.test(engine));
     check('the poll floor is slower than the save cadence that feeds it',
         friendPoll >= push / 2, `${friendPoll}ms vs push ${push}ms`);
     check('an abandoned panel backs off to minutes', friendPollMax >= 300000,

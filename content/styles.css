@@ -4115,3 +4115,9 @@
 @media (prefers-reduced-motion: reduce) {
     .flick-credit, .flick-credit.is-leaving { animation: none; }
 }
+
+/* The return summary is a bigger moment than the minute-by-minute trickle:
+ * a student who watched two hours on the bus did two hours of work. */
+.flick-credit.is-return { border-left-width: 4px; padding: 12px 16px; }
+.flick-credit-line { color: var(--flick-text); }
+.flick-credit.is-return .flick-credit-text { gap: 3px; }
