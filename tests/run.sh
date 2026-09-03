@@ -30,6 +30,11 @@ for f in tests/test_*.js tests/test_*.mjs; do
         total=$((total+p)); failed=$((failed+fl))
         printf '  %-26s %4s passed %3s failed\n' "$name" "$p" "$fl"
         [ "$fl" != "0" ] && echo "$out" | grep FAIL | sed 's/^/      /'
+    elif [[ "$line" == *SKIPPED* ]]; then
+        # A suite that could not run says so. Reporting this as success would
+        # be worse than a failure: nothing ran, and it looked fine.
+        printf '  %-26s %s\n' "$name" "SKIPPED — needs the Firestore emulator"
+        echo "$out" | grep -E '^  SKIP |Run them' | sed 's/^/      /'
     else
         # A suite that reports no tally is a smoke script; its exit code decides.
         printf '  %-26s %s\n' "$name" "$([ $rc -eq 0 ] && echo 'ok (smoke)' || echo 'ERROR')"
