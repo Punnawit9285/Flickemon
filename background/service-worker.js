@@ -74,7 +74,8 @@ async function pushWithRetry(state) {
 
         // Drain anything queued earlier; the state we just wrote supersedes it.
         await takePendingPush();
-        return { ok: true, syncedAt: Date.now() };
+        // Passed back so the engine can skip re-pulling its own write.
+        return { ok: true, syncedAt: Date.now(), serverAt: result.serverAt || null };
     } catch (err) {
         await queuePendingPush(state);
         return { ok: false, reason: 'offline', error: String(err.message || err) };
@@ -201,8 +202,11 @@ const handlers = {
         }
     },
 
-    async CLOUD_PULL() {
-        return await pullState();
+    async CLOUD_PULL(msg) {
+        // `since` is the write time this device already has. Without it the
+        // whole document comes back every time; with it, only the write time
+        // does until something has actually changed.
+        return await pullState({ since: msg && msg.since });
     },
 
     async CLOUD_PUSH(msg) {

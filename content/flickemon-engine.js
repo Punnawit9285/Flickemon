@@ -812,11 +812,25 @@ class FlickemonEngine {
 
     /** Pulls the cloud save and merges it into local state. */
     async pullFromCloud() {
-        const res = await this.sendToWorker({ type: 'CLOUD_PULL' });
+        // The write time this device already holds. The worker checks it with a
+        // field mask and sends the document back only when it has moved on --
+        // the poll is every five minutes and a save is ~39 KiB, so almost all of
+        // that traffic was re-downloading a document to learn it had not
+        // changed. Held in memory, so the first poll of a session always fetches
+        // in full and a stale marker can never outlive the session that made it.
+        const res = await this.sendToWorker({
+            type: 'CLOUD_PULL', since: this.lastSeenServerAt || null,
+        });
         if (!res || !res.signedIn) return false;
+        if (res.serverAt) this.lastSeenServerAt = res.serverAt;
 
         // Retry anything parked while offline now that we know we're online.
+        // Deliberately before the unchanged check: a queued write still needs
+        // sending on a poll that found nothing new to read.
         this.sendToWorker({ type: 'CLOUD_FLUSH_PENDING' });
+
+        // Nothing new since the last look, so there is nothing to merge.
+        if (res.unchanged) return true;
 
         if (!res.state) {
             // Account has no save yet — this device seeds it.
@@ -1269,6 +1283,9 @@ class FlickemonEngine {
         this.cloudInFlight = true;
         try {
             const res = await this.sendToWorker({ type: 'CLOUD_PUSH', state: payload });
+            // Our own write moves serverAt; recording it here stops the next
+            // poll pulling the document straight back.
+            if (res && res.serverAt) this.lastSeenServerAt = res.serverAt;
             if (res && res.ok) {
                 this.lastCloudSyncAt = res.syncedAt;
                 this.lastPushedFingerprint = fingerprint;

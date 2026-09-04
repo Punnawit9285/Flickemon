@@ -328,6 +328,55 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
     e.gameState.party = [];
   }
 
+  console.log('\n=== the save poll asks before it downloads ===');
+  {
+    const realSend = e.sendToWorker.bind(e);
+    let sent = [];
+    e.lastSeenServerAt = null;
+
+    e.sendToWorker = async msg => { sent.push(msg); 
+      if (msg.type === 'CLOUD_PULL') {
+        return { signedIn: true, state: null, serverAt: '2026-09-04T10:00:00Z' };
+      }
+      return { ok: true };
+    };
+    await e.pullFromCloud();
+    check('the first poll carries no baseline',
+      sent[0].type === 'CLOUD_PULL' && sent[0].since === null, JSON.stringify(sent[0]));
+    check('and it remembers the write time it was told',
+      e.lastSeenServerAt === '2026-09-04T10:00:00Z', String(e.lastSeenServerAt));
+
+    sent = [];
+    let merged = 0;
+    const realMerge = e.mergeCloudState.bind(e);
+    e.mergeCloudState = st => { merged++; return realMerge(st); };
+    e.sendToWorker = async msg => { sent.push(msg);
+      if (msg.type === 'CLOUD_PULL') {
+        return { signedIn: true, unchanged: true, serverAt: '2026-09-04T10:00:00Z' };
+      }
+      return { ok: true };
+    };
+    await e.pullFromCloud();
+    check('the next poll sends the baseline it holds',
+      sent[0].since === '2026-09-04T10:00:00Z', String(sent[0].since));
+    check('an unchanged answer merges nothing', merged === 0, String(merged));
+    // A poll that finds nothing to READ may still have something to SEND: a
+    // write queued while offline is drained here and nowhere else.
+    check('but a queued write is still drained',
+      sent.some(m => m.type === 'CLOUD_FLUSH_PENDING'), JSON.stringify(sent.map(m => m.type)));
+
+    // Our own push moves the write time; without recording it the very next
+    // poll would download the document this device just sent.
+    e.sendToWorker = async () => ({ ok: true, serverAt: '2026-09-04T11:00:00Z' });
+    e.cloudDirty = true; e.lastPushedFingerprint = null;
+    await e.flushCloud();
+    check('a push records the time it wrote',
+      e.lastSeenServerAt === '2026-09-04T11:00:00Z', String(e.lastSeenServerAt));
+
+    e.mergeCloudState = realMerge;
+    e.sendToWorker = realSend;
+  }
+
   console.log('\n=== who you meet depends on your partner ===');
   {
     e.gameState.party=[]; seq=0;

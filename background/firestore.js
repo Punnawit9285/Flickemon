@@ -27,12 +27,63 @@ function docName(uid) {
 }
 
 /**
+ * Is `a` a moment strictly after `b`? Both are Firestore RFC3339 timestamps.
+ *
+ * Deliberately generous about saying yes. Firestore's fractional precision is
+ * not fixed, so two strings for the same instant can differ, and Date.parse
+ * throws sub-millisecond detail away — two writes inside one millisecond would
+ * compare equal. Anything this cannot rule out is treated as CHANGED, because
+ * the cost of a wrong "yes" is one wasted fetch and the cost of a wrong "no" is
+ * a device that silently stops seeing the other one.
+ */
+export function isNewer(a, b) {
+    if (!a || !b) return true;
+    if (a === b) return false;
+    const ta = Date.parse(a), tb = Date.parse(b);
+    if (!Number.isFinite(ta) || !Number.isFinite(tb)) return true;
+    if (ta === tb) return true;      // same millisecond, different strings
+    return ta > tb;
+}
+
+/**
  * Reads the student's cloud save.
  * Returns null when they have no save yet (first device) — not an error.
+ *
+ * With `since`, the write time is checked FIRST, using a field mask, and the
+ * body is only fetched when it has actually moved on. A save is around 39 KiB
+ * on the wire and the poll runs every five minutes, so a ten-hour day was
+ * downloading close to five megabytes per student to discover, almost every
+ * time, that nothing had happened. Three hundred students doing that was 1.9
+ * GiB a day and 83% of the whole Firestore bill.
+ *
+ * It does NOT reduce the number of reads: a masked get is billed exactly like a
+ * full one. This buys bytes, not quota.
+ *
+ * Every unexpected answer falls through to the full fetch. A freshness check
+ * that guesses wrong stops a device seeing the other one's progress and says
+ * nothing about it, which is a far worse failure than fetching too much.
  */
-export async function pullState() {
+export async function pullState({ since } = {}) {
     const auth = await getIdToken();
     if (!auth) return { signedIn: false, state: null };
+
+    if (since) {
+        const fresh = await fetch(`${docUrl(auth.uid)}?mask.fieldPaths=serverAt`, {
+            headers: { Authorization: `Bearer ${auth.idToken}` },
+        });
+        if (fresh.status === 404) return { signedIn: true, state: null };
+        if (fresh.ok) {
+            const head = await fresh.json().catch(() => null);
+            const stamp = head?.fields?.serverAt?.timestampValue;
+            // A save written before serverAt existed has nothing to compare, so
+            // it falls through and is fetched in full, as it always was.
+            if (stamp && !isNewer(stamp, since)) {
+                return { signedIn: true, unchanged: true, serverAt: stamp, state: null };
+            }
+        }
+        // Any other status: fall through and read the document properly rather
+        // than reporting "no change" on the strength of a failed request.
+    }
 
     const res = await fetch(docUrl(auth.uid), {
         headers: { Authorization: `Bearer ${auth.idToken}` },
@@ -42,11 +93,12 @@ export async function pullState() {
     if (!res.ok) throw new Error(`Cloud read failed (${res.status})`);
 
     const doc = await res.json();
+    const serverAt = doc.fields?.serverAt?.timestampValue || null;
     const raw = doc.fields?.state?.stringValue;
-    if (!raw) return { signedIn: true, state: null };
+    if (!raw) return { signedIn: true, state: null, serverAt };
 
     try {
-        return { signedIn: true, state: JSON.parse(raw) };
+        return { signedIn: true, state: JSON.parse(raw), serverAt };
     } catch {
         // Corrupt blob shouldn't wipe local progress — treat as "no cloud save".
         console.warn('[Flickémon] Cloud save was unreadable, ignoring it');
@@ -118,7 +170,11 @@ export async function pushState(state) {
     });
 
     if (!res.ok) throw new Error(`Cloud write failed (${res.status})`);
-    return { signedIn: true, ok: true };
+
+    // commitTime is the same clock serverAt was stamped from, so recording it
+    // stops the next poll pulling back the document this device just wrote.
+    const out = await res.json().catch(() => null);
+    return { signedIn: true, ok: true, serverAt: out?.commitTime || null };
 }
 
 /**
