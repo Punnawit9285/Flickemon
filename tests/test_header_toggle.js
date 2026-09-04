@@ -46,25 +46,67 @@ check('inactive segment is muted', css.includes('color: var(--flick-text-muted)'
 check('collapses to icons on narrow widgets', css.includes('.mode-seg-label'));
 check('respects reduced motion', css.includes('prefers-reduced-motion'));
 
-console.log('\n=== the header still fits a phone ===');
+console.log('\n=== the header fits, whatever it is inside ===');
 {
-    // Seven controls now share this row — two mode segments, PVP, Trade,
-    // Friends, the mart, the menu and the collapse chevron. Measured in a real
-    // browser at 380px they needed 328px of a 306px row and spilled 85px past
-    // the card. The fix is a narrow-width block that tightens the spacing and
-    // leaves wrapping on as a safety net; these assert it is still there,
-    // because the next feature to add a header button will silently re-break it.
-    const narrow = css.slice(css.indexOf('@media (max-width: 460px) { .pvp-header-label'));
-    const block = narrow.slice(0, narrow.indexOf('\n}', narrow.indexOf('.mode-seg')) + 2);
+    // Eight controls share this row — two mode segments, PVP, Trade, Friends,
+    // the mart, the menu and the collapse chevron. They used to be measured
+    // against @media, which asks how wide the SCREEN is. The widget lives in a
+    // column on someone else's lecture page, so a narrow column on a large
+    // monitor matched no breakpoint at all and the row ran off the card. These
+    // assert the fix is still in place, because the next feature to add a
+    // header button will silently re-break it.
+    //
+    // Comments stripped: several of them describe the bug being prevented and
+    // would otherwise satisfy a naive match.
+    const code = css.replace(/\/\*[^]*?\*\//g, '');
+    const rule = name => {
+        const i = code.indexOf(name);
+        return i < 0 ? '' : code.slice(i, code.indexOf('}', i) + 1);
+    };
 
-    check('the header may wrap rather than overflow', /\.flickemon-header\s*\{[^}]*flex-wrap:\s*wrap/.test(block));
-    check('so may the actions row', /\.header-actions\s*\{[^}]*flex-wrap:\s*wrap/.test(block));
-    check('and the row is tightened so it usually does not need to',
-        /\.header-actions\s*\{[^}]*gap:\s*0\.1rem/.test(block));
-    check('every header button is narrowed, not just some',
-        ['pvp-header-btn', 'trade-header-btn', 'friends-header-btn', 'shop-header-btn']
-            .every(c => block.includes('.' + c)));
-    check('the icon buttons shrink too', /\.icon-btn\s*\{[^}]*padding/.test(block));
+    check('the card is a query container, so the rules measure the widget',
+        /container-type:\s*inline-size/.test(code) && /container-name:\s*flickemon/.test(code));
+    check('and the breakpoints ask the container, not the screen',
+        (code.match(/@container flickemon/g) || []).length >= 3);
+
+    // The load-bearing one: wrapping is on at every width, so even where a
+    // container query never runs the row cannot leave the card.
+    check('the header wraps unconditionally, not only under a breakpoint',
+        /\.flickemon-header,[^{]*\{[^}]*flex-wrap:\s*wrap/.test(code),
+        rule('.flickemon-card .flickemon-header,').slice(0, 90));
+    check('so does the actions row', /\.header-actions\s*\{[^}]*flex-wrap:\s*wrap/.test(code));
+
+    // Without these a flex item refuses to shrink past its content and pushes
+    // the row wider than the card instead of wrapping.
+    check('both sides of the header may shrink',
+        /\.header-left\s*\{[^}]*min-width:\s*0/.test(code)
+        && /\.header-actions\s*\{[^}]*min-width:\s*0/.test(code));
+    check('and the title truncates rather than pushing',
+        /\.header-title\s*\{[^}]*text-overflow:\s*ellipsis/.test(code));
+    check('the card can never be wider than what holds it',
+        /\.flickemon-card\s*\{[^}]*max-width:\s*100%/.test(code));
+
+    // The complaint that started this: at 0.25rem the controls read as one
+    // undifferentiated strip and the eye cannot find the edges.
+    const gap = /\.header-actions\s*\{[^}]*gap:\s*([\d.]+)rem/.exec(code);
+    check('the buttons have room to breathe at full width',
+        gap && Number(gap[1]) >= 0.4, gap ? gap[1] + 'rem' : 'no gap found');
+
+    // Every word in the row has to come off somewhere, or a narrow container
+    // still overflows however much the gaps tighten.
+    const ladder = code.slice(code.indexOf('@container flickemon'));
+    for (const label of ['.trade-header-btn .pvp-header-label',
+                         '.friends-header-btn .pvp-header-label',
+                         '.pvp-header-label', '.mode-seg-label']) {
+        check(`${label} is dropped as space runs out`, ladder.includes(label));
+    }
+    check('but no control is ever removed, only its word',
+        !/\.(pvp|trade|friends|shop)-header-btn\s*\{[^}]*display:\s*none/.test(ladder));
+
+    // Chrome has had @container since 105, but a browser without it must still
+    // not overflow — which the unconditional wrap above already guarantees.
+    check('there is a fallback for a browser with no container queries',
+        code.includes('@supports not (container-type: inline-size)'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

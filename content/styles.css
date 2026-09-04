@@ -229,7 +229,22 @@
 
 /* ────────────────────────── Injected Cards ────────────────────────── */
 
+/*
+ * A query container, not just a card.
+ *
+ * Every responsive rule here used to key on @media — the VIEWPORT width — while
+ * the widget actually lives inside a column on someone else's lecture page. A
+ * narrow column on a wide monitor matched none of them, so the header simply
+ * ran off the side: the breakpoints were measuring the wrong box. @container
+ * asks the only question that matters, which is how much room the widget has.
+ *
+ * Safe to contain: every overlay in the extension is appended to document.body,
+ * so nothing positioned depends on this element not being a containing block.
+ */
 .flickemon-card {
+    container-type: inline-size;
+    container-name: flickemon;
+    max-width: 100%;
     background: var(--flick-card-bg);
     color: var(--flick-text);
     border: 1px solid var(--flick-border);
@@ -246,6 +261,13 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    /* Wrapping is on at EVERY width, not only under a breakpoint. It is the
+       backstop that makes overflow impossible even where the container queries
+       below never run, so the worst case is a second row rather than buttons
+       hanging off the edge. */
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+    column-gap: 0.75rem;
     font-weight: 700;
     font-size: 1.05rem;
     padding-bottom: 0.5rem;
@@ -253,9 +275,24 @@
     margin-bottom: 0.75rem;
 }
 
-.header-left { display: flex; align-items: center; gap: 0.5rem; }
-.header-icon-svg { color: var(--flick-primary); width: 22px; height: 22px; display: inline-block; vertical-align: middle; }
-.header-actions { display: flex; align-items: center; gap: 0.25rem; }
+/* min-width: 0 on both sides, or a flex item refuses to shrink below its
+   content and pushes the row wider than the card instead of wrapping. */
+.header-left {
+    display: flex; align-items: center; gap: 0.5rem;
+    min-width: 0; flex: 0 1 auto;
+}
+.header-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.header-icon-svg { color: var(--flick-primary); width: 22px; height: 22px; display: inline-block; vertical-align: middle; flex-shrink: 0; }
+
+/* 0.5rem rather than 0.25: at a quarter the controls read as one undifferentiated
+   strip of colour, and the eye has to work out where each button starts. */
+.header-actions {
+    display: flex; align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    min-width: 0;
+}
 
 .icon-btn {
     background: transparent;
@@ -334,7 +371,10 @@
 .hp-bar-fill { height: 100%; background: var(--flick-danger); transition: width 0.3s ease; }
 
 .exp-text { font-size: 0.7rem; color: var(--flick-text-muted); text-align: left; }
-.flickemon-card .header-actions { display: flex; align-items: center; gap: 0.25rem; position: relative; }
+.flickemon-card .header-actions {
+    display: flex; align-items: center; flex-wrap: wrap;
+    justify-content: flex-end; gap: 0.5rem; min-width: 0; position: relative;
+}
 
 .flickemon-card .icon-btn {
     background: transparent;
@@ -1897,12 +1937,6 @@
 .mode-seg[data-mode="capture"][aria-pressed="true"] { background: var(--flick-capture); color: var(--flick-on-primary); }
 .mode-seg[data-mode="exp"][aria-pressed="true"]     { background: var(--flick-primary); color: var(--flick-on-primary); }
 
-/* Header is crowded on narrow widgets — keep the icons, drop the words. */
-@media (max-width: 460px) {
-    .mode-seg-label { display: none; }
-    .mode-seg { padding: 5px 9px; }
-}
-
 @media (prefers-reduced-motion: reduce) {
     .mode-seg { transition: none; }
 }
@@ -1928,35 +1962,70 @@
 }
 .pvp-header-btn:hover { background: var(--flick-pvp); color: var(--flick-on-primary); }
 .pvp-header-btn svg { flex-shrink: 0; display: block; }
-@media (max-width: 460px) { .pvp-header-label { display: none; } .pvp-header-btn { padding: 5px 9px; } }
 
-/* The header is a title plus six controls, and below ~460px they stop fitting
-   on one line — the row overflowed the card by 85px at 380px wide, which is a
-   phone held upright. Wrapping rather than hiding: every control here does
-   something the others cannot, so dropping one to save space would cost a
-   feature. The title keeps line one and the controls take line two.
-   The popover is positioned against .header-actions, so it follows the row it
-   belongs to rather than floating away from it. */
-@media (max-width: 460px) {
-    .flickemon-card .flickemon-header {
-        flex-wrap: wrap;
-        row-gap: 0.4rem;
-    }
-    /* Tight enough that all seven controls fit one line at 380px, with wrap
-       left on as the safety net for anything narrower still. */
-    .flickemon-card .header-actions {
-        flex-wrap: wrap;
-        justify-content: flex-end;
-        gap: 0.1rem;
-        row-gap: 0.3rem;
-        max-width: 100%;
-    }
-    .pvp-header-btn, .trade-header-btn, .friends-header-btn, .shop-header-btn {
-        padding: 5px 6px;
-    }
-    .flickemon-card .icon-btn { padding: 4px 5px; }
-    .mode-seg { padding-left: 7px; padding-right: 7px; }
+/* ─────────────────── The header, as space runs out ───────────────────
+ *
+ * Seven controls and a title. Rather than one breakpoint that hides everything
+ * at once, the words come off in the order they are least missed, so a slightly
+ * narrow column loses nothing and a genuinely tiny one still shows every
+ * control. Nothing is ever REMOVED — each of these does something the others
+ * cannot, so dropping one to save room would cost a feature.
+ *
+ * Measured against the CARD, not the screen. A 420px column on a 27-inch
+ * monitor is exactly as cramped as a 420px phone, and the old @media rules
+ * could not tell the two apart.
+ */
+
+/* Trade and Friends first: both are rarely-used and their icons are literal —
+   two arrows, two people. */
+@container flickemon (max-width: 660px) {
+    .trade-header-btn .pvp-header-label,
+    .friends-header-btn .pvp-header-label { display: none; }
 }
+
+/* Then PVP, whose crossed swords are just as readable. */
+@container flickemon (max-width: 560px) {
+    .pvp-header-label { display: none; }
+    .pvp-header-btn, .trade-header-btn, .friends-header-btn { padding: 5px 8px; }
+}
+
+/* The money keeps its number to the end — a bag icon alone does not say ₱145. */
+@container flickemon (max-width: 470px) {
+    .flickemon-card .header-actions { gap: 0.35rem; }
+    .flickemon-card .icon-btn { padding: 4px 6px; }
+    .mode-switch { margin-right: 2px; }
+}
+
+/* Last, the mode words. Kept longest because a pokéball and a bolt are the one
+   pair here a new player cannot reliably tell apart, and it is the control they
+   reach for most. */
+@container flickemon (max-width: 400px) {
+    .mode-seg-label { display: none; }
+    .mode-seg { padding: 5px 9px; }
+    .shop-header-label { font-size: 0.66rem; }
+}
+
+/* Narrower than any phone held upright. The title takes line one and the
+   controls take line two — which the unconditional wrap above already allows;
+   this only stops the title fighting for room on the way there. */
+@container flickemon (max-width: 340px) {
+    .flickemon-card .header-left { flex: 1 1 100%; }
+    .flickemon-card .header-actions { justify-content: flex-start; }
+}
+
+/* No container-query support: everything still wraps, because .flickemon-header
+   wraps unconditionally. This only restores the label-dropping so a small
+   screen does not get a two-row header it did not need. */
+@supports not (container-type: inline-size) {
+    @media (max-width: 560px) {
+        .pvp-header-label { display: none; }
+    }
+    @media (max-width: 460px) {
+        .mode-seg-label { display: none; }
+        .mode-seg { padding: 5px 9px; }
+    }
+}
+
 
 /* ────────────────────────── PVP: 8-bit battle ──────────────────────────
    Pixel styling is deliberate: chunky borders, hard shadows, no anti-aliased
@@ -2675,7 +2744,6 @@
 }
 .trade-header-btn:hover { background: var(--flick-trade); color: var(--flick-on-primary); }
 .trade-header-btn svg { flex-shrink: 0; display: block; }
-@media (max-width: 560px) { .trade-header-btn .pvp-header-label { display: none; } }
 
 /* ───────────────────────────── Friends ─────────────────────────────
    Third of the three social buttons, styled like the other two so the header
@@ -2693,7 +2761,6 @@
 }
 .friends-header-btn:hover { background: var(--flick-friends); color: var(--flick-on-primary); }
 .friends-header-btn svg { flex-shrink: 0; display: block; }
-@media (max-width: 560px) { .friends-header-btn .pvp-header-label { display: none; } }
 
 .friends { font-family: "Courier New", monospace; }
 
@@ -3193,7 +3260,6 @@
 @media (max-width: 460px) {
     .shop-tab { font-size: 0.52rem; letter-spacing: 0; padding: 0.4rem 0.1rem; }
     .shop-card { gap: 0.4rem; }
-    .shop-header-label { display: none; }
 }
 
 /* ───────────────────────── The trade scene ─────────────────────────
