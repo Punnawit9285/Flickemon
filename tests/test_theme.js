@@ -317,5 +317,31 @@ console.log('\n=== the page is not asked to do needless work ===');
         /injectQueued/.test(cs) && /requestAnimationFrame/.test(cs));
 }
 
+console.log('\n=== Pokémon theme whole-webpage & popover rules ===');
+{
+    const ui = fs.readFileSync(R + 'content/flickemon-ui.js', 'utf8');
+    const cs = fs.readFileSync(R + 'content/content-script.js', 'utf8');
+
+    check('Pokémon theme overrides Ionic tokens on html and body',
+        /html\.pokemon-theme[\s\S]*?body\.pokemon-theme[\s\S]*?--ion-background-color/.test(rules));
+    check('Pokémon theme styles the Ionic top navbar',
+        /body\.pokemon-theme\s+ion-header\s+ion-toolbar/.test(rules));
+    check('Pokémon theme styles Ionic cards across the page',
+        /body\.pokemon-theme\s+ion-card/.test(rules));
+    check('Pokémon theme styles lecture list items',
+        /body\.pokemon-theme\s+ion-item/.test(rules));
+    check('Pokémon theme styles lecture progress bars',
+        /body\.pokemon-theme\s+ion-progress-bar/.test(rules));
+    check('Pokémon theme header does not clip dropdown menu',
+        /\.flickemon-card\.pokemon-theme\s+\.flickemon-header\s*\{[^}]*overflow:\s*visible;/.test(rules));
+    check('Pokémon theme popover menu has high z-index',
+        /\.flickemon-card\.pokemon-theme\s+\.options-popover-menu\s*\{[^}]*z-index:\s*100000;/.test(rules));
+    check('FlickemonUI applies theme to document body and root',
+        /document\.documentElement\.classList\.toggle\('pokemon-theme'/.test(ui) &&
+        /document\.body\.classList\.toggle\('pokemon-theme'/.test(ui));
+    check('content-script initializes theme on document body and root',
+        /document\.documentElement\.classList\.add\('pokemon-theme'/.test(cs));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

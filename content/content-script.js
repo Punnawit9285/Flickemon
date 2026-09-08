@@ -14,6 +14,22 @@
         // Initialize core game engine
         if (window.flickemonEngine) await window.flickemonEngine.init();
 
+        // Apply Pokémon theme to document as early as possible if enabled
+        if (window.flickemonEngine && typeof window.flickemonEngine.getPokemonTheme === 'function') {
+            window.flickemonEngine.getPokemonTheme().then(on => {
+                if (on) {
+                    if (document.documentElement) document.documentElement.classList.add('pokemon-theme');
+                    if (document.body) {
+                        document.body.classList.add('pokemon-theme');
+                    } else {
+                        document.addEventListener('DOMContentLoaded', () => {
+                            if (document.body) document.body.classList.add('pokemon-theme');
+                        });
+                    }
+                }
+            }).catch(() => {});
+        }
+
         // Create extension container root
         const rootContainer = document.createElement('div');
         rootContainer.className = 'flickemon-ext-root';
@@ -47,6 +63,11 @@
                 widgetWrapper.className = 'flickemon-widgets-wrapper';
                 widgetWrapper.appendChild(flickemonUI.renderWidget());
                 containerTarget.appendChild(widgetWrapper);
+                if (flickemonUI && flickemonUI.pendingFlickCredit) {
+                    const pending = flickemonUI.pendingFlickCredit;
+                    flickemonUI.pendingFlickCredit = null;
+                    flickemonUI.showFlickCredit(pending);
+                }
             }
         }
 
@@ -83,13 +104,15 @@
         // before pressing play on anything.
         let lastHarvestAt = 0;
         let harvesting = false;
-        function harvestFlickProgress() {
+        function harvestFlickProgress(opts = {}) {
+            const force = Boolean(opts && opts.force);
+            const isLogin = Boolean(opts && opts.isLogin);
             const engine = window.flickemonEngine;
             if (!engine || !window.FlickProgress || harvesting) return;
 
             const wait = (engine.config && engine.config.FLICK_HARVEST_INTERVAL_MS) || 60000;
             const now = Date.now();
-            if (now - lastHarvestAt < wait) return;
+            if (!force && now - lastHarvestAt < wait) return;
 
             const reading = window.FlickProgress.readCourse(document);
             // Null means "not a course page", which must not look like "a course
@@ -101,6 +124,9 @@
             harvesting = true;
             Promise.resolve(engine.creditFlickProgress(reading))
                 .then(result => {
+                    if (result && isLogin) {
+                        result.isLogin = true;
+                    }
                     // The cap is surfaced too: credit that stops without a
                     // word reads as a bug rather than a rule.
                     const worthSaying = result
@@ -113,6 +139,7 @@
                 .catch(err => console.warn('[Flickémon] Flick progress read failed:', err))
                 .finally(() => { harvesting = false; });
         }
+        window.flickemonHarvestProgress = harvestFlickProgress;
         harvestFlickProgress();
 
         /** Check if main website's Pomodoro timer is currently on a break */

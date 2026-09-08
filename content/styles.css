@@ -199,6 +199,57 @@
                        rgba(255,255,255,0) 68%);
     --flick-field:          linear-gradient(180deg, rgba(125,211,252,0.18) 0%, rgba(134,239,172,0.18) 100%);
 
+    /* Pokémon theme tokens (opt-in skin) */
+    --pkmn-bg: #1a1a2e;
+    --pkmn-bg-rgb: 26, 26, 46;
+    --pkmn-card-bg: #16213e;
+    --pkmn-card-bg-rgb: 22, 33, 62;
+    --pkmn-card-mid: #0f3460;
+    --pkmn-text: #f0f0f0;
+    --pkmn-text-rgb: 240, 240, 240;
+    --pkmn-text-muted: #a0aec0;
+    --pkmn-border: #d4a017;
+    --pkmn-border-dark: #b8860b;
+    --pkmn-primary: #ee1515;
+    --pkmn-primary-tint: #cc1111;
+    --pkmn-primary-rgb: 238, 21, 21;
+    --pkmn-blue: #3b82f6;
+    --pkmn-blue-light: #60a5fa;
+    --pkmn-white: #ffffff;
+    --pkmn-dark: #222222;
+    --pkmn-slate: #1e293b;
+    --pkmn-slate-border: #334155;
+    --pkmn-danger: #f56565;
+    --pkmn-success: #48bb78;
+    --pkmn-warning: #ecc94b;
+    --pkmn-purple: #9f7aea;
+    --pkmn-purple-light: #c4b5fd;
+    --pkmn-gold-light: #fcd34d;
+    --pkmn-fill-subtle: rgba(255, 255, 255, 0.04);
+    --pkmn-fill: rgba(255, 255, 255, 0.08);
+    --pkmn-fill-mid: rgba(255, 255, 255, 0.10);
+    --pkmn-fill-item: rgba(255, 255, 255, 0.12);
+    --pkmn-fill-strong: rgba(255, 255, 255, 0.14);
+    --pkmn-fill-hover: rgba(255, 255, 255, 0.15);
+    --pkmn-track: rgba(255, 255, 255, 0.18);
+    --pkmn-hover-strong: rgba(255, 255, 255, 0.25);
+    --pkmn-border-light: rgba(255, 255, 255, 0.30);
+    --pkmn-text-soft: rgba(255, 255, 255, 0.70);
+    --pkmn-text-dim: rgba(255, 255, 255, 0.85);
+    --pkmn-shadow-soft: rgba(0, 0, 0, 0.25);
+    --pkmn-shadow-drop: rgba(0, 0, 0, 0.30);
+    --pkmn-shadow-mid: rgba(0, 0, 0, 0.35);
+    --pkmn-shadow: rgba(0, 0, 0, 0.40);
+    --pkmn-shadow-heavy: rgba(0, 0, 0, 0.55);
+    --pkmn-shadow-strong: rgba(0, 0, 0, 0.60);
+    --pkmn-gold-glow: rgba(212, 160, 23, 0.15);
+    --pkmn-gold-bg: rgba(212, 160, 23, 0.08);
+    --pkmn-red-bg: rgba(238, 21, 21, 0.12);
+    --pkmn-red-glow: rgba(238, 21, 21, 0.35);
+    --pkmn-red-ring: rgba(238, 21, 21, 0.40);
+    --pkmn-blue-glow: rgba(59, 130, 246, 0.35);
+    --pkmn-shiny-glow: rgba(252, 211, 77, 0.50);
+
     /* Pokémon type identity — the one deliberate exception. A Fire type is
      * orange in every game ever shipped, so these are constants rather than
      * theme-derived, but they are still tokens and a site theme can override
@@ -4187,3 +4238,784 @@
 .flick-credit.is-return { border-left-width: 4px; padding: 12px 16px; }
 .flick-credit-line { color: var(--flick-text); }
 .flick-credit.is-return .flick-credit-text { gap: 3px; }
+
+/* ── Return from Studying Elsewhere Modal ── */
+
+.flick-return-overlay .flickemon-modal-container {
+    max-width: 440px;
+    height: auto;
+    max-height: 90vh;
+}
+
+.flick-return-modal {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 14px;
+    padding: 10px 4px;
+}
+
+.flick-return-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--flick-fill);
+    border: 1px solid var(--flick-border);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--flick-primary);
+}
+
+.flick-return-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.flick-return-sprite {
+    width: 96px;
+    height: 96px;
+    image-rendering: pixelated;
+    animation: flick-sprite-bounce 1.6s ease-in-out infinite;
+}
+
+.flick-return-pokeball-icon {
+    font-size: 3rem;
+    line-height: 1;
+}
+
+@keyframes flick-sprite-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .flick-return-sprite { animation: none; }
+}
+
+.flick-return-partner-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.flick-return-partner-name {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: var(--flick-text);
+}
+
+.flick-return-partner-lvl {
+    background: var(--flick-primary);
+    color: var(--flick-on-primary);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 0.8rem;
+}
+
+.flick-return-lvl-badge {
+    background: var(--flick-fill-strong);
+    border: 1px solid var(--flick-success);
+    color: var(--flick-success);
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.88rem;
+}
+
+.flick-return-evo-badge {
+    background: var(--flick-fill-strong);
+    border: 1px solid var(--flick-warning);
+    color: var(--flick-warning);
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.88rem;
+}
+
+.flick-return-stats {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--flick-card-bg);
+    border: 1px solid var(--flick-border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    box-sizing: border-box;
+}
+
+.flick-return-stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.88rem;
+}
+
+.flick-return-stat-label {
+    color: var(--flick-text-muted);
+    font-weight: 500;
+}
+
+.flick-return-stat-val {
+    color: var(--flick-text);
+    font-weight: 700;
+}
+
+.flick-return-stat-row.is-exp .exp-val {
+    color: var(--flick-primary);
+    font-size: 1rem;
+}
+
+.flick-return-stat-row.is-cap {
+    border-top: 1px solid var(--flick-border);
+    padding-top: 6px;
+    margin-top: 2px;
+}
+
+.flick-return-stat-row.is-cap .flick-return-stat-val {
+    color: var(--flick-warning);
+}
+
+.flick-return-footnote {
+    font-size: 0.78rem;
+    color: var(--flick-text-muted);
+    margin: 0;
+    line-height: 1.4;
+}
+
+.flick-return-btn {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    background: var(--flick-primary);
+    color: var(--flick-on-primary);
+    font-weight: 700;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.flick-return-btn:hover {
+    background: var(--flick-primary-hover);
+    transform: translateY(-1px);
+}
+
+.flick-return-btn:active {
+    transform: translateY(0);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Pokémon Theme — opt-in visual skin
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Everything below is scoped under `.pokemon-theme`. When the class is
+ * absent the rules match nothing and cost nothing. The strategy is to
+ * override only the --flick-* custom properties plus a handful of structural
+ * details (the header stripe, the card gradient), so every child that
+ * already reads the tokens picks up the new palette for free.
+ *
+ * Design reference: the Pokémon game series' dark UI panels, Pokéball red,
+ * and the green-to-amber HP bar.
+ */
+
+/* ── Toggle switch component ── */
+
+.flick-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 14px 0;
+}
+
+.flick-toggle-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.flick-toggle-label {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--flick-text);
+}
+
+.flick-toggle-sub {
+    font-size: 0.78rem;
+    color: var(--flick-text-muted);
+}
+
+.flick-toggle {
+    position: relative;
+    flex-shrink: 0;
+    width: 44px;
+    height: 24px;
+    border: none;
+    border-radius: 24px;
+    background: var(--flick-track);
+    cursor: pointer;
+    transition: background 0.2s ease;
+    padding: 0;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.flick-toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--pkmn-white);
+    box-shadow: 0 1px 3px var(--pkmn-shadow-soft);
+    transition: transform 0.2s ease;
+}
+
+.flick-toggle.is-on {
+    background: var(--pkmn-primary);
+}
+
+.flick-toggle.is-on::after {
+    transform: translateX(20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .flick-toggle, .flick-toggle::after { transition: none; }
+}
+
+/* ── Token overrides ── */
+
+html.pokemon-theme,
+body.pokemon-theme,
+.flickemon-card.pokemon-theme {
+    /* Ionic host variable overrides so the whole webpage carries the Pokémon theme */
+    --ion-background-color:        var(--pkmn-bg);
+    --ion-background-color-rgb:    var(--pkmn-bg-rgb);
+    --ion-text-color:              var(--pkmn-text);
+    --ion-text-color-rgb:          var(--pkmn-text-rgb);
+    --ion-card-background:         var(--pkmn-card-bg);
+    --ion-item-background:         var(--pkmn-card-bg);
+    --ion-border-color:            var(--pkmn-slate-border);
+    --ion-toolbar-background:      var(--pkmn-primary);
+    --ion-toolbar-color:           var(--pkmn-white);
+    --ion-color-primary:           var(--pkmn-primary);
+    --ion-color-primary-rgb:       var(--pkmn-primary-rgb);
+    --ion-color-primary-contrast:  var(--pkmn-white);
+    --ion-color-primary-tint:      var(--pkmn-primary-tint);
+    --ion-color-step-50:           var(--pkmn-fill-subtle);
+    --ion-color-step-100:          var(--pkmn-fill);
+    --ion-color-step-150:          var(--pkmn-fill-mid);
+    --ion-color-step-200:          var(--pkmn-fill-item);
+    --ion-color-step-250:          var(--pkmn-fill-strong);
+    --ion-color-step-300:          var(--pkmn-track);
+    --ion-color-step-850:          var(--pkmn-text-soft);
+    --ion-color-step-900:          var(--pkmn-text-dim);
+    --ion-color-step-950:          var(--pkmn-text);
+
+    /* Surfaces */
+    --flick-bg:            var(--pkmn-bg);
+    --flick-card-bg:       var(--pkmn-card-bg);
+    --flick-text:          var(--pkmn-text);
+    --flick-text-muted:    var(--pkmn-text-muted);
+    --flick-border:        var(--pkmn-border);
+
+    /* Brand — Pokéball red */
+    --flick-primary:       var(--pkmn-primary);
+    --flick-primary-hover: var(--pkmn-primary-tint);
+    --flick-primary-rgb:   var(--pkmn-primary-rgb);
+    --flick-on-primary:    var(--pkmn-white);
+
+    /* Semantic — slightly adjusted for dark bg readability */
+    --flick-danger:        var(--pkmn-danger);
+    --flick-success:       var(--pkmn-success);
+    --flick-warning:       var(--pkmn-warning);
+
+    /* Fills */
+    --flick-fill-subtle:   var(--pkmn-fill-subtle);
+    --flick-fill:          var(--pkmn-fill);
+    --flick-fill-strong:   var(--pkmn-fill-strong);
+    --flick-track:         var(--pkmn-track);
+
+    /* Shadows — deeper for the dark card */
+    --flick-shadow-soft:   var(--pkmn-shadow-soft);
+    --flick-shadow:        var(--pkmn-shadow);
+    --flick-shadow-strong: var(--pkmn-shadow-strong);
+
+    /* Game semantics */
+    --flick-hp-ok:      var(--pkmn-success);
+    --flick-hp-warn:    var(--pkmn-warning);
+    --flick-hp-low:     var(--pkmn-danger);
+    --flick-gold:       var(--pkmn-border);
+    --flick-capture:    var(--pkmn-primary);
+    --flick-shiny:      var(--pkmn-warning);
+    --flick-legendary:  var(--pkmn-purple);
+}
+
+.flickemon-card.pokemon-theme {
+    /* Card surface */
+    background: linear-gradient(135deg, var(--pkmn-card-bg) 0%, var(--pkmn-card-mid) 60%, var(--pkmn-bg) 100%);
+    border: 1.5px solid var(--pkmn-border);
+    box-shadow:
+        0 4px 20px var(--pkmn-shadow-mid),
+        0 0 0 1px var(--pkmn-gold-glow),
+        inset 0 1px 0 var(--pkmn-fill-subtle);
+}
+
+/* ── Whole-Webpage Pokémon Theme ── */
+
+html.pokemon-theme,
+body.pokemon-theme {
+    background-color: var(--pkmn-bg) !important;
+    color: var(--pkmn-text) !important;
+}
+
+body.pokemon-theme ion-app,
+body.pokemon-theme ion-content,
+body.pokemon-theme .scroll-area,
+body.pokemon-theme main {
+    background: var(--pkmn-bg) !important;
+    --background: var(--pkmn-bg) !important;
+    color: var(--pkmn-text) !important;
+}
+
+/* Header & Navigation Bar: Iconic Pokéball Red bar */
+body.pokemon-theme ion-header ion-toolbar,
+body.pokemon-theme ion-toolbar {
+    --background: linear-gradient(90deg, var(--pkmn-primary) 0%, var(--pkmn-primary-tint) 100%) !important;
+    background: linear-gradient(90deg, var(--pkmn-primary) 0%, var(--pkmn-primary-tint) 100%) !important;
+    --color: var(--pkmn-white) !important;
+    color: var(--pkmn-white) !important;
+    border-bottom: 3px solid var(--pkmn-dark) !important;
+    box-shadow: 0 4px 16px var(--pkmn-shadow-heavy) !important;
+}
+
+body.pokemon-theme ion-header ion-title,
+body.pokemon-theme ion-toolbar ion-title {
+    color: var(--pkmn-white) !important;
+    font-weight: 800 !important;
+    text-shadow: 0 1px 3px var(--pkmn-shadow-heavy);
+}
+
+body.pokemon-theme ion-header ion-title small,
+body.pokemon-theme ion-toolbar ion-title small {
+    color: var(--pkmn-gold-light) !important;
+    opacity: 0.95;
+}
+
+body.pokemon-theme ion-toolbar ion-button,
+body.pokemon-theme ion-toolbar ion-back-button,
+body.pokemon-theme ion-toolbar ion-menu-button {
+    --color: var(--pkmn-white) !important;
+    color: var(--pkmn-white) !important;
+}
+
+/* Cards across the webpage */
+body.pokemon-theme ion-card {
+    --background: linear-gradient(135deg, var(--pkmn-card-bg) 0%, var(--pkmn-card-mid) 100%) !important;
+    background: linear-gradient(135deg, var(--pkmn-card-bg) 0%, var(--pkmn-card-mid) 100%) !important;
+    color: var(--pkmn-text) !important;
+    border: 1px solid var(--pkmn-slate-border) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 4px 16px var(--pkmn-shadow-mid) !important;
+}
+
+body.pokemon-theme ion-card-title {
+    color: var(--pkmn-white) !important;
+    font-weight: 700 !important;
+}
+
+body.pokemon-theme ion-card-subtitle {
+    color: var(--pkmn-gold-light) !important;
+    font-weight: 600 !important;
+}
+
+body.pokemon-theme ion-card-content {
+    color: var(--pkmn-text) !important;
+}
+
+/* Lists & Lecture Rows */
+body.pokemon-theme ion-list {
+    background: transparent !important;
+    --background: transparent !important;
+}
+
+body.pokemon-theme ion-list-header {
+    color: var(--pkmn-gold-light) !important;
+    font-weight: 700 !important;
+}
+
+body.pokemon-theme ion-item {
+    --background: var(--pkmn-card-bg) !important;
+    background: var(--pkmn-card-bg) !important;
+    --color: var(--pkmn-text) !important;
+    color: var(--pkmn-text) !important;
+    --border-color: var(--pkmn-slate-border) !important;
+    border-color: var(--pkmn-slate-border) !important;
+}
+
+body.pokemon-theme ion-item:hover {
+    --background: var(--pkmn-card-mid) !important;
+    background: var(--pkmn-card-mid) !important;
+}
+
+body.pokemon-theme ion-item.selected,
+body.pokemon-theme ion-item.item-lines-default.selected {
+    --background: var(--pkmn-card-mid) !important;
+    background: var(--pkmn-card-mid) !important;
+    border-left: 4px solid var(--pkmn-primary) !important;
+}
+
+body.pokemon-theme ion-item ion-label {
+    color: var(--pkmn-text) !important;
+}
+
+body.pokemon-theme ion-item small,
+body.pokemon-theme ion-item .time-info,
+body.pokemon-theme ion-item .date {
+    color: var(--pkmn-text-muted) !important;
+}
+
+body.pokemon-theme .date-divider {
+    color: var(--pkmn-border) !important;
+    background: var(--pkmn-fill-item) !important;
+    border-left: 3px solid var(--pkmn-border) !important;
+    font-weight: 700;
+}
+
+/* Lecture Progress Bars */
+body.pokemon-theme ion-progress-bar {
+    --background: var(--pkmn-fill-item) !important;
+    --progress-background: linear-gradient(90deg, var(--pkmn-blue), var(--pkmn-blue-light)) !important;
+    border-radius: 4px !important;
+}
+
+body.pokemon-theme ion-progress-bar[value="1"],
+body.pokemon-theme ion-item.completed ion-progress-bar {
+    --progress-background: linear-gradient(90deg, var(--pkmn-success), var(--pkmn-gold-light)) !important;
+}
+
+/* Buttons & Badges */
+body.pokemon-theme ion-button:not(.icon-btn):not(.flick-toggle) {
+    --background: var(--pkmn-primary) !important;
+    --color: var(--pkmn-white) !important;
+    --border-radius: 8px !important;
+}
+
+body.pokemon-theme ion-badge {
+    background: var(--pkmn-primary) !important;
+    color: var(--pkmn-white) !important;
+    border-radius: 6px !important;
+}
+
+/* Links & Searchbars */
+body.pokemon-theme a {
+    color: var(--pkmn-blue-light);
+}
+
+body.pokemon-theme a:hover {
+    color: var(--pkmn-gold-light);
+}
+
+body.pokemon-theme ion-searchbar {
+    --background: var(--pkmn-card-bg) !important;
+    --color: var(--pkmn-text) !important;
+    --placeholder-color: var(--pkmn-text-muted) !important;
+    --icon-color: var(--pkmn-text-muted) !important;
+    --clear-button-color: var(--pkmn-text-muted) !important;
+}
+
+/* Video & Pomodoro timer */
+body.pokemon-theme video {
+    border-radius: 10px;
+    box-shadow: 0 6px 24px var(--pkmn-shadow-strong);
+}
+
+body.pokemon-theme app-pomodoro-timer,
+body.pokemon-theme .pomodoro-card {
+    background: var(--pkmn-card-bg) !important;
+    border: 1.5px solid var(--pkmn-border) !important;
+    border-radius: 14px !important;
+    color: var(--pkmn-text) !important;
+    box-shadow: 0 4px 16px var(--pkmn-shadow-mid) !important;
+}
+
+/* Scrollbars */
+body.pokemon-theme ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+body.pokemon-theme ::-webkit-scrollbar-track {
+    background: var(--pkmn-bg);
+}
+body.pokemon-theme ::-webkit-scrollbar-thumb {
+    background: var(--pkmn-slate-border);
+    border-radius: 4px;
+}
+body.pokemon-theme ::-webkit-scrollbar-thumb:hover {
+    background: var(--pkmn-border);
+}
+
+/* ── Header: Pokéball red bar with stripe ── */
+
+.flickemon-card.pokemon-theme .flickemon-header {
+    position: relative;
+    z-index: 100;
+    background: linear-gradient(90deg, var(--pkmn-primary) 0%, var(--pkmn-primary-tint) 100%);
+    color: var(--pkmn-white);
+    margin: -1rem -1rem 0.75rem -1rem;
+    padding: 0.7rem 1rem;
+    border-radius: 12px 12px 0 0;
+    border-bottom: none;
+    overflow: visible;
+}
+
+.flickemon-card.pokemon-theme .header-actions {
+    position: relative;
+    z-index: 101;
+}
+
+/* The pokéball stripe — a dark band with the centre circle */
+.flickemon-card.pokemon-theme .flickemon-header::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    bottom: 0;
+    height: 4px;
+    background: var(--pkmn-dark);
+}
+
+.flickemon-card.pokemon-theme .flickemon-header::after {
+    content: '';
+    position: absolute;
+    right: 16px;
+    bottom: -6px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--pkmn-white);
+    border: 3px solid var(--pkmn-dark);
+    z-index: 1;
+}
+
+.flickemon-card.pokemon-theme .header-title {
+    color: var(--pkmn-white);
+    text-shadow: 0 1px 3px var(--pkmn-shadow-mid);
+}
+
+.flickemon-card.pokemon-theme .header-icon-svg {
+    color: var(--pkmn-white);
+    filter: drop-shadow(0 1px 2px var(--pkmn-shadow-drop));
+}
+
+.flickemon-card.pokemon-theme .icon-btn {
+    color: var(--pkmn-text-dim);
+}
+.flickemon-card.pokemon-theme .icon-btn:hover {
+    background: var(--pkmn-fill-hover);
+    color: var(--pkmn-white);
+}
+
+/* ── Mode switch ── */
+
+.flickemon-card.pokemon-theme .mode-switch {
+    border-color: var(--pkmn-border-light);
+    background: var(--pkmn-shadow-soft);
+}
+
+.flickemon-card.pokemon-theme .mode-seg {
+    color: var(--pkmn-text-soft);
+}
+.flickemon-card.pokemon-theme .mode-seg[aria-pressed="false"]:hover {
+    color: var(--pkmn-white);
+    background: var(--pkmn-fill-item);
+}
+.flickemon-card.pokemon-theme .mode-seg[data-mode="capture"][aria-pressed="true"] {
+    background: var(--pkmn-border);
+    color: var(--pkmn-bg);
+}
+.flickemon-card.pokemon-theme .mode-seg[data-mode="exp"][aria-pressed="true"] {
+    background: var(--pkmn-blue);
+    color: var(--pkmn-white);
+}
+
+/* ── Header buttons (PVP, Trade, Friends, Shop) ── */
+
+.flickemon-card.pokemon-theme .pvp-header-btn {
+    border-color: var(--pkmn-border-light);
+    background: var(--pkmn-fill-mid);
+    color: var(--pkmn-white);
+}
+.flickemon-card.pokemon-theme .pvp-header-btn:hover {
+    background: var(--pkmn-hover-strong);
+    color: var(--pkmn-white);
+}
+.flickemon-card.pokemon-theme .trade-header-btn,
+.flickemon-card.pokemon-theme .friends-header-btn {
+    border-color: var(--pkmn-border-light);
+    background: var(--pkmn-fill-mid);
+    color: var(--pkmn-white);
+}
+.flickemon-card.pokemon-theme .trade-header-btn:hover,
+.flickemon-card.pokemon-theme .friends-header-btn:hover {
+    background: var(--pkmn-hover-strong);
+    color: var(--pkmn-white);
+}
+
+.flickemon-card.pokemon-theme .shop-header-btn {
+    border-color: var(--pkmn-border-light);
+    background: var(--pkmn-fill-mid);
+    color: var(--pkmn-border);
+}
+.flickemon-card.pokemon-theme .shop-header-btn:hover {
+    background: var(--pkmn-hover-strong);
+}
+
+/* ── Battle box ── */
+
+.flickemon-card.pokemon-theme .battle-col-box {
+    border-color: var(--pkmn-border);
+    background: var(--pkmn-gold-bg);
+}
+
+/* ── VS badge ── */
+
+.flickemon-card.pokemon-theme .vs-badge {
+    color: var(--pkmn-primary);
+    background: var(--pkmn-red-bg);
+    border-color: var(--pkmn-primary);
+}
+
+/* ── Name & level text ── */
+
+.flickemon-card.pokemon-theme .pk-name {
+    color: var(--pkmn-text);
+}
+.flickemon-card.pokemon-theme .pk-lvl {
+    color: var(--pkmn-text-muted);
+}
+
+/* ── Bars ── */
+
+.flickemon-card.pokemon-theme .exp-bar-track,
+.flickemon-card.pokemon-theme .hp-bar-track {
+    background: var(--pkmn-fill-item);
+}
+
+.flickemon-card.pokemon-theme .exp-bar-fill {
+    background: linear-gradient(90deg, var(--pkmn-blue), var(--pkmn-blue-light));
+}
+
+.flickemon-card.pokemon-theme .hp-bar-fill {
+    background: linear-gradient(90deg, var(--flick-hp-ok), var(--flick-hp-warn));
+}
+
+.flickemon-card.pokemon-theme .exp-text {
+    color: var(--pkmn-text-muted);
+}
+
+/* ── Status flags ── */
+
+.flickemon-card.pokemon-theme .legendary-flag {
+    color: var(--pkmn-purple-light);
+}
+.flickemon-card.pokemon-theme .shiny-flag {
+    color: var(--pkmn-gold-light);
+}
+.flickemon-card.pokemon-theme .guaranteed-flag {
+    color: var(--pkmn-success);
+}
+
+/* ── Status line ── */
+
+.flickemon-card.pokemon-theme .status-line {
+    color: var(--pkmn-text-muted);
+}
+.flickemon-card.pokemon-theme .status-line.captured {
+    color: var(--pkmn-success);
+}
+.flickemon-card.pokemon-theme .status-line.defeated {
+    color: var(--pkmn-warning);
+}
+.flickemon-card.pokemon-theme .status-line.escaped {
+    color: var(--pkmn-danger);
+}
+
+/* ── Popover ── */
+
+.flickemon-card.pokemon-theme .options-popover-menu {
+    z-index: 100000;
+    background: var(--pkmn-slate);
+    border-color: var(--pkmn-slate-border);
+    box-shadow: 0 10px 30px var(--pkmn-shadow-heavy);
+}
+.flickemon-card.pokemon-theme .popover-item {
+    color: var(--pkmn-text);
+}
+.flickemon-card.pokemon-theme .popover-item:hover {
+    background: var(--pkmn-fill);
+}
+.flickemon-card.pokemon-theme .popover-icon {
+    color: var(--pkmn-primary);
+}
+
+/* ── Reward banner ── */
+
+.flickemon-card.pokemon-theme .reward-banner {
+    background: var(--pkmn-fill-subtle);
+    border-color: var(--pkmn-fill-item);
+}
+
+/* ── Catch button ── */
+
+.flickemon-card.pokemon-theme .catch-now-btn {
+    background: linear-gradient(135deg, var(--pkmn-border), var(--pkmn-border-dark));
+    color: var(--pkmn-bg);
+    border-color: var(--pkmn-border);
+    font-weight: 800;
+}
+.flickemon-card.pokemon-theme .catch-now-btn:hover {
+    background: linear-gradient(135deg, var(--pkmn-warning), var(--pkmn-border));
+}
+
+/* ── Sprite glow effects ── */
+
+.flickemon-card.pokemon-theme .partner-mini-sprite {
+    filter: drop-shadow(0 0 4px var(--pkmn-blue-glow));
+}
+.flickemon-card.pokemon-theme .wild-mini-sprite.fighting {
+    filter: drop-shadow(0 0 4px var(--pkmn-red-glow));
+}
+.flickemon-card.pokemon-theme .wild-mini-sprite.is-shiny {
+    filter: drop-shadow(0 0 6px var(--pkmn-shiny-glow));
+}
+
+/* ── Entrance transition ── */
+
+.flickemon-card.pokemon-theme-entering {
+    animation: pokemon-theme-in 400ms ease-out both;
+}
+
+@keyframes pokemon-theme-in {
+    from {
+        box-shadow: 0 0 0 4px var(--pkmn-red-ring), 0 4px 20px var(--pkmn-shadow-mid);
+    }
+    to {
+        box-shadow: 0 4px 20px var(--pkmn-shadow-mid), 0 0 0 1px var(--pkmn-gold-glow), inset 0 1px 0 var(--pkmn-fill-subtle);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .flickemon-card.pokemon-theme-entering { animation: none; }
+}
+

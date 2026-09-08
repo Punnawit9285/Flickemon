@@ -72,6 +72,17 @@ class FlickemonUI {
         });
     }
 
+    applyPokemonTheme(on, targetCard = this.widgetCard) {
+        const isTheme = Boolean(on);
+        if (typeof document !== 'undefined') {
+            if (document.documentElement) document.documentElement.classList.toggle('pokemon-theme', isTheme);
+            if (document.body) document.body.classList.toggle('pokemon-theme', isTheme);
+        }
+        if (targetCard) {
+            targetCard.classList.toggle('pokemon-theme', isTheme);
+        }
+    }
+
     renderWidget() {
         // Navigating course -> list -> course removes and re-injects the widget,
         // and every call registers engine listeners. Without dropping the old
@@ -81,6 +92,16 @@ class FlickemonUI {
 
         const card = document.createElement('div');
         card.className = 'flickemon-card flickemon-widget-card';
+        this.widgetCard = card;
+
+        // Apply the Pokémon theme skin if the student opted in on this device.
+        // Async but fire-and-forget: the class lands within a frame or two of
+        // render, and the transition means any flash is invisible.
+        if (this.engine && typeof this.engine.getPokemonTheme === 'function') {
+            this.engine.getPokemonTheme().then(on => {
+                this.applyPokemonTheme(on, card);
+            }).catch(() => {});
+        }
 
         this.engineSubscriptions = [
             this.engine.onStateChange((state) => {
@@ -1179,7 +1200,20 @@ class FlickemonUI {
                 <button class="flickemon-primary-btn sync-switch-btn" style="display:none; background: transparent; color: var(--flick-primary); border: 1px solid var(--flick-primary); padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">Switch account</button>
                 <button class="flickemon-primary-btn sync-signout-btn" style="display:none; background: transparent; color: var(--flick-text-muted); border: 1px solid var(--flick-border); padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">Sign out</button>
             </div>
-            <br/><br/>
+
+            <div class="flickemon-list-card" style="margin-top: 16px;">
+                <div class="flickemon-list-item">
+                    <div class="flick-toggle-row">
+                        <div class="flick-toggle-copy">
+                            <span class="flick-toggle-label">Pokémon Theme</span>
+                            <span class="flick-toggle-sub">Classic Pokémon game-inspired dark look.</span>
+                        </div>
+                        <button class="flick-toggle pokemon-theme-toggle" role="switch" aria-checked="false" aria-label="Pokémon Theme"></button>
+                    </div>
+                </div>
+            </div>
+
+            <br/>
             <div class="flickemon-list-card admin-section">
                 <div class="flickemon-list-item">
                     <span class="flickemon-list-item-title">Admin Monitoring Portal</span>
@@ -1400,6 +1434,33 @@ class FlickemonUI {
         });
 
         renderSyncStatus();
+
+        // ── Pokémon theme toggle ──
+        const themeToggle = modal.body.querySelector('.pokemon-theme-toggle');
+        if (themeToggle) {
+            // Reflect the stored preference.
+            this.engine.getPokemonTheme().then(on => {
+                themeToggle.classList.toggle('is-on', on);
+                themeToggle.setAttribute('aria-checked', String(on));
+            });
+
+            themeToggle.addEventListener('click', async () => {
+                const nowOn = !themeToggle.classList.contains('is-on');
+                themeToggle.classList.toggle('is-on', nowOn);
+                themeToggle.setAttribute('aria-checked', String(nowOn));
+                await this.engine.setPokemonTheme(nowOn);
+
+                // Apply immediately to the whole webpage and the live widget card.
+                this.applyPokemonTheme(nowOn);
+                if (nowOn && this.widgetCard) {
+                    // Brief entrance flash so the change reads as deliberate.
+                    this.widgetCard.classList.add('pokemon-theme-entering');
+                    setTimeout(() => {
+                        if (this.widgetCard) this.widgetCard.classList.remove('pokemon-theme-entering');
+                    }, 500);
+                }
+            });
+        }
 
         const unlockBtn = modal.body.querySelector('.unlock-admin-btn');
         const unlockNote = modal.body.querySelector('.admin-unlock-note');
@@ -1748,8 +1809,23 @@ class FlickemonUI {
         if (!result) return;
         const capped = result.reason === 'daily-cap';
         if (!capped && !(result.credited > 0)) return;
+
+        // Coming back to the game is a different moment from a phone playing in
+        // the next room, and deserves different words. Twenty minutes is the
+        // line: below it this is a trickle nobody left the room for.
+        const away = result.awayMinutes || 0;
+        const returning = away >= 20 || Boolean(result.isLogin);
+
+        // For returns or logins with credited progress, celebrate with the Welcome Back modal
+        if (returning && !capped && typeof document !== 'undefined' && document.body) {
+            try { this.openFlickReturnModal(result); } catch (_) {}
+        }
+
         const wrapper = document.querySelector('.flickemon-widgets-wrapper');
-        if (!wrapper) return;
+        if (!wrapper) {
+            this.pendingFlickCredit = result;
+            return;
+        }
 
         // Credit that stops without a word reads as a bug. Say it once, on the
         // day it happens, rather than on every reading for the rest of the day.
@@ -1764,11 +1840,6 @@ class FlickemonUI {
         const existing = wrapper.querySelector('.flick-credit');
         if (existing) existing.remove();
 
-        // Coming back to the game is a different moment from a phone playing in
-        // the next room, and deserves different words. Twenty minutes is the
-        // line: below it this is a trickle nobody left the room for.
-        const away = result.awayMinutes || 0;
-        const returning = away >= 20;
         const dur = m => m >= 60
             ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m`
             : `${Math.max(1, Math.round(m))}m`;
@@ -1836,6 +1907,94 @@ class FlickemonUI {
         const life = returning ? 16000 : 7000;
         setTimeout(() => el.classList.add('is-leaving'), life);
         setTimeout(() => el.remove(), life + 600);
+    }
+
+    /**
+     * Welcome Back modal shown when a student logs in or returns after studying
+     * on another device that did not have Flickémon installed.
+     */
+    openFlickReturnModal(result) {
+        if (!result) return;
+        if (typeof document === 'undefined' || !document.body || typeof this.createModalOverlay !== 'function') return;
+        if (document.querySelector('.flick-return-modal')) return;
+
+        const p = result.partner || {};
+        const pName = p.name || 'Your partner';
+        const rawMin = Math.round(result.rawMinutes || 0);
+        const credMin = Math.round(result.credited || 0);
+        const expGained = Math.round(result.exp || 0);
+        const dur = m => m >= 60
+            ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m`
+            : `${Math.max(1, Math.round(m))}m`;
+
+        const esc = t => String(t == null ? '' : t)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+        const spriteUrl = p.speciesId && this.config && typeof this.config.getSpriteUrl === 'function'
+            ? this.config.getSpriteUrl(p.speciesId, p.isShiny)
+            : '';
+
+        const modal = this.createModalOverlay('Welcome Back, Trainer!');
+        modal.overlay.classList.add('flick-return-overlay');
+
+        let headline = '';
+        if (p.evolvedInto) {
+            headline = `<div class="flick-return-evo-badge">🌟 Evolved into <b>${esc(p.evolvedInto)}</b>!</div>`;
+        } else if (p.levelsGained > 0) {
+            headline = `<div class="flick-return-lvl-badge">🎉 Level Up! <b>Lv.${p.level - p.levelsGained}</b> ➔ <b>Lv.${p.level}</b> (+${p.levelsGained})</div>`;
+        }
+
+        modal.body.innerHTML = `
+            <div class="flick-return-modal">
+                <div class="flick-return-badge">
+                    <span class="flick-return-device-icon">📱</span>
+                    <span>Studied on Another Device</span>
+                </div>
+
+                <div class="flick-return-hero">
+                    ${spriteUrl ? `<img src="${spriteUrl}" alt="${esc(pName)}" class="flick-return-sprite ${p.isShiny ? 'is-shiny' : ''}"/>` : '<div class="flick-return-pokeball-icon">⚡</div>'}
+                    <div class="flick-return-partner-info">
+                        <h3 class="flick-return-partner-name">${esc(pName)}</h3>
+                        <span class="flick-return-partner-lvl">Lv.${p.level || 1}</span>
+                    </div>
+                </div>
+
+                ${headline}
+
+                <div class="flick-return-stats">
+                    <div class="flick-return-stat-row">
+                        <span class="flick-return-stat-label">⏱️ Studied on Flick</span>
+                        <span class="flick-return-stat-val">${dur(rawMin)}</span>
+                    </div>
+                    <div class="flick-return-stat-row">
+                        <span class="flick-return-stat-label">📈 Credited Study Time</span>
+                        <span class="flick-return-stat-val">+${credMin} min <small>(${Math.round(this.config.FLICK_CREDIT_RATE * 100)}% rate)</small></span>
+                    </div>
+                    <div class="flick-return-stat-row is-exp">
+                        <span class="flick-return-stat-label">⭐ EXP Earned</span>
+                        <span class="flick-return-stat-val exp-val">+${expGained} EXP</span>
+                    </div>
+                    ${result.leftToday !== undefined && result.leftToday < 120 ? `
+                        <div class="flick-return-stat-row is-cap">
+                            <span class="flick-return-stat-label">📅 Daily Flick Allowance</span>
+                            <span class="flick-return-stat-val">${Math.round(result.leftToday)} min left today</span>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <p class="flick-return-footnote">
+                    Progress made while studying on devices without Flickémon has been applied to your partner and account!
+                </p>
+
+                <button class="flick-return-btn">Awesome!</button>
+            </div>
+        `;
+
+        const btn = modal.body.querySelector('.flick-return-btn');
+        btn?.addEventListener('click', () => {
+            this.closeModal(modal.overlay);
+        });
     }
 
     // ────────────────────────── How to Play ──────────────────────────

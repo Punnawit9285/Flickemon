@@ -56,6 +56,8 @@ class FlickemonEngine {
         // Deliberately outside the game state: it identifies the device, not
         // the account, so it must not sync and must survive a progress reset.
         this.DEVICE_KEY = 'flickemon_device_id_v1';
+        // Per-device UI preference — not synced, not part of the game state.
+        this.THEME_KEY = 'flickemon_pokemon_theme_v1';
         this.deviceId = null;
         this.config = window.FlickemonConfig;
 
@@ -745,6 +747,9 @@ class FlickemonEngine {
 
         await this.pullFromCloud();
         await this.flushCloud();
+        if (typeof window !== 'undefined' && typeof window.flickemonHarvestProgress === 'function') {
+            window.flickemonHarvestProgress({ force: true, isLogin: true });
+        }
         return res;
     }
 
@@ -3381,6 +3386,25 @@ class FlickemonEngine {
     }
 
     /**
+     * Whether the Pokémon theme skin is enabled on this device.
+     *
+     * A UI preference, not game state: it lives in chrome.storage.local next
+     * to the device ID and never syncs. A student can wear the theme on their
+     * laptop and not on their phone without one overwriting the other.
+     */
+    async getPokemonTheme() {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return false;
+        const data = await chrome.storage.local.get([this.THEME_KEY]);
+        return data && data[this.THEME_KEY] === true;
+    }
+
+    async setPokemonTheme(on) {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+        await chrome.storage.local.set({ [this.THEME_KEY]: on === true });
+        this.emitState();
+    }
+
+    /**
      * Credits study time to a named source.
      *
      * Public because the source does not have to be this extension. Anything
@@ -3614,6 +3638,8 @@ class FlickemonEngine {
             level: after ? after.level : levelBefore,
             levelsGained: Math.max(0, (after ? after.level : levelBefore) - levelBefore),
             evolvedInto: evolved ? evolved.name : null,
+            speciesId: after ? after.speciesId : (species ? species.id : speciesId),
+            isShiny: Boolean(after && after.isShiny),
         } : null;
 
         // NOT an immediate flush. `immediate` skips the three-minute push

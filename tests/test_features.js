@@ -1165,6 +1165,85 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
     e.sendToWorker = realSend;
 }
 
+  console.log('\n=== Pokémon theme preference & whole-webpage toggling ===');
+  {
+    const storageStore = {};
+    const oldStorage = global.chrome.storage.local;
+    global.chrome.storage.local = {
+      get: async (keys) => {
+        const res = {};
+        for (const k of (Array.isArray(keys) ? keys : [keys])) {
+          if (k in storageStore) res[k] = storageStore[k];
+        }
+        return res;
+      },
+      set: async (obj) => {
+        Object.assign(storageStore, obj);
+      }
+    };
+
+    // 1. Off by default
+    const initialTheme = await e.getPokemonTheme();
+    check('Pokémon theme is off by default', initialTheme === false);
+
+    // 2. Set theme on
+    await e.setPokemonTheme(true);
+    const updatedTheme = await e.getPokemonTheme();
+    check('setting theme to true turns it on', updatedTheme === true);
+
+    // 3. UI whole-webpage application
+    const classListMock = () => {
+      const s = new Set();
+      return {
+        add: (c) => s.add(c),
+        remove: (c) => s.delete(c),
+        toggle: (c, val) => {
+          if (val === undefined) val = !s.has(c);
+          val ? s.add(c) : s.delete(c);
+          return val;
+        },
+        contains: (c) => s.has(c)
+      };
+    };
+
+    const mockDocElement = { classList: classListMock() };
+    const mockBody = { classList: classListMock() };
+    const mockCard = { classList: classListMock() };
+
+    const oldDoc = global.document;
+    global.document = {
+      documentElement: mockDocElement,
+      body: mockBody,
+      addEventListener: () => {}
+    };
+
+    // Load FlickemonUI if not loaded
+    if (!global.window.FlickemonUI) {
+      require(ROOT + 'content/flickemon-ui.js');
+    }
+    const ui = new global.window.FlickemonUI(e);
+    ui.widgetCard = mockCard;
+
+    ui.applyPokemonTheme(true);
+    check('applyPokemonTheme(true) adds pokemon-theme to documentElement',
+      mockDocElement.classList.contains('pokemon-theme'));
+    check('applyPokemonTheme(true) adds pokemon-theme to document.body',
+      mockBody.classList.contains('pokemon-theme'));
+    check('applyPokemonTheme(true) adds pokemon-theme to widgetCard',
+      mockCard.classList.contains('pokemon-theme'));
+
+    ui.applyPokemonTheme(false);
+    check('applyPokemonTheme(false) removes pokemon-theme from documentElement',
+      !mockDocElement.classList.contains('pokemon-theme'));
+    check('applyPokemonTheme(false) removes pokemon-theme from document.body',
+      !mockBody.classList.contains('pokemon-theme'));
+    check('applyPokemonTheme(false) removes pokemon-theme from widgetCard',
+      !mockCard.classList.contains('pokemon-theme'));
+
+    global.chrome.storage.local = oldStorage;
+    global.document = oldDoc;
+  }
+
 console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail?1:0);
 })();

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Flickémon Marquee Promo</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; width: 1400px; height: 560px;
+    background: #0a0d17; color: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 36px 48px; border: 8px solid #ee1515; overflow: hidden;
+    position: relative;
+  }
+  .top-strip { display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 20px; }
+  .pokeball-8bit { width: 72px; height: 72px; image-rendering: pixelated; }
+  .brand-text { font-size: 3.2rem; font-weight: 900; letter-spacing: -0.02em; text-shadow: 4px 4px 0 #ee1515; }
+  .pill-version { background: #ee1515; color: #fff; font-size: 1.1rem; font-weight: 800; padding: 8px 18px; border-radius: 8px; }
+
+  .center-stage {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #141a29; border: 3px solid #334155; border-radius: 16px;
+    padding: 24px 36px; margin: 20px 0;
+  }
+  .stage-left { flex: 1; }
+  .h1-tagline { font-size: 2.1rem; font-weight: 900; color: #38bdf8; margin: 0 0 10px; }
+  .p-desc { font-size: 1.15rem; color: #cbd5e1; line-height: 1.6; margin: 0; max-width: 720px; }
+
+  .sprites-gallery { display: flex; align-items: center; gap: 24px; }
+  .pk-sprite { width: 96px; height: 96px; image-rendering: pixelated; filter: drop-shadow(0 6px 0 rgba(0,0,0,0.6)); }
+
+  .feature-pills { display: flex; gap: 16px; }
+  .fpill {
+    background: #1a2235; border: 2px solid #334155; border-radius: 8px;
+    padding: 10px 18px; font-size: 0.95rem; font-weight: 800; color: #f8fafc;
+  }
+  .fpill.active { border-color: #f59e0b; color: #f59e0b; }
+</style>
+</head>
+<body>
+  <div class="top-strip">
+    <div class="brand">
+      <img src="../../store_assets/store_icon_128x128.png" class="pokeball-8bit" alt="8-bit Pokeball"/>
+      <span class="brand-text">FLICKÉMON</span>
+    </div>
+    <span class="pill-version">CHROME WEB STORE</span>
+  </div>
+
+  <div class="center-stage">
+    <div class="stage-left">
+      <div class="h1-tagline">STUDY LECTURES. TRAIN POKÉMON. LEVEL UP.</div>
+      <p class="p-desc">
+        The non-profit study companion for Flick. Converts active lecture watch time
+        into battle EXP, wild catches, and team evolutions without leaving your course page.
+      </p>
+    </div>
+    <div class="sprites-gallery">
+      <img src="../../sprites/6.png" class="pk-sprite" alt="Charizard"/>
+      <img src="../../sprites/25.png" class="pk-sprite" alt="Pikachu"/>
+      <img src="../../sprites/130.png" class="pk-sprite" alt="Gyarados"/>
+      <img src="../../sprites/94.png" class="pk-sprite" alt="Gengar"/>
+    </div>
+  </div>
+
+  <div class="feature-pills">
+    <span class="fpill active">⚡ Real-Time Study EXP</span>
+    <span class="fpill">⚔️ 1,025 Catchable Pokémon</span>
+    <span class="fpill">📱 Multi-Device Study Sync</span>
+    <span class="fpill">🎨 Whole-Webpage Theme</span>
+    <span class="fpill">🛡️ 100% Free & Open Source</span>
+  </div>
+</body>
+</html>

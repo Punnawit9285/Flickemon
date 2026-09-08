@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Flick - Welcome Back Modal</title>
+<link rel="stylesheet" href="../../content/styles.css"/>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; width: 1280px; height: 800px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0b1120;
+    overflow: hidden;
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .bg-mockup {
+    position: absolute; inset: 0; padding: 30px 40px;
+    filter: blur(8px) brightness(0.35);
+    background: #1e293b; color: #fff;
+  }
+  .mock-player { background: #000; height: 420px; border-radius: 12px; margin-top: 20px; }
+
+  /* Actual Flickemon Modal classes from styles.css */
+  .flickemon-modal-overlay {
+    position: relative; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%;
+  }
+  .flickemon-modal-container {
+    width: 460px; max-width: 460px; height: auto; max-height: 95vh;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.1);
+  }
+  .flick-return-sprite { image-rendering: pixelated; width: 72px; height: 72px; }
+</style>
+</head>
+<body>
+  <div class="bg-mockup">
+    <h2>Flick &bull; Cardiology Course Lecture 04</h2>
+    <div class="mock-player"></div>
+  </div>
+
+  <div class="flickemon-modal-overlay flick-return-overlay">
+    <div class="flickemon-modal-container">
+      <div class="flickemon-modal-header">
+        <h3 class="flickemon-modal-title">Welcome Back, Trainer!</h3>
+      </div>
+      <div class="flickemon-modal-content" style="padding: 20px;">
+        <div class="flick-return-modal">
+          <div class="flick-return-badge">
+            <span class="flick-return-device-icon">📱</span>
+            <span>Studied on Another Device</span>
+          </div>
+
+          <div class="flick-return-hero">
+            <img src="../../sprites/6.png" alt="Charizard" class="flick-return-sprite"/>
+            <div class="flick-return-partner-info">
+              <h3 class="flick-return-partner-name">Charizard</h3>
+              <span class="flick-return-partner-lvl">Lv.26</span>
+            </div>
+          </div>
+
+          <div class="flick-return-lvl-badge">
+            🎉 Level Up! <b>Lv.24</b> ➔ <b>Lv.26</b> (+2 Levels!)
+          </div>
+
+          <div class="flick-return-stats" style="width: 100%;">
+            <div class="flick-return-stat-row">
+              <span class="flick-return-stat-label">⏱️ Studied on Flick</span>
+              <span class="flick-return-stat-val">1h 45m</span>
+            </div>
+            <div class="flick-return-stat-row">
+              <span class="flick-return-stat-label">📈 Credited Study Time</span>
+              <span class="flick-return-stat-val">+32 min <small>(30% offline rate)</small></span>
+            </div>
+            <div class="flick-return-stat-row is-exp">
+              <span class="flick-return-stat-label">⭐ EXP Earned</span>
+              <span class="flick-return-stat-val exp-val">+480 EXP</span>
+            </div>
+            <div class="flick-return-stat-row">
+              <span class="flick-return-stat-label">📅 Daily Allowance Remaining</span>
+              <span class="flick-return-stat-val">2h 15m left</span>
+            </div>
+          </div>
+
+          <button class="flick-return-btn" style="width: 100%; margin-top: 10px; cursor: pointer;">
+            Awesome! ✨
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

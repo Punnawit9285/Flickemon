@@ -584,6 +584,45 @@ console.log('\n=== the allowance is nobody else\'s business ===');
         !payload.includes('flickMin'), payload.slice(0, 160));
 }
 
+console.log('\n=== welcome back modal and pending credit queue ===');
+{
+    const { parseHTML } = require('linkedom');
+    const dom = parseHTML('<body></body>');
+    const prevDoc = global.document;
+    global.document = dom.document;
+
+    const ui = Object.create(global.window.FlickemonUI
+        ? global.window.FlickemonUI.prototype : {});
+    ui.config = cfg;
+
+    // 1. When wrapper is absent, credit is queued in pendingFlickCredit
+    const res = {
+        credited: 36, rawMinutes: 120, exp: 900, awayMinutes: 130, isLogin: true,
+        partner: { name: 'Pikachu', speciesId: 25, level: 18, levelsGained: 2, isShiny: false }
+    };
+    ui.showFlickCredit(res);
+    check('credit is queued as pending when wrapper is absent',
+        ui.pendingFlickCredit && ui.pendingFlickCredit.credited === 36);
+
+    // 2. The return modal is rendered in document.body
+    const modalEl = dom.document.querySelector('.flick-return-modal');
+    check('return modal is rendered on return/login', Boolean(modalEl));
+    check('modal shows partner name and level',
+        modalEl && /Pikachu/.test(modalEl.innerHTML) && /Lv\.18/.test(modalEl.innerHTML));
+    check('modal shows level gain badge',
+        modalEl && /Level Up!/.test(modalEl.innerHTML) && /\+2/.test(modalEl.innerHTML));
+    check('modal shows studied time and EXP',
+        modalEl && /2h 0m/.test(modalEl.innerHTML) && /\+900 EXP/.test(modalEl.innerHTML));
+
+    // 3. Closing the modal works
+    const btn = modalEl.querySelector('.flick-return-btn');
+    btn.click();
+    check('clicking action button dismisses the return modal',
+        !dom.document.querySelector('.flick-return-overlay'));
+
+    global.document = prevDoc;
+}
+
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');
 process.exit(fail ? 1 : 0);
 })();
