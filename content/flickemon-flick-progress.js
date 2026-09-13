@@ -131,6 +131,22 @@
     }
 
     /**
+     * The lecture open in the player on THIS page, or null.
+     *
+     * FlickPlayer colours that row "secondary" -- course.page.html binds the
+     * item's [color] to currentVideo.id -- and Ionic reflects the colour onto
+     * the element as an attribute and an ion-color-secondary class, so either
+     * is read. "tertiary" is a different row: the last lecture played ANYWHERE,
+     * shown only while nothing is open, and deliberately not matched -- it is as
+     * likely to be the phone's lecture as this device's.
+     */
+    function activeLecture(root) {
+        const item = (root || document).querySelector(
+            'ion-list ion-item[color="secondary"], ion-list ion-item.ion-color-secondary');
+        return item ? parseLecture(item) : null;
+    }
+
+    /**
      * Everything readable about the open course.
      *
      * Returns null off a course page rather than an empty reading: "no lectures
@@ -196,7 +212,7 @@
     }
 
     window.FlickProgress = {
-        readCourse, parseLecture, parseHeader, parseMinutes,
+        readCourse, parseLecture, activeLecture, parseHeader, parseMinutes,
         parseCourseName, lectureTitle, agreesWithHeader,
     };
 })();

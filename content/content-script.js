@@ -202,10 +202,75 @@
             if (window.flickemonEngine) window.flickemonEngine.onVideoProgress(seconds);
         }
 
+        // ── What this device's own player did to Flick's record ────────────
+        //
+        // Watching here moves Flick's record exactly as a phone does, so the
+        // harvest above sees the same progress again and cannot tell whose it
+        // was. The player therefore reports the stretch of the lecture it
+        // covered, and that stretch is never paid for. See recordPlayedHere.
+        //
+        // Measured from where the player RESUMED. video.js holds a seek made
+        // while a source is loading until canplay, which is where FlickPlayer's
+        // jump to the saved position lands -- so canplay is the first moment the
+        // position means "where this device picked the lecture up". Anything
+        // below it was studied somewhere else, and must still be paid.
+        function trackPlayedHere(video) {
+            const engine = window.flickemonEngine;
+            const FP = window.FlickProgress;
+            if (!engine || !FP || typeof engine.recordPlayedHere !== 'function') return;
+
+            let span = null;
+
+            const begin = () => {
+                const at = video.currentTime;
+                if (!Number.isFinite(at) || at < 0) return;
+                span = { from: at, to: at, sentTo: -1, lecture: null, course: '', lookedAt: 0 };
+                // Hooked late, after part of this source had already played.
+                const played = video.played;
+                if (played && played.length) {
+                    span.from = Math.min(span.from, played.start(0));
+                    span.to = Math.max(span.to, played.end(played.length - 1));
+                }
+            };
+
+            const report = (force) => {
+                if (!span) return;
+                const at = video.currentTime;
+                if (Number.isFinite(at) && at > span.to) span.to = at;
+                if (!force && span.to - span.sentTo < 1) return;
+
+                // Named once per source and then remembered: a search typed
+                // while it plays can filter the highlighted row off the page.
+                if (!span.lecture && Date.now() - span.lookedAt >= 1000) {
+                    span.lookedAt = Date.now();
+                    span.lecture = FP.activeLecture(document);
+                    span.course = FP.parseCourseName(document);
+                }
+                span.sentTo = span.to;
+                Promise.resolve(engine.recordPlayedHere({
+                    course: span.course, lecture: span.lecture, from: span.from, to: span.to,
+                })).catch(err => console.warn('[Flickémon] Could not record playback:', err));
+            };
+
+            // A new source is a new lecture, or the same one opened again.
+            video.addEventListener('loadstart', () => { span = null; });
+            video.addEventListener('emptied', () => { span = null; });
+            video.addEventListener('canplay', () => { if (!span) { begin(); report(true); } });
+            video.addEventListener('timeupdate', () => report(false));
+            // The moments FlickPlayer itself posts, so the stretch is never
+            // behind what Flick has recorded.
+            for (const evt of ['seeked', 'pause', 'ended']) {
+                video.addEventListener(evt, () => report(true));
+            }
+            if (video.readyState >= 3) { begin(); report(true); }
+        }
+
         function hookVideoPlayer() {
             const video = document.querySelector('video');
             if (!video || video.dataset.flickemonHooked) return;
             video.dataset.flickemonHooked = 'true';
+
+            trackPlayedHere(video);
 
             // timeupdate fires on a wall-clock cadence (~4Hz in Chrome) rather
             // than per frame of media, so it stays a good heartbeat at any rate.

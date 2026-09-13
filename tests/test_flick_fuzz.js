@@ -213,6 +213,7 @@ console.log('\n=== everything new survives a sync, field by field ===');
     e.gameState.flickSeen = { abc123abc123: 1234 };
     e.gameState.flickCheckedAt = Date.UTC(2026, 8, 4, 9, 0, 0);
     e.gameState.flickLocalMinutes = 17;
+    e.gameState.flickPlayedHere = { abcabcabcabc: { from: 60, to: 90, at: Date.UTC(2026, 8, 4, 9, 0, 0) } };
     e.gameState.leaderboardLabel = 'pun…';
     e.gameState.dailyProgress = {
         '2026-09-04': { devA: { exp: 400, levels: 2, caught: 1, flickMin: 88 } },
@@ -228,12 +229,14 @@ console.log('\n=== everything new survives a sync, field by field ===');
     // The local-only counter must NOT travel: it is this device's accounting
     // against its own clock.
     check('the local tally stays behind', payload.flickLocalMinutes === undefined);
+    check('and so does where this device has played', payload.flickPlayedHere === undefined);
 
     // Now the receiving side.
     const fresh = e.normalizeState(JSON.parse(JSON.stringify(e.gameState)));
     check('a normalised save keeps the marks', fresh.flickSeen.abc123abc123 === 1234);
     check('and its off-extension minutes', fresh.dailyProgress['2026-09-04'].devA.flickMin === 88);
     check('and the local tally, which is stored but not sent', fresh.flickLocalMinutes === 17);
+    check('as is the stretch played here', fresh.flickPlayedHere.abcabcabcabc.to === 90);
 
     e.gameState.flickSeen = {}; e.gameState.dailyProgress = {};
     e.gameState.flickCheckedAt = 0; e.gameState.leaderboardLabel = '';
@@ -250,6 +253,8 @@ console.log('\n=== the sanitiser repairs anything the parser could not ===');
         flickSeen: { ok: 10, neg: -1, str: 'x', inf: Infinity, nan: NaN },
         flickCheckedAt: Number.MAX_SAFE_INTEGER,
         flickLocalMinutes: Infinity,
+        flickPlayedHere: { inf: { from: 0, to: Infinity, at: 1 }, nan: { from: NaN, to: 5, at: 1 },
+                           neg: { from: -5, to: 5, at: 1 }, ok: { from: 5, to: 9, at: NaN } },
         leaderboardLabel: 'someone@docchula.com',
         dailyProgress: { '2026-09-04': { d: { exp: -5, levels: NaN, caught: 3, flickMin: -9 } } },
     });
@@ -258,11 +263,140 @@ console.log('\n=== the sanitiser repairs anything the parser could not ===');
     check('sound marks survive', nasty.flickSeen.ok === 10);
     check('a clock from the year 275760 is reset', nasty.flickCheckedAt === 0);
     check('an infinite local tally is reset', nasty.flickLocalMinutes === 0);
+    check('a stretch with no end is dropped', nasty.flickPlayedHere.inf === undefined);
+    check('so is one starting nowhere, or before the start',
+        nasty.flickPlayedHere.nan === undefined && nasty.flickPlayedHere.neg === undefined);
+    check('a sound stretch with a broken clock is kept, and its clock repaired',
+        nasty.flickPlayedHere.ok && Number.isFinite(nasty.flickPlayedHere.ok.at));
     check('a label carrying an address is discarded entirely',
         nasty.leaderboardLabel === '', nasty.leaderboardLabel);
     check('negative ledger figures become zero',
         nasty.dailyProgress['2026-09-04'].d.flickMin === 0
         && nasty.dailyProgress['2026-09-04'].d.exp === 0);
+}
+
+console.log('\n=== a model of FlickPlayer: studying only here is never paid as elsewhere ===');
+{
+    // Built from FlickPlayer's course.page.ts rather than imagined. The player
+    // posts currentTime every 20 seconds while it moves and when it pauses;
+    // Flick keeps the LAST position posted, not the furthest; a lecture opened
+    // again resumes there unless it was 99.5% done; the list renders that record
+    // with lengths rounded to a minute and a checkmark past 95%. On top of that
+    // this device plays at random speeds, pauses, seeks both ways, moves between
+    // lectures and closes the tab mid-play, while the harvest reads once a minute
+    // whenever the tab is open -- and a phone, when there is one, plays too.
+    const LEC = [50, 45, 61, 90, 30, 75].map((m, i) => ({ title: 'Lecture ' + i, dur: m * 60 - 13 * i }));
+    const render = (rec, open) => {
+        let total = 0, viewed = 0;
+        const rows = LEC.map((l, i) => {
+            const end = rec[i] || 0, ratio = end / l.dur, part = end > 3 && ratio < 0.95;
+            total += l.dur; viewed += end;
+            return `<ion-item button${open === i ? ' color="secondary" class="ion-color ion-color-secondary"' : ''}>
+                <ion-label>${l.title}<small>Dr. X <span class="time-info">- ${Math.round(l.dur / 60)} min </span>
+                ${part ? `<span class="time-info"><span>- ${Math.round((l.dur - end) / 60)} min left</span></span>` : ''}
+                </small>${part ? `<ion-progress-bar value="${ratio}"></ion-progress-bar>` : ''}</ion-label>
+                ${end > 3 && ratio >= 0.95 ? '<ion-icon class="check-icon"></ion-icon>' : ''}</ion-item>`;
+        }).join('');
+        return parseHTML(`<ion-title>Anatomy<small>${((total - viewed) / 3600).toFixed(1)} hours left
+            (${((viewed / total) * 100).toFixed(1)}%)</small></ion-title><ion-list>${rows}</ion-list>`).document;
+    };
+
+    const run = async (seed, { report = true, withPhone = false } = {}) => {
+        const r = rng(seed);
+        Object.assign(e.gameState, { flickSeen: {}, flickCheckedAt: 0, flickLocalMinutes: 0,
+            flickPlayedHere: {}, dailyProgress: {}, studyMinutes: {} });
+        const rec = {};
+        const resume = i => ((rec[i] || 0) / LEC[i].dur < 0.995 ? (rec[i] || 0) : 0);
+        const tally = { paid: 0, phoneMin: 0, reads: 0, playedMin: 0, closes: 0, seeks: 0 };
+        let t = Date.UTC(2026, 8, 1, 0, 0, 0), open = true, lastRead = -Infinity;
+        let here = null, phone = null;
+
+        for (let step = 0; step < 6 * 720; step++) {           // six hours in five-second steps
+            t += 5000;
+
+            if (withPhone) {
+                if (!phone && r() < 0.001) {
+                    const i = Math.floor(r() * LEC.length);
+                    if (!here || here.i !== i) phone = { i, pos: resume(i), lastPost: t };
+                }
+                if (phone && (r() < 0.004 || (here && here.i === phone.i))) {
+                    rec[phone.i] = phone.pos; phone = null;
+                } else if (phone) {
+                    const next = Math.min(LEC[phone.i].dur, phone.pos + 5);
+                    tally.phoneMin += (next - phone.pos) / 60; phone.pos = next;
+                    if (t - phone.lastPost >= 20000) { rec[phone.i] = phone.pos; phone.lastPost = t; }
+                }
+            }
+
+            if (!open) { if (r() < 0.005) open = true; continue; }
+
+            if (!here && r() < 0.03) {
+                const i = Math.floor(r() * LEC.length);
+                const d = render(rec, i), pos = resume(i);
+                here = { i, pos, from: pos, to: pos, lastPost: t, playing: true,
+                         speed: [1, 1.25, 1.5, 2, 3][Math.floor(r() * 5)],
+                         name: { course: FP.parseCourseName(d), lecture: FP.activeLecture(d) } };
+            }
+            if (here) {
+                const roll = r();
+                if (roll < 0.01) {                                  // pause, or play on
+                    here.playing = !here.playing;
+                    if (!here.playing) rec[here.i] = here.pos;
+                } else if (roll < 0.014) {                          // seek either way
+                    here.pos = Math.max(0, Math.min(LEC[here.i].dur, here.pos + (r() - 0.4) * 1200));
+                    if (!here.playing) rec[here.i] = here.pos;
+                    tally.seeks++;
+                } else if (roll < 0.016) {                          // on to another lecture
+                    rec[here.i] = here.pos; here = null;
+                } else if (roll < 0.0175) {                         // tab closed mid-play: nothing posts
+                    here = null; open = false; tally.closes++;
+                    continue;
+                }
+            }
+            if (here && here.playing) {
+                const dur = LEC[here.i].dur;
+                here.pos = Math.min(dur, here.pos + 5 * here.speed);
+                e.creditStudyMinutes(e.studySource(), 5 / 60);
+                tally.playedMin += 5 / 60;
+                if (t - here.lastPost >= 20000) { rec[here.i] = here.pos; here.lastPost = t; }
+                if (here.pos >= dur) { rec[here.i] = dur; here.playing = false; }
+            }
+            if (here && report) {
+                here.to = Math.max(here.to, here.pos);
+                await e.recordPlayedHere({ ...here.name, from: here.from, to: here.to }, t);
+            }
+            if (t - lastRead >= 60000) {
+                const out = await e.creditFlickProgress(FP.readCourse(render(rec, here ? here.i : null)), t);
+                lastRead = t; tally.reads++;
+                if (out && out.credited > 0) tally.paid += out.rawMinutes;
+            }
+        }
+        return tally;
+    };
+
+    const local = [];
+    for (const seed of [11, 22, 33]) local.push(await run(seed));
+    const reached = local.reduce((a, x) => ({ reads: a.reads + x.reads, played: a.played + x.playedMin,
+        closes: a.closes + x.closes, seeks: a.seeks + x.seeks }), { reads: 0, played: 0, closes: 0, seeks: 0 });
+    // A model that never studied, never closed the tab or never sought would
+    // pass the next check for free.
+    check('the model really studied, read the page, sought and closed the tab',
+        reached.reads > 500 && reached.played > 120 && reached.closes > 0 && reached.seeks > 20,
+        JSON.stringify(reached));
+    check('three simulated days of studying only here pay nothing as elsewhere',
+        local.every(x => x.paid === 0), JSON.stringify(local.map(x => +x.paid.toFixed(2))));
+
+    const unreported = await run(11, { report: false });
+    check('the same day without the player reporting IS paid -- the model reaches the bug',
+        unreported.paid > 1, String(unreported.paid));
+
+    for (const seed of [44, 55]) {
+        const x = await run(seed, { withPhone: true });
+        // Past what the phone played only by rounding and a checkmark's tail.
+        check(`a phone alongside (seed ${seed}) is still paid, and never beyond what it played`,
+            x.paid > 5 && x.paid <= x.phoneMin + 6,
+            `paid ${x.paid.toFixed(1)} for ${x.phoneMin.toFixed(1)} phone minutes`);
+    }
 }
 
 console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');

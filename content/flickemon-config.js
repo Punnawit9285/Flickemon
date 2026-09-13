@@ -397,6 +397,22 @@ const FLICK_MAX_MARKS = 4000;
 // meet it.
 const FLICK_DAILY_CAP_MINUTES = 240;
 
+// How long a course stays "being studied here" after this device's player last
+// moved a lecture it could not name.
+//
+// Normally the player names its lecture -- the row Flick highlights as open --
+// and only the stretch of that lecture it covered is kept from being paid. When
+// it cannot (a Flick redesign, the row filtered off the page by a search), the
+// whole course is held instead, until a reading lands long enough after the
+// player stopped for everything it did to have reached the page: Flick posts
+// every 20 seconds, re-polls every 60, and the harvest reads once a minute.
+const FLICK_UNIDENTIFIED_SETTLE_MS = 3 * 60 * 1000;
+
+// Lectures played here whose stretch has not yet been settled against a
+// reading. One settles the next time its course is read, so this is only
+// reached by playing many lectures in courses that are then never opened.
+const FLICK_MAX_PLAYED_HERE = 64;
+
 // ── Capture ──
 //
 // Beating a wild Pokemon in capture mode used to catch it every time. At the
@@ -3063,6 +3079,8 @@ window.FlickemonConfig = {
     FLICK_HARVEST_INTERVAL_MS,
     FLICK_MAX_MARKS,
     FLICK_DAILY_CAP_MINUTES,
+    FLICK_UNIDENTIFIED_SETTLE_MS,
+    FLICK_MAX_PLAYED_HERE,
     INSTANT_CAPTURE_EXP_DEBT,
     BATTLE_MODES,
     MAX_TEAM_SIZE,

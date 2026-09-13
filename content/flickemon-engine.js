@@ -37,6 +37,16 @@ const CLOUD_PUSH_DEBOUNCE_MS = 300000;
 const CLOUD_POLL_INTERVAL_MS = 300000;
 const LOCAL_SAVE_DEBOUNCE_MS = 1000;
 
+// No lecture runs a day. A player position past this is a live stream or a
+// corrupt value, and taken as a mark it would stop that lecture crediting ever.
+const MAX_LECTURE_SEC = 24 * 60 * 60;
+
+// How far Flick's rendering of a position can sit from the player's own. A row
+// shows its length in whole minutes and what is left rounded to one, so a
+// stretch played here is read with this much give either side before anything
+// beyond it counts as somebody else's.
+const FLICK_ROUNDING_SEC = 60;
+
 // How rarely the friend feed may be republished. See publishFriendFeed: this
 // number was chosen from a measurement, not an estimate.
 const FEED_PUBLISH_FLOOR_MS = 600000;
@@ -275,9 +285,17 @@ class FlickemonEngine {
             // that has passed since we last looked.
             flickCheckedAt: 0,
             // Minutes already counted by this device since that reading, so
-            // watching here is not also paid for as watching elsewhere. Local
-            // to the machine: deliberately never synced.
+            // time spent watching here is not also claimed as time spent
+            // watching elsewhere. Local to the machine: deliberately never synced.
             flickLocalMinutes: 0,
+            // Where this device's own player has been, per lecture, since the
+            // last reading: { from, to, at } in seconds of video, from where it
+            // resumed to the furthest it reached. Watching here moves Flick's
+            // record exactly as a phone does, and this is what keeps that
+            // progress from being paid back as "studied on another device".
+            // A "c:" key holds a whole course whose lecture could not be named.
+            // Local to the machine: never synced.
+            flickPlayedHere: {},
 
             // ── Friends ──
             //
@@ -514,6 +532,32 @@ class FlickemonEngine {
         if (!Number.isFinite(s.flickLocalMinutes) || s.flickLocalMinutes < 0) {
             s.flickLocalMinutes = 0;
         }
+        // A save from before this device reported where its player had been.
+        // The old build left the student's own progress standing above the
+        // marks whenever a reading could not pay it, and nothing now can say
+        // whose that rise was -- so the first reading re-baselines instead of
+        // paying it back as "studied on another device". Once.
+        if (raw.flickPlayedHere === undefined && Object.keys(s.flickSeen).length) {
+            s.flickRebaseline = true;
+        }
+        if (s.flickRebaseline !== true) delete s.flickRebaseline;
+        // A stretch played here only ever withholds credit, so a doubtful one
+        // is repaired rather than dropped -- dropping it would pay the student's
+        // own watching back to them. Only a span that cannot be a lecture goes.
+        if (!s.flickPlayedHere || typeof s.flickPlayedHere !== 'object'
+            || Array.isArray(s.flickPlayedHere)) {
+            s.flickPlayedHere = {};
+        }
+        for (const [key, span] of Object.entries(s.flickPlayedHere)) {
+            const whole = key.startsWith('c:');
+            const sound = span && typeof span === 'object' && (whole || (
+                Number.isFinite(span.from) && Number.isFinite(span.to)
+                && span.from >= 0 && span.from <= span.to && span.to <= MAX_LECTURE_SEC));
+            if (!sound) { delete s.flickPlayedHere[key]; continue; }
+            // From the future, it would hold a whole course until the clock
+            // caught up; unknown, it would never settle.
+            if (!Number.isFinite(span.at) || span.at < 0 || span.at > Date.now()) span.at = Date.now();
+        }
         // Published to the whole cohort, so it must never carry an address —
         // truncation happens before the write, and this is the backstop.
         if (typeof s.leaderboardLabel !== 'string' || s.leaderboardLabel.includes('@')) {
@@ -742,7 +786,11 @@ class FlickemonEngine {
         if (!this.gameState.ownerUid && this.gameState.hasStarted) {
             const existing = await this.sendToWorker({ type: 'CLOUD_PULL' });
             if (existing && existing.signedIn && existing.state && existing.state.hasStarted) {
-                this.discardLocalState();
+                // Flick's accounting survives, though. It describes what this
+                // machine did to Flick's record, not the save: dropped, the
+                // account's older marks would pay every lecture watched here
+                // without signing in back as "studied on another device".
+                this.discardLocalState({ keepFlick: true });
             }
         }
 
@@ -756,11 +804,23 @@ class FlickemonEngine {
         return res;
     }
 
-    /** Wipes this device's save without touching anything in the cloud. */
-    discardLocalState() {
+    /**
+     * Wipes this device's save without touching anything in the cloud.
+     *
+     * `keepFlick` carries the Flick accounting across, for when the save is
+     * being replaced by the same student's account rather than handed to a
+     * different one -- whose Flick record these marks say nothing about.
+     */
+    discardLocalState({ keepFlick = false } = {}) {
         // Snapshot first — this wipes a student's device-local progress, and if
         // it had not yet reached the cloud there would otherwise be no copy.
         this.backupState();
+        const s = this.gameState;
+        const flick = keepFlick ? {
+            flickSeen: s.flickSeen, flickCheckedAt: s.flickCheckedAt,
+            flickLocalMinutes: s.flickLocalMinutes, flickPlayedHere: s.flickPlayedHere,
+            flickRebaseline: s.flickRebaseline,
+        } : null;
 
         // Drop any pending push first: it carries the state we're discarding,
         // and letting it land would write the previous owner's progress into
@@ -776,6 +836,7 @@ class FlickemonEngine {
         this.lastPushedFingerprint = null;
 
         this.gameState = this.createEmptyState();
+        if (flick) Object.assign(this.gameState, flick);
         this.wildOpponent = null;
         if (this.respawnTimer) clearTimeout(this.respawnTimer);
         this.emitWild();
@@ -3534,10 +3595,12 @@ class FlickemonEngine {
         this.gameState.studyMinutes[source] = (this.gameState.studyMinutes[source] || 0) + minutes;
         this.gameState.totalMinutesWatched = this.sumStudyMinutes(this.gameState.studyMinutes);
 
-        // Watching HERE also advances Flick's own record, so the next harvest
-        // would see the same minutes again and pay for them twice. Remembering
-        // what was counted locally is what lets creditFlickProgress subtract the
-        // overlap. Flick's own credit is excluded or it would cancel itself out.
+        // Time spent watching HERE is time that was not spent watching anywhere
+        // else, so creditFlickProgress subtracts it from what the clock allows.
+        // It does NOT stop the lecture progress itself being paid twice -- a
+        // break after studying turns straight back into allowance -- which is
+        // what recordPlayedHere is for. Flick's own credit is excluded or it
+        // would cancel itself out.
         // PERSISTED, not held in memory: flickCheckedAt survives a restart and
         // this has to survive with it. Held in memory only, closing the browser
         // after an hour's watching reset the subtraction to zero while the clock
@@ -3594,6 +3657,65 @@ class FlickemonEngine {
     }
 
     /**
+     * Records where this device's own player has been in a lecture, so the
+     * harvest never pays for it as studying done somewhere else.
+     *
+     * Watching here moves Flick's record exactly as a phone does, and the page
+     * alone cannot tell the two apart. Subtracting the minutes watched here from
+     * the time allowance was meant to, and did not: a break after studying
+     * became allowance, and the next reading paid the student's own lecture back
+     * to them as "studied on another device" -- an hour of it after lunch, or a
+     * minute after any pause.
+     *
+     * So the player reports the stretch it covered, in seconds of VIDEO -- the
+     * unit Flick records -- which makes playback speed, seeking and Flick's own
+     * posting lag irrelevant. `from` is where it resumed, not zero: anything
+     * below that was studied elsewhere, and a phone session nobody has read yet
+     * must still be paid when the lecture is opened here.
+     *
+     * `lecture` is the row Flick highlights as open. When it cannot be read, the
+     * whole course is held until FLICK_UNIDENTIFIED_SETTLE_MS after the player
+     * stops. That costs any phone progress made in the same course meanwhile,
+     * which is the right way to be wrong.
+     */
+    async recordPlayedHere({ course = '', lecture = null, from, to } = {}, now = Date.now()) {
+        if (!this.gameState.hasStarted) return;
+        if (!Number.isFinite(from) || !Number.isFinite(to)
+            || from < 0 || to < from || to > MAX_LECTURE_SEC) return;
+        const here = this.gameState.flickPlayedHere || (this.gameState.flickPlayedHere = {});
+
+        if (lecture && lecture.title) {
+            const key = await this.flickKey(course, lecture);
+            const prev = here[key];
+            here[key] = prev && Number.isFinite(prev.from)
+                ? { from: Math.min(prev.from, from), to: Math.max(prev.to, to), at: now }
+                : { from, to, at: now };
+        } else {
+            here[await this.courseHereKey(course)] = { at: now };
+        }
+        this.prunePlayedHere();
+        // Local only, and never a reason to redraw: this runs at the player's
+        // own cadence, several times a second.
+        this.scheduleLocalSave();
+    }
+
+    /** The flickPlayedHere key that holds a whole course. Hashed like every mark. */
+    async courseHereKey(course) {
+        // No real lecture has an empty title -- parseLecture drops those -- so
+        // this cannot collide with one.
+        return 'c:' + await this.flickKey(course, { title: '', durationSec: null });
+    }
+
+    /** Drops the stalest unsettled stretches. See FLICK_MAX_PLAYED_HERE. */
+    prunePlayedHere() {
+        const here = this.gameState.flickPlayedHere || {};
+        const keys = Object.keys(here);
+        if (keys.length <= this.config.FLICK_MAX_PLAYED_HERE) return;
+        keys.sort((a, b) => here[b].at - here[a].at);
+        for (const key of keys.slice(this.config.FLICK_MAX_PLAYED_HERE)) delete here[key];
+    }
+
+    /**
      * A stable, opaque id for one lecture.
      *
      * Hashed because flickSeen SYNCS, and the marks would otherwise put a list
@@ -3643,6 +3765,7 @@ class FlickemonEngine {
         }
 
         const marks = this.gameState.flickSeen || (this.gameState.flickSeen = {});
+        const here = this.gameState.flickPlayedHere || (this.gameState.flickPlayedHere = {});
         const first = !this.gameState.flickCheckedAt;
 
         // Two lectures in one course can share a title and a length -- a
@@ -3653,28 +3776,77 @@ class FlickemonEngine {
         for (const lecture of reading.lectures) {
             if (!Number.isFinite(lecture.playedSec) || lecture.playedSec < 0) continue;
             const key = await this.flickKey(reading.course, lecture);
-            positions.set(key, Math.max(positions.get(key) || 0, lecture.playedSec));
+            // Kept whole rather than as a bare position: settling a stretch
+            // played here needs to know how long the row is and how it was read.
+            const prev = positions.get(key);
+            if (!prev || lecture.playedSec > prev.playedSec) positions.set(key, lecture);
         }
 
+        // This course is being played here under a lecture that could not be
+        // named. See recordPlayedHere.
+        const courseKey = await this.courseHereKey(reading.course);
+        const wholeCourse = Object.prototype.hasOwnProperty.call(here, courseKey)
+            ? here[courseKey] : null;
+
         let riseSec = 0;
+        let settled = false;
         const advance = [];
-        for (const [key, playedSec] of positions) {
+        for (const [key, { playedSec, durationSec, from: readAs }] of positions) {
+            const known = Object.prototype.hasOwnProperty.call(marks, key);
+            const span = Object.prototype.hasOwnProperty.call(here, key) ? here[key] : null;
+
+            // Progress this device's own player made. Settled now rather than
+            // held like a rise from elsewhere: the mark jumps to the furthest the
+            // player reached, even past what Flick has rendered yet, so nothing
+            // it did can surface later -- after a break, a restart, a day away --
+            // as a rise that looks like somebody else's.
+            if (span || wholeCourse) {
+                const mark = known ? marks[key] : playedSec;
+                if (span && !wholeCourse) {
+                    // Only what lies outside the stretch happened elsewhere:
+                    // below where this device resumed, or past where it stopped.
+                    // Read with Flick's rounding either side of it -- and a
+                    // checkmark the player itself got to 95% for is all its own,
+                    // though Flick reads it as the whole lecture.
+                    let top = span.to + FLICK_ROUNDING_SEC;
+                    if (readAs === 'complete' && top >= 0.95 * durationSec) top = Infinity;
+                    const covered = Math.max(0, Math.min(playedSec, top)
+                        - Math.max(mark, span.from - FLICK_ROUNDING_SEC));
+                    riseSec += Math.max(0, playedSec - mark - covered);
+                }
+                marks[key] = Math.max(mark, playedSec, span ? span.to : 0);
+                delete here[key];
+                settled = true;
+                continue;
+            }
+
             // A lecture we have never seen is RECORDED, not paid for. Otherwise
             // opening a course for the first time would bank a whole semester of
             // watching that happened before any of this existed.
-            if (!Object.prototype.hasOwnProperty.call(marks, key)) {
+            if (!known) {
                 marks[key] = playedSec;
                 continue;
             }
             const rise = playedSec - marks[key];
             if (rise > 0) { riseSec += rise; advance.push([key, playedSec]); }
         }
+        // Let the course go once the player has been still long enough for
+        // everything it did to have reached this page.
+        if (wholeCourse && now - wholeCourse.at >= this.config.FLICK_UNIDENTIFIED_SETTLE_MS) {
+            delete here[courseKey];
+            settled = true;
+        }
 
         this.pruneFlickSeen();
 
-        if (first) {
-            // Nothing to measure a rise against yet. Start the clock instead.
+        if (first || this.gameState.flickRebaseline) {
+            // Nothing to measure a rise against yet. Start the clock instead,
+            // from wherever Flick is now -- which, on a save normalizeState
+            // flagged, leaves its standing rises unpaid rather than misread.
+            for (const [key, played] of advance) marks[key] = played;
+            delete this.gameState.flickRebaseline;
             this.gameState.flickCheckedAt = now;
+            this.gameState.flickLocalMinutes = 0;
             await this.saveGameState();
             return { credited: 0, exp: 0, reason: 'first-reading' };
         }
@@ -3697,7 +3869,10 @@ class FlickemonEngine {
         // This is the bound on that, and it is a CAP: minutes past it are gone,
         // not banked for tomorrow, or it would not be a cap at all.
         const leftToday = this.flickMinutesLeftToday();
+        // The early returns below still save what was settled above, so the
+        // marks it moved reach the cloud before another device reads the course.
         if (leftToday <= 0) {
+            if (settled) await this.saveGameState();
             return {
                 credited: 0, exp: 0, reason: 'daily-cap',
                 capMinutes: this.config.FLICK_DAILY_CAP_MINUTES,
@@ -3710,6 +3885,7 @@ class FlickemonEngine {
         // ALONE so the remainder accumulates into the next reading -- advancing
         // them here would round every short session down to nothing, forever.
         if (raw < this.config.FLICK_MIN_CREDIT_MINUTES) {
+            if (settled) await this.saveGameState();
             return { credited: 0, exp: 0, reason: 'below-threshold' };
         }
 

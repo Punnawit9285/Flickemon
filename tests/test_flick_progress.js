@@ -31,9 +31,11 @@ const near = (a, b, tol = 0.01) => Math.abs(a - b) <= tol;
 // lecture is under 95%. Past that it loses the text and the bar and gains a
 // checkmark, so "no numbers" means finished in one case and untouched in the
 // other.
+// `color` is what Ionic renders from FlickPlayer's [color] binding: the attribute
+// AND the ion-color-* classes. "secondary" marks the lecture open in the player.
 const row = ({ title, lecturer = 'Dr. Somchai', durationMin, leftMin, barValue,
-               playedMin, check: done, date = '01 Sep 2026' }) => `
-    <ion-item button>
+               playedMin, check: done, date = '01 Sep 2026', color }) => `
+    <ion-item button${color ? ` color="${color}" class="ion-color ion-color-${color}"` : ''}>
         <ion-label class="ion-text-wrap">
             <span class="date">${date}</span>
             <span class="date-divider"> | </span>
@@ -132,6 +134,34 @@ console.log('\n=== the rows and the header have to agree ===');
     check('no header at all is not a disagreement', FP.agreesWithHeader(noHeader) === true);
 }
 
+console.log('\n=== the lecture open here is the one Flick highlights ===');
+{
+    // FlickPlayer binds the row's [color] to the lecture in its player. The
+    // "tertiary" row is the last lecture played anywhere, shown while nothing is
+    // open -- as likely the phone's as this device's.
+    const doc = page([
+        row({ title: 'Renal Physiology', durationMin: 60, check: true, color: 'tertiary' }),
+        row({ title: 'Brachial Plexus', durationMin: 50, leftMin: 20, barValue: 0.6, color: 'secondary' }),
+        row({ title: 'Axilla', durationMin: 45 }),
+    ]);
+    const open = FP.activeLecture(doc);
+    check('the highlighted row is read as the open lecture',
+        open && open.title === 'Brachial Plexus' && open.durationSec === 3000, JSON.stringify(open));
+    check('it parses exactly like its row, so it hashes to the same mark',
+        JSON.stringify(open) === JSON.stringify(FP.readCourse(doc).lectures[1]));
+    check('the last-played row is not mistaken for it',
+        FP.activeLecture(page([row({ title: 'Renal Physiology', durationMin: 60, color: 'tertiary' })])) === null);
+    check('nothing open reads as nothing',
+        FP.activeLecture(page([row({ title: 'A', durationMin: 60 })])) === null);
+
+    // Ionic renders both; either alone is enough.
+    const only = attrs => parseHTML(`<ion-list><ion-item ${attrs}><ion-label>Solo<small>
+        <span class="time-info">- 10 min </span></small></ion-label></ion-item></ion-list>`).document;
+    check('the colour attribute alone is enough', (FP.activeLecture(only('color="secondary"')) || {}).title === 'Solo');
+    check('the colour class alone is enough',
+        (FP.activeLecture(only('class="ion-color ion-color-secondary"')) || {}).title === 'Solo');
+}
+
 // ── The engine ──
 e.isLoaded = true;
 await e.chooseStarter(1);
@@ -145,6 +175,7 @@ const reset = () => {
     e.gameState.flickCheckedAt = 0;
     e.gameState.studyMinutes = {};
     e.gameState.flickLocalMinutes = 0;
+    e.gameState.flickPlayedHere = {};
     // The daily allowance is cumulative across a day, and every block here
     // shares one simulated day — without this each block inherits whatever the
     // last one spent.
@@ -419,6 +450,266 @@ console.log('\n=== the local tally never leaves the device ===');
     check('flickLocalMinutes is not synced', !flat.includes('flickLocalMinutes'));
     check('a negative tally is repaired',
         e.normalizeState({ flickLocalMinutes: -5 }).flickLocalMinutes === 0);
+}
+
+// The lecture `watched` renders, named the way the player on this page names it.
+const openHere = (() => {
+    const d = page([row({ title: 'Cardiovascular Physiology I', durationMin: 120, leftMin: 120,
+                          color: 'secondary' })]);
+    return { course: FP.parseCourseName(d), lecture: FP.activeLecture(d) };
+})();
+const playHere = (fromMin, toMin, at) =>
+    e.recordPlayedHere({ ...openHere, from: fromMin * 60, to: toMin * 60 }, at);
+
+console.log('\n=== studying here, then a break, is not studying on another device ===');
+{
+    // The bug in the screenshots. Each reading while watching here found too
+    // little allowance to pay, so it left the rise standing; the break then
+    // became allowance, and the student's own 68 minutes came back as "1h 8m
+    // studied on another device". Any pause did the same in miniature -- "1m".
+    const session = async (reportPlayback) => {
+        reset();
+        const start = NOW - 140 * MIN;
+        await e.creditFlickProgress(watched(0), start);
+        let paid = 0;
+        for (let m = 1; m <= 68; m++) {
+            e.creditStudyMinutes(e.studySource(), 1);
+            if (reportPlayback) await playHere(0, m, start + m * MIN);
+            // Flick's record trails the player by its 20-second post.
+            const r = await e.creditFlickProgress(watched(m - 1 / 3), start + m * MIN);
+            paid += (r && r.rawMinutes) || 0;
+        }
+        const back = await e.creditFlickProgress(watched(68), NOW);     // 72 minutes later
+        return { paid: paid + ((back && back.rawMinutes) || 0), back };
+    };
+
+    const unreported = await session(false);
+    check('unreported, the hour really is paid back as elsewhere -- the scenario is real',
+        unreported.paid > 60, String(unreported.paid));
+
+    const reported = await session(true);
+    check('reported, nothing studied here is paid as studied elsewhere',
+        reported.paid === 0, String(reported.paid));
+    check('so there is no return to announce', !(reported.back && reported.back.credited > 0),
+        JSON.stringify(reported.back));
+}
+
+console.log('\n=== speed, pauses and a closed tab change nothing ===');
+{
+    reset();
+    let t = NOW - 200 * MIN, pos = 0, paid = 0;
+    await e.creditFlickProgress(watched(0), t);
+    for (let m = 1; m <= 40; m++) {
+        t += MIN;
+        if (m % 10 === 0) t += 3 * MIN;                 // a pause is allowance too
+        pos += 2;                                       // double speed
+        e.creditStudyMinutes(e.studySource(), 1);
+        await playHere(0, pos, t);
+        const r = await e.creditFlickProgress(watched(pos - 2 / 3), t);
+        paid += (r && r.rawMinutes) || 0;
+    }
+    // Closed mid-play: the player got further than Flick had shown by the last
+    // reading, and nothing reads the page again for hours.
+    await playHere(0, pos + 0.5, t + 15000);
+    const later = await e.creditFlickProgress(watched(pos + 0.5), NOW);
+    paid += (later && later.rawMinutes) || 0;
+    check('eighty minutes of lecture at 2x, paused and closed, pays nothing elsewhere',
+        paid === 0, String(paid));
+}
+
+console.log('\n=== a phone session nobody has read is still paid when it is picked up here ===');
+{
+    // FlickPlayer resumes a lecture where Flick last saw it, so the stretch
+    // played here starts THERE, and what lies below it happened on the phone.
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 90 * MIN);
+    // Thirty minutes on the phone, never read; then opened here at 30 and
+    // played on to 45 before the page is read again.
+    await playHere(30, 45, NOW - 1 * MIN);
+    const r = await e.creditFlickProgress(watched(45), NOW);
+    // Less at most a minute: the stretch is read with Flick's rounding either side.
+    check('the phone\'s half hour is paid, and the quarter hour played here is not',
+        r.rawMinutes >= 29 - 0.01 && r.rawMinutes <= 30 + 0.01, String(r.rawMinutes));
+    check('the stretch is settled rather than kept',
+        Object.keys(e.gameState.flickPlayedHere).length === 0);
+}
+
+console.log('\n=== carrying on from here on a phone is paid ===');
+{
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 120 * MIN);
+    e.creditStudyMinutes(e.studySource(), 40);
+    await playHere(0, 40, NOW - 80 * MIN);
+    await e.creditFlickProgress(watched(40), NOW - 79 * MIN);
+    // The laptop closes; the phone goes on from minute 40 to 70.
+    const r = await e.creditFlickProgress(watched(70), NOW);
+    check('the thirty minutes past where this device stopped are paid',
+        near(r.rawMinutes, 30, 0.1), String(r.rawMinutes));
+}
+
+console.log('\n=== another lecture on a phone meanwhile is paid, once there was time for it ===');
+{
+    // Watching here and on a phone at once cannot both be real time, so the
+    // phone's lecture waits for allowance -- and now waits ALONE, instead of
+    // leaving this device's own progress standing beside it for a break to pay.
+    const two = (a, b) => FP.readCourse(page([
+        row({ title: 'Cardiovascular Physiology I', durationMin: 120, leftMin: 120 - a }),
+        row({ title: 'Renal Physiology', durationMin: 60, leftMin: 60 - b }),
+    ], `${((180 - a - b) / 60).toFixed(1)} hours left (${(((a + b) / 180) * 100).toFixed(1)}%)`));
+    reset();
+    const start = NOW - 90 * MIN;
+    await e.creditFlickProgress(two(0, 0), start);
+    let during = 0;
+    for (let m = 1; m <= 30; m++) {
+        e.creditStudyMinutes(e.studySource(), 1);
+        await playHere(0, m, start + m * MIN);
+        const r = await e.creditFlickProgress(two(m, m), start + m * MIN);
+        during += (r && r.rawMinutes) || 0;
+    }
+    check('nothing is paid while this device is busy watching', during === 0, String(during));
+    const later = await e.creditFlickProgress(two(30, 30), NOW);
+    check('the phone\'s lecture is paid once the time exists, and only that one',
+        near(later.rawMinutes, 30, 0.1), String(later.rawMinutes));
+}
+
+console.log('\n=== a lecture the player cannot name holds its course, then lets go ===');
+{
+    // A Flick redesign, or the row filtered off the page by a search. Holding
+    // the whole course costs a phone session in it meanwhile -- the right way
+    // to be wrong -- and must not outlast the playing.
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 120 * MIN);
+    await e.recordPlayedHere({ course: 'Cardiology', lecture: null, from: 0, to: 1800 }, NOW - 30 * MIN);
+    const held = await e.creditFlickProgress(watched(30), NOW - 29 * MIN);
+    check('while it plays, nothing in the course is paid', !(held.credited > 0), JSON.stringify(held));
+    check('and the rise is settled rather than left for a break to pay',
+        Object.values(e.gameState.flickSeen)[0] === 30 * 60, JSON.stringify(e.gameState.flickSeen));
+    check('the hold outlasts a reading taken while the player may still be moving',
+        Object.keys(e.gameState.flickPlayedHere).some(k => k.startsWith('c:')));
+
+    await e.creditFlickProgress(watched(30), NOW - 25 * MIN);
+    check('a reading after the player has been still lets it go',
+        Object.keys(e.gameState.flickPlayedHere).length === 0, JSON.stringify(e.gameState.flickPlayedHere));
+    const phone = await e.creditFlickProgress(watched(55), NOW);
+    check('so a phone session afterwards is paid again', near(phone.rawMinutes, 25, 0.1),
+        String(phone.rawMinutes));
+}
+
+console.log('\n=== a spent day still settles what was played here ===');
+{
+    // Otherwise the stretch would wait for tomorrow's allowance and be paid from it.
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 60 * MIN);
+    e.creditDailyProgress({ flickMin: cfg.FLICK_DAILY_CAP_MINUTES });
+    await playHere(0, 20, NOW - 1 * MIN);
+    const capped = await e.creditFlickProgress(watched(20), NOW);
+    check('the cap is reported', capped.reason === 'daily-cap', capped.reason);
+    check('and the stretch was settled all the same',
+        Object.keys(e.gameState.flickPlayedHere).length === 0
+        && Object.values(e.gameState.flickSeen)[0] === 20 * 60, JSON.stringify(e.gameState.flickSeen));
+}
+
+console.log('\n=== where this device has played never leaves it ===');
+{
+    reset();
+    await playHere(10, 20, NOW);
+    check('a stretch is recorded', Object.keys(e.gameState.flickPlayedHere).length === 1);
+    check('but not synced', !JSON.stringify(e.buildCloudPayload()).includes('flickPlayedHere'));
+
+    const s = e.normalizeState({ flickPlayedHere: {
+        good: { from: 60, to: 120, at: NOW }, backwards: { from: 90, to: 30, at: NOW },
+        huge: { from: 0, to: 9e9, at: NOW }, junk: 'x',
+        future: { from: 0, to: 5, at: Date.now() + 9e9 }, 'c:abc': { at: NOW },
+    } });
+    check('a sound stretch survives', s.flickPlayedHere.good && s.flickPlayedHere.good.to === 120);
+    check('one that runs backwards, or longer than any lecture, is dropped',
+        !('backwards' in s.flickPlayedHere) && !('huge' in s.flickPlayedHere));
+    check('junk is dropped', !('junk' in s.flickPlayedHere));
+    check('a time from the future is repaired rather than trusted',
+        s.flickPlayedHere.future && s.flickPlayedHere.future.at <= Date.now());
+    check('a held course survives', 'c:abc' in s.flickPlayedHere);
+    check('a corrupt container becomes an empty one',
+        JSON.stringify(e.normalizeState({ flickPlayedHere: [] }).flickPlayedHere) === '{}');
+
+    e.gameState.hasStarted = false;
+    e.gameState.flickPlayedHere = {};
+    await playHere(0, 5, NOW);
+    e.gameState.hasStarted = true;
+    check('nothing is recorded before the game has started',
+        Object.keys(e.gameState.flickPlayedHere).length === 0);
+}
+
+console.log('\n=== a local save replaced at sign-in keeps what this device did to Flick ===');
+{
+    // Signing in to an account that already has a save drops the local one.
+    // Dropped with it, the Flick marks would leave the account's older ones in
+    // charge, and every lecture watched here before signing in would be paid
+    // back as "studied on another device".
+    const saved = e.gameState;
+    e.gameState = JSON.parse(JSON.stringify(saved));
+    e.gameState.flickSeen = { aaaaaaaaaaaa: 2400 };
+    e.gameState.flickCheckedAt = NOW;
+    e.gameState.flickPlayedHere = { bbbbbbbbbbbb: { from: 0, to: 600, at: NOW } };
+    e.discardLocalState({ keepFlick: true });
+    check('the marks survive', e.gameState.flickSeen.aaaaaaaaaaaa === 2400);
+    check('so do the reading clock and the stretch played here',
+        e.gameState.flickCheckedAt === NOW && e.gameState.flickPlayedHere.bbbbbbbbbbbb.to === 600);
+    check('while the game itself is still discarded', e.gameState.hasStarted === false);
+
+    e.gameState.flickSeen = { aaaaaaaaaaaa: 2400 };
+    e.discardLocalState();
+    check('handed to a different account, none of it is kept',
+        JSON.stringify(e.gameState.flickSeen) === '{}'
+        && JSON.stringify(e.gameState.flickPlayedHere) === '{}');
+    e.gameState = saved;
+}
+
+console.log('\n=== Flick\'s rounding and its checkmark are not somebody else\'s ===');
+{
+    // A lecture 57:40 long is shown as "58 min", so Flick reads the player's own
+    // position a little ahead of where the player is; and past 95% it shows
+    // only a checkmark, which reads as all 58 minutes.
+    const odd = done => FP.readCourse(page([row({ title: 'Odd Length', durationMin: 58, check: done })], ''));
+    const name = { course: 'Cardiology', lecture: { title: 'Odd Length', durationSec: 58 * 60 } };
+
+    reset();
+    await e.creditFlickProgress(odd(false), NOW - 90 * MIN);
+    await e.recordPlayedHere({ ...name, from: 0, to: 3300 }, NOW - 2 * MIN);     // 95.4% of 3460 s
+    const own = await e.creditFlickProgress(odd(true), NOW);
+    check('finishing a lecture here pays nothing for the tail its checkmark rounds up',
+        !(own.credited > 0), JSON.stringify(own));
+
+    reset();
+    await e.creditFlickProgress(odd(false), NOW - 90 * MIN);
+    await e.recordPlayedHere({ ...name, from: 0, to: 600 }, NOW - 80 * MIN);
+    const phone = await e.creditFlickProgress(odd(true), NOW);
+    check('but a phone finishing what this device barely started is still paid',
+        near(phone.rawMinutes, 58 - 11, 0.1), String(phone.rawMinutes));
+}
+
+console.log('\n=== a save from before the fix does not pay its standing rise once ===');
+{
+    // The old build left this device's own progress standing above the marks
+    // whenever a reading could not pay it. Loaded into this version that rise
+    // has no stretch to explain it, and the first reading after a break would
+    // have been one last "studied on another device".
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 120 * MIN);
+    const old = JSON.parse(JSON.stringify(e.gameState));
+    delete old.flickPlayedHere;
+    e.gameState = e.normalizeState(old);
+    check('a save without the field is flagged', e.gameState.flickRebaseline === true);
+
+    const r = await e.creditFlickProgress(watched(68), NOW);     // watched with the old build
+    check('its first reading pays nothing', !(r.credited > 0), JSON.stringify(r));
+    check('and moves the marks to where Flick is', Object.values(e.gameState.flickSeen)[0] === 68 * 60,
+        JSON.stringify(e.gameState.flickSeen));
+    check('once', e.gameState.flickRebaseline === undefined);
+
+    const phone = await e.creditFlickProgress(watched(98), NOW + 40 * MIN);
+    check('after which a phone is paid as before', near(phone.rawMinutes, 30, 0.1), String(phone.rawMinutes));
+    check('and a save from this version is never flagged',
+        e.normalizeState(JSON.parse(JSON.stringify(e.gameState))).flickRebaseline === undefined);
 }
 
 console.log('\n=== coming back is told as a summary, not a receipt ===');
