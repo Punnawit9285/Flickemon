@@ -714,7 +714,10 @@ class FlickemonEngine {
     }
 
     async signIn({ prompt } = {}) {
-        const res = await this.sendToWorker({ type: 'AUTH_SIGN_IN', prompt });
+        // Bind to the Flick session before anything else. See requireFlickAccount.
+        const requireEmail = this.requireFlickAccount();
+
+        const res = await this.sendToWorker({ type: 'AUTH_SIGN_IN', prompt, requireEmail });
         if (!res || res.ok === false) {
             throw new Error(res?.error || 'Sign-in failed');
         }
@@ -806,6 +809,117 @@ class FlickemonEngine {
         this.emitState();
         // Force Google's chooser, otherwise it silently reuses the same session.
         return await this.signIn({ prompt: 'select_account' });
+    }
+
+    /**
+     * The Flick account this machine is signed in as, which is the only account
+     * Flickémon will accept.
+     *
+     * FAILS CLOSED. If Flick's session cannot be read, sign-in is refused rather
+     * than allowed unchecked: the whole point is a shared library PC, and a
+     * guard that waves everyone through the moment it breaks is not a guard.
+     * Local-only play is unaffected — "Continue without signing in" still works,
+     * so a Flick redesign costs cloud sync, never the game.
+     *
+     * The cost of that choice is real and worth stating: if Flick changes how it
+     * stores its session, every student loses sync until the reader in
+     * flickemon-flick-identity.js is updated. That is the trade deliberately
+     * taken, because the alternative silently mis-attributes study time.
+     */
+    requireFlickAccount() {
+        const reader = typeof window !== 'undefined' && window.FlickemonFlickIdentity;
+        if (!reader || typeof reader.currentFlickIdentity !== 'function') {
+            throw new Error(
+                'Could not tell which account Flick is signed in as, so signing in ' +
+                'is blocked on this computer. Reload the Flick page and try again.'
+            );
+        }
+
+        const identity = reader.currentFlickIdentity();
+        if (!identity || !identity.email) {
+            throw new Error(
+                'Could not tell which account Flick is signed in as, so signing in ' +
+                'is blocked — on a shared computer this stops your study time going ' +
+                'to someone else\'s account. Make sure you are logged in to Flick, ' +
+                'then reload the page.'
+            );
+        }
+
+        this.flickAccount = identity.email;
+        return identity.email;
+    }
+
+    /**
+     * The library walk-away: student A signs in to Flick and Flickémon, leaves,
+     * and student B logs in to Flick on the same machine. Checking only at
+     * sign-in leaves A authenticated — so B's lectures credit A's account, and
+     * A's party, Pokédex and friends sit on screen for B to read.
+     *
+     * Runs on a timer and whenever the tab regains focus. Returns true when it
+     * acted, so a caller (and a test) can tell a handover from a quiet tick.
+     */
+    async enforceFlickAccount() {
+        const status = await this.sendToWorker({ type: 'AUTH_STATUS' }).catch(() => null);
+        if (!status || !status.signedIn || !status.email) return false;
+
+        const reader = typeof window !== 'undefined' && window.FlickemonFlickIdentity;
+        if (!reader) return false;
+
+        const identity = reader.currentFlickIdentity();
+
+        // Only a POSITIVE, different reading acts. An unreadable session is not
+        // evidence of a handover — Flick renders asynchronously and a route
+        // change can empty the page for a moment — and acting on it would wipe a
+        // save belonging to a student who did nothing. Sign-in already fails
+        // closed on the same condition, which is where strictness belongs:
+        // refusing to start a session is recoverable, ending one mid-lecture is
+        // not.
+        if (!identity || !identity.email) return false;
+        if (reader.sameAccount(identity.email, status.email)) return false;
+
+        // Flush FIRST, while A is still the authenticated one, so A's progress
+        // lands in A's own save rather than being abandoned or, worse, written
+        // into B's.
+        await this.signOut();
+        // Then clear the screen. Signing out alone would leave A's party visible
+        // to B, which is half the problem. discardLocalState snapshots first.
+        this.discardLocalState();
+        this.emitState();
+        return true;
+    }
+
+    /**
+     * Starts the handover watch. Idempotent, so a re-init cannot stack timers.
+     *
+     * Sixty seconds: a handover is a person physically leaving, so minutes are
+     * the unit that matters, and the check is two storage reads. The focus
+     * listener is what makes it feel immediate in the case that actually
+     * happens — B sits down and clicks into the tab.
+     */
+    startFlickAccountGuard({ intervalMs = 60000 } = {}) {
+        if (this.flickGuardTimer) return;
+        const run = () => { this.enforceFlickAccount().catch(() => {}); };
+        this.flickGuardTimer = setInterval(run, intervalMs);
+        if (typeof document !== 'undefined' && document.addEventListener) {
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') run();
+            });
+        }
+        run();
+    }
+
+    /**
+     * What the OAuth client must be configured with, for showing a student (or
+     * whoever they forward the screenshot to) when sign-in fails. Never throws:
+     * this runs on the path where something is already broken, and a diagnostic
+     * that can itself fail is worse than none.
+     */
+    async getAuthDiagnostics() {
+        try {
+            return await this.sendToWorker({ type: 'AUTH_DIAGNOSTICS' });
+        } catch {
+            return null;
+        }
     }
 
     async signOut() {

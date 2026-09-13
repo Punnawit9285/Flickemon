@@ -618,6 +618,8 @@ class FlickemonUI {
                 </p>
                 <button class="signin-gate-btn">Sign in with Google</button>
                 <p class="signin-gate-error"></p>
+                <button class="signin-gate-switch">Use a different Google account</button>
+                <p class="signin-gate-diag"></p>
                 <button class="signin-gate-skip">Continue without signing in</button>
                 <p class="signin-gate-skip-note">
                     Progress stays on this device only, and will not appear on your
@@ -628,12 +630,51 @@ class FlickemonUI {
 
         const btn = modal.body.querySelector('.signin-gate-btn');
         const errEl = modal.body.querySelector('.signin-gate-error');
+        const switchBtn = modal.body.querySelector('.signin-gate-switch');
+        const diagEl = modal.body.querySelector('.signin-gate-diag');
         const skipBtn = modal.body.querySelector('.signin-gate-skip');
         const skipNote = modal.body.querySelector('.signin-gate-skip-note');
 
         const revealBypass = () => {
             skipBtn.classList.add('visible');
             skipNote.classList.add('visible');
+        };
+
+        // Google's failure page names whichever account it silently reused, so
+        // the student's first reading of any failure is "wrong account" — give
+        // them the chooser rather than only a retry that looks identical.
+        const revealRecovery = async () => {
+            switchBtn.classList.add('visible');
+            const diag = await this.engine.getAuthDiagnostics();
+            if (!diag || !diag.redirectUri) return;
+            diagEl.textContent =
+                `Extension ${diag.extensionId} • redirect ${diag.redirectUri}`;
+            diagEl.classList.add('visible');
+        };
+
+        // Both buttons run the same sign-in; only the label and the prompt
+        // differ, and a shared handler keeps their failure handling identical.
+        const attempt = async (control, busyLabel, doneLabel, opts) => {
+            control.disabled = true;
+            const original = control.textContent;
+            control.textContent = busyLabel;
+            errEl.classList.remove('visible');
+
+            try {
+                // signIn() already pulls the account's save down, so branch on
+                // the merged result rather than paying for a second read.
+                await this.engine.signIn(opts);
+                this.closeModal(modal.overlay);
+                if (!this.engine.hasStarted()) this.openStarterModal();
+            } catch (e) {
+                errEl.textContent = e.message || 'Sign-in failed';
+                errEl.classList.add('visible');
+                control.disabled = false;
+                control.textContent = doneLabel || original;
+                btn.textContent = 'Try signing in again';
+                revealBypass();
+                await revealRecovery();
+            }
         };
 
         // Nothing to attempt if the worker never answered — offer the bypass now.
@@ -643,25 +684,16 @@ class FlickemonUI {
             revealBypass();
         }
 
-        btn.addEventListener('click', async () => {
-            btn.disabled = true;
-            btn.textContent = 'Signing in…';
-            errEl.classList.remove('visible');
+        btn.addEventListener('click', () => attempt(btn, 'Signing in…', null));
 
-            try {
-                // signIn() already pulls the account's save down, so branch on
-                // the merged result rather than paying for a second read.
-                await this.engine.signIn();
-                this.closeModal(modal.overlay);
-                if (!this.engine.hasStarted()) this.openStarterModal();
-            } catch (e) {
-                errEl.textContent = e.message || 'Sign-in failed';
-                errEl.classList.add('visible');
-                btn.disabled = false;
-                btn.textContent = 'Try signing in again';
-                revealBypass();
-            }
-        });
+        // prompt=consent as well as select_account: select_account alone still
+        // lets Google skip straight past the chooser for an account that has
+        // already granted this client, which is exactly the account a student
+        // pressing "use a different one" is trying to get away from.
+        switchBtn.addEventListener('click', () => attempt(
+            switchBtn, 'Opening Google…', 'Use a different Google account',
+            { prompt: 'select_account consent' },
+        ));
 
         skipBtn.addEventListener('click', () => {
             this.closeModal(modal.overlay);
@@ -1392,11 +1424,18 @@ class FlickemonUI {
                 await this.engine.signIn();
             } catch (err) {
                 alert(`Sign-in failed: ${err.message}`);
+                // renderSyncStatus() below hides this again while signed out, so
+                // reveal it after: a failed sign-in is precisely when reaching a
+                // different account matters, and it is otherwise unreachable
+                // until a sign-in succeeds.
+                renderSyncStatus();
+                switchBtn.style.display = 'block';
+                return;
             } finally {
                 signInBtn.disabled = false;
                 signInBtn.textContent = 'Sign in with Google';
-                renderSyncStatus();
             }
+            renderSyncStatus();
         });
 
         switchBtn?.addEventListener('click', async () => {

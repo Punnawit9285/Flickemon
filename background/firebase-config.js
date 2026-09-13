@@ -78,15 +78,30 @@ export const LEADERBOARD_COLLECTION = 'leaderboard';
 // a student whose Chrome holds their personal Gmail could never reach their
 // faculty account, which a mandatory email domain makes fatal.
 //
-// Whichever client is used here, it MUST list this exact redirect URI:
+// ⚠️ THERE ARE TWO REDIRECT URIS, AND BOTH MUST BE REGISTERED.
 //
+// chrome.identity.getRedirectURL() derives the redirect from the extension ID,
+// and the extension ID is derived from the manifest's public key — which is NOT
+// the same key in the two builds:
+//
+//   * loaded unpacked, using the `key` in manifest.json
 //     https://joaglgcgbblaoiioeebpjlbjlahiagcm.chromiumapp.org/
 //
-// (chrome.identity.getRedirectURL() derives it from the extension ID.)
+//   * installed from the Chrome Web Store, which strips that key (see build.sh)
+//     and signs the item with one of its own
+//     https://oammomcicbchkaepkkbenadpflojjahh.chromiumapp.org/
 //
-// Verified working: Google accepts this client with that redirect, plus the
-// prompt and hd parameters below. A previous value pointed at a client that
-// had since been deleted, which surfaced as "Error 401: deleted_client".
+// Registering only the first is what shipped: development sign-in worked
+// perfectly while every student on the published extension hit
+// "Error 400: redirect_uri_mismatch". A build that signs in on this machine
+// therefore proves nothing about the published one — the URI below has to be
+// checked against the ID on the store listing itself.
+//
+// Both are listed on the client, so either build signs in. Add a third if the
+// item is ever republished under a new ID.
+//
+// (A previous client ID pointed at a client that had since been deleted, which
+// surfaced differently again, as "Error 401: deleted_client".)
 export const WEB_OAUTH_CLIENT_ID =
     '228657760659-e67kpce652d37alkrnffdinjv74jri15.apps.googleusercontent.com';
 

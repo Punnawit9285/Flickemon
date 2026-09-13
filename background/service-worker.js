@@ -11,7 +11,7 @@
  */
 
 import { isConfigured } from './firebase-config.js';
-import { signIn, signOut, getStatus, switchAccount } from './auth.js';
+import { signIn, signOut, getStatus, switchAccount, getAuthDiagnostics } from './auth.js';
 import { pullState, pushState, checkAdmin } from './firestore.js';
 import { codeForUid, openLobby, readBattle, joinBattle, submitAction, commitTurn, closeLobby } from './pvp.js';
 import { openTrade, readTrade, joinTrade, offerPokemon, confirmTrade, acknowledgeTrade, closeTrade } from './trade.js';
@@ -100,7 +100,12 @@ const handlers = {
 
     async AUTH_SIGN_IN(msg) {
         // `prompt` lets the caller force Google's account chooser (switch account).
-        const { uid, email } = await signIn({ prompt: msg.prompt });
+        // `requireEmail` is the account Flick is signed in as; the content script
+        // reads it, because only a script on the page can see Flick's session.
+        const { uid, email } = await signIn({
+            prompt: msg.prompt,
+            requireEmail: msg.requireEmail || null,
+        });
         return { ok: true, uid, email };
     },
 
@@ -112,6 +117,14 @@ const handlers = {
     async AUTH_SWITCH() {
         await switchAccount();
         return { ok: true };
+    },
+
+    // Everything the OAuth client has to agree with, read from the running
+    // extension rather than from a doc that can drift out of date. The redirect
+    // URI in particular is only knowable at runtime, and differs between an
+    // unpacked build and the published one.
+    async AUTH_DIAGNOSTICS() {
+        return getAuthDiagnostics();
     },
 
     async AUTH_IS_ADMIN() {

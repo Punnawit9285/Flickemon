@@ -14,6 +14,14 @@
         // Initialize core game engine
         if (window.flickemonEngine) await window.flickemonEngine.init();
 
+        // Shared-computer handover watch. Library machines are the reason: a
+        // student who signs in to Flick after the previous one walked away must
+        // not inherit their still-authenticated Flickémon session.
+        if (window.flickemonEngine
+            && typeof window.flickemonEngine.startFlickAccountGuard === 'function') {
+            window.flickemonEngine.startFlickAccountGuard();
+        }
+
         // Apply Pokémon theme to document as early as possible if enabled
         if (window.flickemonEngine && typeof window.flickemonEngine.getPokemonTheme === 'function') {
             window.flickemonEngine.getPokemonTheme().then(on => {

@@ -58,6 +58,55 @@ async function clearAuth() {
     await chrome.storage.local.remove([AUTH_KEY]);
 }
 
+/**
+ * The redirect Google must have on file, derived from the extension ID.
+ *
+ * Worth surfacing rather than burying: the ID is not the same in a build loaded
+ * unpacked and the same code installed from the Web Store, so this value
+ * differs between the machine a change is tested on and every machine it ships
+ * to. When only one of the two is registered, sign-in fails for everyone else
+ * with a Google error page the extension never gets to see.
+ */
+export function getRedirectUri() {
+    return chrome.identity.getRedirectURL();
+}
+
+/** What to check when sign-in fails for a reason Google won't hand back. */
+export function getAuthDiagnostics() {
+    return {
+        configured: isConfigured(),
+        extensionId: chrome.runtime.id,
+        redirectUri: getRedirectUri(),
+        clientId: WEB_OAUTH_CLIENT_ID,
+        allowedDomains: ALLOWED_EMAIL_DOMAINS,
+    };
+}
+
+/**
+ * launchWebAuthFlow cannot tell "the student closed the window" apart from
+ * "Google refused the request and the student closed the error page": both end
+ * with no redirect and the same lastError. So the misconfiguration that cannot
+ * be detected is named in the message instead, with the value needed to fix it.
+ */
+function signInFailure(reason) {
+    return new Error(
+        `${reason} If Google showed "Error 400: redirect_uri_mismatch", this ` +
+        `extension's OAuth client is missing the redirect URI ${getRedirectUri()}`
+    );
+}
+
+/**
+ * Same person? Case and space only.
+ *
+ * Gmail's dot-and-plus aliasing is deliberately NOT normalised away: faculty
+ * Workspace domains do not apply those rules, and quietly treating two distinct
+ * addresses as one is the wrong failure for a guard about who is who.
+ */
+function sameAddress(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 function randomState() {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
@@ -73,7 +122,7 @@ function randomState() {
  * it already has and the student never gets to pick, then hits a confusing
  * "this account can't be used" rejection from the domain check.
  */
-function launchGoogleAuth({ prompt } = {}) {
+function launchGoogleAuth({ prompt, loginHint } = {}) {
     const state = randomState();
     const redirectUri = chrome.identity.getRedirectURL();
 
@@ -87,6 +136,13 @@ function launchGoogleAuth({ prompt } = {}) {
     });
     if (prompt) params.set('prompt', prompt);
 
+    // Pre-selects the Flick account in Google's chooser. On a library PC that
+    // chooser lists every account the machine has ever used, and the student's
+    // own is rarely first. It is a HINT ONLY -- Google still lets any account be
+    // picked -- so it saves a misclick but decides nothing. requireEmail below
+    // is what actually holds.
+    if (loginHint) params.set('login_hint', loginHint);
+
     // Domain hint: pre-filters the chooser when exactly one domain is allowed.
     // It is only a hint — Google does not enforce it, so the real checks in
     // signIn() and firestore.rules still do the work.
@@ -97,7 +153,8 @@ function launchGoogleAuth({ prompt } = {}) {
     return new Promise((resolve, reject) => {
         chrome.identity.launchWebAuthFlow({ url, interactive: true }, (responseUrl) => {
             if (chrome.runtime.lastError || !responseUrl) {
-                reject(new Error(chrome.runtime.lastError?.message || 'Sign-in was cancelled'));
+                const reason = chrome.runtime.lastError?.message || 'Sign-in was cancelled.';
+                reject(signInFailure(reason.endsWith('.') ? reason : reason + '.'));
                 return;
             }
 
@@ -106,7 +163,7 @@ function launchGoogleAuth({ prompt } = {}) {
             const out = new URLSearchParams(fragment);
 
             const err = out.get('error');
-            if (err) return reject(new Error(`Google rejected the sign-in: ${err}`));
+            if (err) return reject(signInFailure(`Google rejected the sign-in: ${err}.`));
 
             if (out.get('state') !== state) {
                 return reject(new Error('Sign-in response did not match the request'));
@@ -179,11 +236,34 @@ async function refreshIdToken(auth) {
  * Interactive sign-in. Only call in response to a user gesture — Chrome
  * suppresses the account chooser otherwise.
  */
-export async function signIn({ prompt = 'select_account' } = {}) {
+export async function signIn({ prompt = 'select_account', requireEmail = null } = {}) {
     if (!isConfigured()) throw new Error('Cloud sync is not configured yet (see SETUP-SYNC.md)');
 
-    const googleToken = await launchGoogleAuth({ prompt });
+    const googleToken = await launchGoogleAuth({ prompt, loginHint: requireEmail });
     const auth = await exchangeForFirebase(googleToken);
+
+    // Shared-machine binding: the Google account must be the one already signed
+    // in to Flick on this computer.
+    //
+    // A faculty library PC has a dozen Google accounts live in one Chrome
+    // profile, and every one of them is @docchula.com -- so the domain check
+    // below waves them all through, and firestore.rules cannot help either,
+    // because a Firebase token says nothing about a Flick session. Without this
+    // a student can sign in as whoever Chrome happened to offer first, and that
+    // account then collects their study time.
+    //
+    // Checked AFTER the exchange, on the address Google itself returned, rather
+    // than trusting the login_hint we asked for: the hint is advisory and the
+    // student can pick past it. Nothing is persisted before it passes.
+    if (requireEmail && !sameAddress(auth.email, requireEmail)) {
+        await clearAuth();
+        throw new Error(
+            `Flick is signed in as ${requireEmail}, so Flickémon has to use that ` +
+            `account too — you picked ${auth.email || 'a different account'}. ` +
+            `Choose ${requireEmail} in Google's list, or sign in to Flick as ` +
+            `yourself first.`
+        );
+    }
 
     // Only permitted domains may hold a save. Reject before persisting anything.
     // The student can retry immediately with a different account, because every

@@ -1110,6 +1110,57 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
           [722, 725, 728].every(id => !cfg.getSpeciesById(id).isLegendary));
   }
 
+  console.log('\n=== every extension ID that ships has a registered redirect URI ===');
+  {
+    // The bug this pins: build.sh --zip strips manifest.json's `key`, so the
+    // Chrome Web Store signs the item with its own and the published extension
+    // gets a DIFFERENT ID -- and chrome.identity.getRedirectURL() derives the
+    // OAuth redirect from that ID. Only the unpacked build's URI had been
+    // registered, so sign-in worked in development and failed for every student
+    // on the published extension with "Error 400: redirect_uri_mismatch".
+    //
+    // Nothing at runtime can catch that (Google's error page never reaches the
+    // extension), so the check is on the setup docs: every ID this repo knows
+    // about must appear there as a redirect URI to register.
+    const fs = require('fs'), crypto = require('crypto');
+    const idFromKey = (key) => {
+        const digest = crypto.createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex');
+        return [...digest.slice(0, 32)].map(c => String.fromCharCode(97 + parseInt(c, 16))).join('');
+    };
+
+    const manifest = JSON.parse(fs.readFileSync(ROOT + 'manifest.json', 'utf8'));
+    const setup    = fs.readFileSync(ROOT + 'SETUP-SYNC.md', 'utf8');
+    const config   = fs.readFileSync(ROOT + 'background/firebase-config.js', 'utf8');
+
+    check('the manifest pins an extension ID, so the redirect URI is stable',
+          typeof manifest.key === 'string' && manifest.key.length > 0);
+
+    const devUri = `https://${idFromKey(manifest.key)}.chromiumapp.org/`;
+    check('the unpacked build\'s redirect URI is in SETUP-SYNC.md',
+          setup.includes(devUri), devUri);
+    check('and in firebase-config.js next to the client it belongs to',
+          config.includes(devUri), devUri);
+
+    // The published item's ID. Not derivable from anything in the repo -- the
+    // store's key is not here -- so it is asserted literally: if the item is
+    // ever republished under a new ID, this fails and the new URI has to be
+    // registered before the release can go out.
+    const storeUri = 'https://oammomcicbchkaepkkbenadpflojjahh.chromiumapp.org/';
+    check('the published build\'s redirect URI is in SETUP-SYNC.md too',
+          setup.includes(storeUri), storeUri);
+    check('and in firebase-config.js',
+          config.includes(storeUri), storeUri);
+    check('the two are genuinely different, which is the whole trap',
+          devUri !== storeUri);
+
+    // The zip is what the store receives; if it kept the key the IDs would
+    // match, and this whole class of bug would not exist. It does not, so the
+    // build must keep saying so where the next person will look.
+    const build = fs.readFileSync(ROOT + 'build.sh', 'utf8');
+    check('build.sh still strips the key from the uploaded copy only',
+          /key/.test(build) && build.includes("m.pop('key', None)"));
+  }
+
   console.log('\n=== switching account is not a trapdoor ===');
 {
     // "Switch account" used to wipe this device's save BEFORE opening Google's
@@ -1118,6 +1169,16 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
     // an empty game and no reachable way back — the snapshot restore is behind
     // the admin unlock. Found by clicking the real Settings panel in a browser.
     const realSend = e.sendToWorker;
+
+    // Sign-in now refuses unless it can see which account Flick is logged in as
+    // (the shared-library-PC guard in flickemon-flick-identity.js). These cases
+    // are about what switching does to the SAVE, so Flick is stubbed as the
+    // account being switched to; test_flick_identity.js covers the guard itself.
+    global.window.FlickemonFlickIdentity = {
+        currentFlickIdentity: () => ({ email: 'a@docchula.com', source: 'test' }),
+        sameAccount: (x, y) => String(x).toLowerCase() === String(y).toLowerCase(),
+    };
+
     const seed = () => {
         e.gameState = e.createEmptyState();
         e.gameState.hasStarted = true;
@@ -1161,6 +1222,17 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
     check('a different student does NOT inherit the previous party',
         e.gameState.party.length === 0, JSON.stringify(e.gameState.party.map(p => p.instanceId)));
     check('and a snapshot of the discarded save was kept', !!e.peekBackup());
+
+    // 4. And the guard itself still bites here: with Flick unreadable, switching
+    //    is refused rather than quietly signing in as whoever Chrome offers.
+    seed();
+    global.window.FlickemonFlickIdentity = { currentFlickIdentity: () => null };
+    e.sendToWorker = worker({ ok: true, uid: 'uid-bob', email: 'b@docchula.com' });
+    threw = false;
+    try { await e.switchAccount(); } catch { threw = true; }
+    check('switching is blocked when Flick\'s account cannot be read', threw);
+    check('and the party is left alone by the refusal', e.gameState.party.length === 1);
+    delete global.window.FlickemonFlickIdentity;
 
     e.sendToWorker = realSend;
 }

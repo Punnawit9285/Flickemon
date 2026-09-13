@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flickémon — a study companion for Flick</title>
+<meta name="description" content="A free, unofficial browser extension that turns lecture watching on Flick into a companion-raising game.">
+<link rel="icon" href="icon.png">
+<style>:root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #5c5c5c;
+    --accent: #c0392b; --border: #e4e4e7; --card: #fafafa;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #131316; --fg: #ececee; --muted: #a1a1aa;
+        --accent: #ff6b5a; --border: #2a2a30; --card: #1b1b20;
+    }
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 46rem; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+header.site { border-bottom: 1px solid var(--border); margin-bottom: 2.5rem; padding-bottom: 1.5rem; }
+.brand { display: flex; align-items: center; gap: .75rem; text-decoration: none; color: inherit; }
+.brand img { width: 48px; height: 48px; border-radius: 10px; }
+.brand strong { font-size: 1.4rem; letter-spacing: -.02em; }
+.tag { color: var(--muted); font-size: .95rem; margin: .4rem 0 0; }
+h1 { font-size: 2rem; line-height: 1.25; letter-spacing: -.025em; margin: 0 0 1rem; }
+h2 { font-size: 1.25rem; letter-spacing: -.015em; margin: 2.25rem 0 .75rem; }
+h3 { font-size: 1.05rem; margin: 1.75rem 0 .5rem; }
+p, li { color: var(--fg); }
+a { color: var(--accent); text-underline-offset: 2px; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 2.25rem 0; }
+ul { padding-left: 1.25rem; }
+li { margin: .4rem 0; }
+code {
+    background: var(--card); border: 1px solid var(--border); border-radius: 4px;
+    padding: .1em .35em; font-size: .88em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.25rem 1.5rem; margin: 1.5rem 0;
+}
+.btn {
+    display: inline-block; background: var(--accent); color: #fff;
+    padding: .7rem 1.4rem; border-radius: 999px; font-weight: 700;
+    text-decoration: none; margin: .35rem .5rem .35rem 0;
+}
+.btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+footer.site {
+    margin-top: 3.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: .875rem;
+}
+footer.site a { color: var(--muted); }
+.note { color: var(--muted); font-size: .9rem; }</style>
+</head>
+<body>
+<div class="wrap">
+<header class="site">
+  <a class="brand" href="/">
+    <img src="icon.png" alt="">
+    <strong>Flickémon</strong>
+  </a>
+  <p class="tag">An unofficial study companion for Flick. Not affiliated with Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon Company.</p>
+</header>
+<h1>Study your lectures. Raise a companion.</h1>
+
+<p>Flickémon is a free, unofficial browser extension for students using
+<a href="https://flick.docchula.com" rel="noopener noreferrer">Flick</a>, the
+lecture platform of the Faculty of Medicine, Chulalongkorn University. It turns
+the time you already spend watching lectures into a game: your companion earns
+experience while a lecture plays, and evolves as the term goes on.</p>
+
+<p>
+  <a class="btn" href="https://chromewebstore.google.com/detail/oammomcicbchkaepkkbenadpflojjahh" rel="noopener noreferrer">Add to Chrome</a>
+  <a class="btn secondary" href="https://github.com/Punnawit9285/Flickemon" rel="noopener noreferrer">View the source</a>
+</p>
+
+<h2>What it does</h2>
+<ul>
+  <li><strong>Earn as you watch.</strong> Active playback on a lecture page awards experience and in-game currency.</li>
+  <li><strong>Catch and evolve.</strong> Build a party from over a thousand species, shinies included.</li>
+  <li><strong>Battle and trade.</strong> Challenge a classmate with a six-digit code, or trade companions.</li>
+  <li><strong>Study together.</strong> An opt-in leaderboard and a friends list, both of which you control.</li>
+  <li><strong>Sync across devices.</strong> Sign in with your faculty Google account and your progress follows you.</li>
+</ul>
+
+<h2>Your data</h2>
+<div class="card">
+  <p>Flickémon reads the playback state of the lecture video, and nothing else.
+  It does not read lecture contents, exam questions, transcripts or keystrokes,
+  and it runs on <code>flick.docchula.com</code> only — no other site.</p>
+  <p>There are no ads, no analytics, no trackers, and no sale of data of any
+  kind. Signing in is optional; without it, everything stays on your device.</p>
+  <p class="note">The full detail is in the
+  <a href="/privacy">privacy policy</a>.</p>
+</div>
+
+<h2>Signing in</h2>
+<p>Cloud sync uses Google Sign-In, and asks only for your name, email address and
+profile picture. It is used to identify your save and nothing else. On a shared
+computer — a library machine, say — Flickémon will only sign in as the account
+already signed in to Flick, so your study time cannot be credited to somebody
+else by accident.</p>
+
+<h2>Support</h2>
+<p>Problems, questions and bug reports are welcome by email at
+<a href="mailto:punnawit.wsr@docchula.com">punnawit.wsr@docchula.com</a>, or as an issue on
+<a href="https://github.com/Punnawit9285/Flickemon/issues" rel="noopener noreferrer">GitHub</a>.</p>
+<footer class="site">
+  <p>
+    <a href="/">Home</a> ·
+    <a href="/privacy">Privacy policy</a> ·
+    <a href="https://github.com/Punnawit9285/Flickemon" rel="noopener noreferrer">Source code</a> ·
+    <a href="mailto:punnawit.wsr@docchula.com">punnawit.wsr@docchula.com</a>
+  </p>
+  <p>Unofficial fan project, provided free of charge. Pokémon and all associated
+  marks are trademarks of Nintendo, Creatures Inc. and GAME FREAK inc.
+  © 1995–2026 Nintendo / Creatures Inc. / GAME FREAK inc. Flickémon claims no
+  ownership of any of it.</p>
+</footer>
+</div>
+</body>
+</html>

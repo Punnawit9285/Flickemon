@@ -1658,6 +1658,41 @@
 }
 .signin-gate-error.visible { display: block; }
 
+/* Offered alongside the retry once an attempt fails: the account Google reuses
+   silently is very often the wrong one, and the failure names it. */
+.signin-gate-switch {
+    display: none;
+    background: transparent;
+    color: var(--flick-primary);
+    border: 1px solid var(--flick-primary);
+    padding: 10px 20px;
+    border-radius: 32px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    width: 100%;
+    max-width: 20rem;
+    margin: 0.75rem auto 0 auto;
+}
+.signin-gate-switch.visible { display: block; }
+.signin-gate-switch:disabled { opacity: 0.6; cursor: default; }
+
+/* The values the OAuth client has to match. Small and selectable rather than
+   hidden in a console log: when this breaks it breaks for a whole cohort, and
+   the fix needs the redirect URI that only the running extension knows. */
+.signin-gate-diag {
+    display: none;
+    margin: 1rem auto 0 auto;
+    max-width: 22rem;
+    font-size: 0.7rem;
+    line-height: 1.5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--flick-text-muted);
+    word-break: break-all;
+    user-select: text;
+}
+.signin-gate-diag.visible { display: block; }
+
 /* Bypass shown only after a sign-in attempt fails */
 .signin-gate-skip {
     display: none;

@@ -100,6 +100,17 @@
         async AUTH_SIGN_IN() { return { ok: true, email: PLAYER.email, uid: PLAYER.uid }; },
         async AUTH_SIGN_OUT() { return { ok: true }; },
         async AUTH_SWITCH() { return { ok: true, email: PLAYER.email, uid: PLAYER.uid }; },
+        // Stand-ins: the sandbox has no chrome.identity, and the sign-in gate
+        // asks for these to print alongside a failure.
+        async AUTH_DIAGNOSTICS() {
+            return {
+                configured: true,
+                extensionId: 'sandbox',
+                redirectUri: 'https://sandbox.chromiumapp.org/',
+                clientId: 'sandbox.apps.googleusercontent.com',
+                allowedDomains: ['docchula.com'],
+            };
+        },
         // On, so the admin panel is available to build a party in seconds
         // instead of watching twenty-five minutes of fake video.
         async AUTH_IS_ADMIN() { return { isAdmin: true, admin: true, ok: true }; },

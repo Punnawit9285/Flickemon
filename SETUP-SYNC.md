@@ -45,14 +45,36 @@ to reuse it:
 
 1. <https://console.cloud.google.com/apis/credentials> → open the **Web client**
    (auto created by Google Service)
-2. Under **Authorized redirect URIs** → **+ Add URI**:
+2. Under **Authorized redirect URIs** → **+ Add URI**. ⚠️ **Add both** — see
+   below for why one is not enough:
    ```
-   https://joaglgcgbblaoiioeebpjlbjlahiagcm.chromiumapp.org/
+   https://joaglgcgbblaoiioeebpjlbjlahiagcm.chromiumapp.org/   ← loaded unpacked
+   https://oammomcicbchkaepkkbenadpflojjahh.chromiumapp.org/   ← Chrome Web Store
    ```
 3. **Save**, then wait — Google warns changes take *5 minutes to a few hours*
    to take effect
 4. Its client ID must match `WEB_OAUTH_CLIENT_ID` in
    `background/firebase-config.js`
+
+### ⚠️ The published extension has a different redirect URI
+
+`chrome.identity.getRedirectURL()` builds the redirect from the extension ID,
+and the extension ID comes from the manifest's public key. `build.sh --zip`
+strips the local `key` (it has to — the Web Store signs the item with its own),
+so **the published extension has a different ID from the one you develop
+against, and therefore a different redirect URI.**
+
+This does not show up in testing. Sign-in works perfectly on the unpacked build
+while every student on the store version gets:
+
+> Access blocked: This app's request is invalid — **Error 400:
+> `redirect_uri_mismatch`**
+
+Both URIs are registered on the client now, so both builds work. If the item is
+ever republished under a new ID, register that one too. To read the ID of the
+build actually in front of you: `chrome://extensions` → the card's ID, or the
+`.../detail/<id>` in the store URL — and the sign-in failure screen in the game
+now prints the extension ID and redirect URI it is really using.
 
 > Prefer a dedicated client? Create another **Web application** client with the
 > same redirect URI and put its ID in `WEB_OAUTH_CLIENT_ID`. Leave the Firebase
@@ -85,6 +107,46 @@ actually use** — if they sign in with a university address such as
 The same domain appears in `firestore.rules`. Keep the two in sync: the
 extension's copy only produces a friendly error message and can be edited out by
 anyone running it unpacked, so **the rules file is the actual restriction**.
+
+## 4b-ii. Shared computers ⚠️ confirm the Flick session reader before shipping
+
+On a faculty library PC one Chrome profile is signed in to many Google accounts,
+**all of them `@docchula.com`** — so the domain check waves every one of them
+through, and `firestore.rules` cannot help either, because a Firebase token says
+nothing about a Flick session.
+
+So Flickémon binds to Flick: **the Google account signing in must be the account
+already signed in to Flick on that machine.** Enforced in two places —
+
+| When | What happens |
+|---|---|
+| At sign-in | `content/flickemon-flick-identity.js` reads Flick's session, passes it as `login_hint` so Google pre-selects it, and `background/auth.js` rejects the sign-in if the address Google returns is a different account. Nothing is persisted before that check passes. |
+| While playing | Every 60s and on tab focus, `enforceFlickAccount()` re-reads Flick. If it now reports a *different* account — the student left, someone else logged in — the previous student's progress is flushed to **their own** save, they are signed out, and their party is cleared from the screen. |
+
+**This fails closed.** If Flick's session cannot be read at all, sign-in is
+refused. Local-only play still works via "Continue without signing in", so a
+Flick redesign costs cloud sync, never the game — but it *does* cost cloud sync
+for everyone until the reader is updated.
+
+⚠️ **Because of that, confirm the reader works on the live site before you
+publish.** Open a Flick page while logged in and run:
+
+```js
+window.FlickemonFlickIdentity.currentFlickIdentity()
+```
+
+- `{ email: 'you@docchula.com', source: 'localStorage:…' }` → working. Pin that
+  key into `KNOWN_KEYS` at the top of `flickemon-flick-identity.js` so the read
+  is exact instead of heuristic.
+- `null` → **do not ship**. Nobody would be able to sign in. Use the snippet in
+  that file's header comment to find where Flick keeps the session, add the key
+  to `KNOWN_KEYS`, and re-check.
+
+Like `ALLOWED_EMAIL_DOMAINS`, this is not a security boundary — anyone running
+the extension unpacked can edit it out. It stops the accident and the casual
+opportunist on a shared machine, which is the threat that actually exists in a
+library. A student determined to credit their own account can just watch the
+lecture.
 
 ## 4c. Grant admin access
 
@@ -200,8 +262,10 @@ in `chrome://extensions` — those logs do **not** appear in the page console.
 | **Starting a game** | "Start Game" requires sign-in first, so a returning student resumes their existing partner instead of being offered a second starter that would merge into their account. If sync is unconfigured, it falls back to local-only play rather than locking the game. |
 | **When sign-in fails** | Signing in is the only option offered up front. If an attempt actually fails (misconfigured OAuth, offline, background worker asleep), a "Continue without signing in" bypass appears so a broken dependency never makes the game unplayable. A save made that way is unowned, and is discarded on a later sign-in if the account already has one — so the bypass can never create a second starter. |
 | **Shared devices** | Each save records the Firebase uid that owns it. A different student signing in on the same machine gets a clean slate, so one student's party can never merge into another's account. A save predating sign-in has no owner and is adopted into the first account that signs in. |
+| **Library / public PCs** | The Google account must match the account Flick is signed in as — see 4b-ii. A handover mid-session (student leaves, next one logs in to Flick) flushes the first student's progress to their own save, signs them out, and clears their party from the screen. |
 | **Who can sign in** | Only addresses on `ALLOWED_EMAIL_DOMAINS`. Enforced twice: in the extension for a clear error message, and in `firestore.rules` (server-side) as the real boundary. A rejected account is also dropped from Chrome's token cache so the student can immediately try a different one. |
-| **Switch account** | Settings → **Switch account** re-opens Google's chooser with `prompt=select_account`, so any account is reachable — not just ones signed into Chrome. Local progress is discarded on switch, so the next student never inherits the previous one's party. |
+| **Switch account** | Settings → **Switch account** re-opens Google's chooser with `prompt=select_account`, so any account is reachable — not just ones signed into Chrome. Local progress is discarded on switch, so the next student never inherits the previous one's party. It also appears after a *failed* sign-in, which is when reaching a different account matters most and was previously impossible without succeeding first. |
+| **Wrong account on the sign-in gate** | Google's error page names whichever account it silently reused, so any failure reads as "wrong account" to a student. The gate therefore offers **Use a different Google account** alongside the retry once an attempt fails; it passes `prompt=select_account consent`, because `select_account` alone can still be skipped for an account that already granted this client. |
 
 ## Cost / free-tier headroom
 
