@@ -1632,6 +1632,61 @@
     background: rgba(var(--flick-primary-rgb), 0.1);
 }
 
+/* Names the player chooses: the pencil beside a name, and the box that
+   replaces the name while it is being edited. */
+.rename-btn:not(.row-btn) {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; padding: 0; margin-left: 4px;
+    vertical-align: middle;
+    border: none; border-radius: 6px;
+    background: transparent; color: var(--flick-text-muted);
+    cursor: pointer;
+}
+.rename-btn:not(.row-btn):hover { color: var(--flick-primary); background: var(--flick-fill); }
+.rename-btn:focus-visible { outline: 2px solid var(--flick-primary); outline-offset: 1px; }
+/* The display above would otherwise beat the hidden attribute. */
+.rename-btn[hidden] { display: none; }
+.nameable { overflow-wrap: anywhere; }
+
+.name-edit {
+    display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px;
+    max-width: 100%;
+    font-size: 0.85rem; font-weight: 400;
+}
+.name-edit-input {
+    flex: 1 1 140px; min-width: 0;
+    padding: 4px 8px;
+    border: 1.5px solid var(--flick-primary); border-radius: 6px;
+    background: var(--flick-card-bg); color: var(--flick-text);
+    font: inherit; font-weight: 600;
+}
+.name-edit-input:focus { outline: none; box-shadow: 0 0 0 3px rgba(var(--flick-primary-rgb), 0.25); }
+.name-edit-save {
+    padding: 4px 10px; border: none; border-radius: 6px;
+    background: var(--flick-primary); color: var(--flick-on-primary);
+    font-weight: 700; cursor: pointer;
+}
+.name-edit-save:disabled { opacity: 0.5; cursor: default; }
+.name-edit-cancel {
+    padding: 4px 8px; border: 1px solid var(--flick-border); border-radius: 6px;
+    background: transparent; color: var(--flick-text-muted); cursor: pointer;
+}
+.name-edit-hint { flex-basis: 100%; font-size: 0.7rem; color: var(--flick-text-muted); }
+.name-edit-error { flex-basis: 100%; font-size: 0.75rem; color: var(--flick-danger); }
+.name-edit-error:empty { display: none; }
+.partner-big-name .name-edit { font-size: 1rem; justify-content: center; }
+
+/* A nicknamed Pokémon still says what it is. */
+.party-row-species {
+    font-size: 0.72rem; font-weight: 600;
+    color: var(--flick-text-muted);
+}
+.partner-species-line {
+    margin: -2px 0 6px;
+    font-size: 0.85rem; font-weight: 600;
+    color: var(--flick-text-muted);
+}
+
 /* Save slots */
 .save-slot-list { display: flex; flex-direction: column; }
 .save-slot-loading {
@@ -1664,8 +1719,13 @@
     opacity: 0.5;
 }
 .save-slot-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.save-slot-title {
+    display: flex; align-items: center; min-width: 0;
+    font-size: 0.9rem; font-weight: 800;
+}
+.save-slot-title .nameable { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .save-slot-name {
-    font-size: 0.85rem; font-weight: 700;
+    font-size: 0.8rem; font-weight: 600;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .save-slot-meta { font-size: 0.75rem; color: var(--flick-text-muted); }

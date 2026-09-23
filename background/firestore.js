@@ -139,11 +139,15 @@ export async function pullState({ since, slot: rawSlot } = {}) {
     const generation = doc.fields?.generation?.stringValue || null;
     // An administrator deleted this slot. See wipeSlot.
     const wiped = Boolean(doc.fields?.wipedAt?.timestampValue);
+    // The slot's name, which a rename from another slot writes on its own.
+    const saveName = doc.fields?.saveName?.stringValue || '';
+    const saveNameAt = Number(doc.fields?.saveNameAt?.integerValue) || 0;
     const raw = doc.fields?.state?.stringValue;
-    if (!raw) return { signedIn: true, state: null, serverAt, generation, wiped };
+    if (!raw) return { signedIn: true, state: null, serverAt, generation, wiped, saveName, saveNameAt };
 
     try {
-        return { signedIn: true, state: JSON.parse(raw), serverAt, generation, wiped };
+        return { signedIn: true, state: JSON.parse(raw), serverAt, generation, wiped,
+                 saveName, saveNameAt };
     } catch {
         // Corrupt blob shouldn't wipe local progress — treat as "no cloud save".
         console.warn('[Flickémon] Cloud save was unreadable, ignoring it');
@@ -202,6 +206,9 @@ export async function pushState(state, { slot: rawSlot, generation } = {}) {
                     partnerSpecies: { integerValue: String(Number(partner && partner.speciesId) || 0) },
                     partnerLevel: { integerValue: String(Number(partner && partner.level) || 0) },
                     partnerShiny: { booleanValue: Boolean(partner && partner.shiny) },
+                    partnerNickname: { stringValue: String((partner && partner.nickname) || '') },
+                    saveName: { stringValue: String(state.saveName || '') },
+                    saveNameAt: { integerValue: String(Number(state.saveNameAt) || 0) },
                     // The run. The rules refuse any change to it but an admin's
                     // wipe, which is what keeps a student from deleting a save
                     // by writing a new game over it.
@@ -238,7 +245,8 @@ export async function pushState(state, { slot: rawSlot, generation } = {}) {
 
 const SUMMARY_FIELDS = ['serverAt', 'updatedAt', 'hasStarted', 'caughtCount',
                         'totalMinutesWatched', 'partnerSpecies', 'partnerLevel',
-                        'partnerShiny', 'generation', 'wipedAt'];
+                        'partnerShiny', 'partnerNickname', 'saveName', 'saveNameAt',
+                        'generation', 'wipedAt'];
 
 /** One slot's document, reduced to what the save screen shows. */
 function summarize(slot, doc) {
@@ -257,6 +265,9 @@ function summarize(slot, doc) {
         partnerSpecies: num(f.partnerSpecies) || null,
         partnerLevel: num(f.partnerLevel) || null,
         partnerShiny: f.partnerShiny?.booleanValue === true,
+        partnerNickname: f.partnerNickname?.stringValue || '',
+        saveName: f.saveName?.stringValue || '',
+        saveNameAt: num(f.saveNameAt),
         updatedAt: num(f.updatedAt) || null,
         generation: f.generation?.stringValue || null,
         wiped: Boolean(f.wipedAt),
@@ -294,6 +305,41 @@ export async function listSlots() {
     const slots = [];
     for (let n = 1; n <= SLOT_COUNT; n++) slots.push(summarize(n, docs[n] || null));
     return { signedIn: true, slots };
+}
+
+/**
+ * Names a slot without touching the save inside it.
+ *
+ * Masked to the two name fields, so the rest of the document -- the save, its
+ * wallet, its generation -- is exactly as the rules last saw it, and serverAt
+ * is stamped because the rules require every write to carry the commit time.
+ * The slot being played is not renamed here: its name rides its own push.
+ */
+export async function renameSlot({ slot: rawSlot, name, at } = {}) {
+    const slot = validSlot(rawSlot);
+    if (!slot) throw new Error('No such save slot');
+    const auth = await getIdToken();
+    if (!auth) return { signedIn: false, ok: false };
+
+    const res = await fetch(`${BASE()}:commit`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${auth.idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            writes: [{
+                update: {
+                    name: docName(auth.uid, slot),
+                    fields: {
+                        saveName: { stringValue: String(name || '').slice(0, 64) },
+                        saveNameAt: { integerValue: String(Number(at) || Date.now()) },
+                    },
+                },
+                updateMask: { fieldPaths: ['saveName', 'saveNameAt'] },
+                updateTransforms: [{ fieldPath: 'serverAt', setToServerValue: 'REQUEST_TIME' }],
+            }],
+        }),
+    });
+    if (!res.ok) throw httpError('Could not rename the save', res.status);
+    return { signedIn: true, ok: true };
 }
 
 /**

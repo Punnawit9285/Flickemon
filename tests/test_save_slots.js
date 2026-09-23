@@ -247,6 +247,98 @@ const reset = () => {
         check('and an unused slot is empty', !slots[5].hasStarted);
     }
 
+    console.log('\n=== naming a Pokémon ===');
+    {
+        reset();
+        e.gameState = game(25, 10);
+        await e.renamePokemon('p25', '  Sparky ⚡  ', 1000);
+        check('a nickname is kept, trimmed', e.gameState.party[0].nickname === 'Sparky ⚡',
+            JSON.stringify(e.gameState.party[0].nickname));
+        await e.renamePokemon('p25', 'Zap‮yrakps​\n', 1001);
+        check('invisible and direction-flipping characters are dropped',
+            e.gameState.party[0].nickname === 'Zap yrakps', JSON.stringify(e.gameState.party[0].nickname));
+        await e.renamePokemon('p25', '😀'.repeat(30), 1002);
+        check('capped at 20 characters, an emoji counting as one',
+            Array.from(e.gameState.party[0].nickname).length === 20);
+        await e.renamePokemon('p25', '<img src=x onerror=alert(1)>', 1003);
+        check('anything typed is kept as text -- the UI escapes it',
+            e.gameState.party[0].nickname === '<img src=x onerror=alert(1)>'.slice(0, 20));
+        await e.renamePokemon('p25', '   ', 1004);
+        check('an empty name goes back to the species', !('nickname' in e.gameState.party[0]));
+        check('someone else\'s Pokémon cannot be named',
+            await e.renamePokemon('nope', 'x').then(() => false, () => true));
+
+        // Two devices: the later rename wins, whichever syncs last.
+        reset();
+        e.gameState = game(25, 10);
+        e.gameState.party[0].nickname = 'Old'; e.gameState.party[0].nicknameAt = 500;
+        const remote = game(25, 10);
+        remote.party[0].nickname = 'New'; remote.party[0].nicknameAt = 900;
+        e.mergeCloudState({ ...remote, schemaVersion: 2 });
+        check('a newer nickname from another device is taken', e.gameState.party[0].nickname === 'New');
+        remote.party[0].nickname = 'Stale'; remote.party[0].nicknameAt = 100;
+        e.mergeCloudState({ ...remote, schemaVersion: 2 });
+        check('an older one is not', e.gameState.party[0].nickname === 'New');
+        remote.party[0].nicknameAt = 1000; delete remote.party[0].nickname;
+        e.mergeCloudState({ ...remote, schemaVersion: 2 });
+        check('and clearing it on another device clears it here', !e.gameState.party[0].nickname);
+        check('a junk nickname in a save is dropped on load',
+            !('nickname' in e.normalizeState({ ...game(1, 5), party: [{ ...game(1, 5).party[0], nickname: 42 }] }).party[0]));
+    }
+
+    console.log('\n=== naming a save slot ===');
+    {
+        reset();
+        e.gameState = game(4, 12);
+        sent = [];
+        await e.renameSaveSlot(1, 'Main run', 2000);
+        check('the slot being played is named in its own save',
+            e.gameState.saveName === 'Main run' && e.gameState.saveNameAt === 2000);
+        check('and rides its push, not a separate write', !sent.some(m => m.type === 'CLOUD_RENAME_SLOT'));
+        check('the name travels in the save', e.buildCloudPayload().saveName === 'Main run');
+
+        store[e.slotStorageKey(3)] = game(7, 20);
+        sent = [];
+        await e.renameSaveSlot(3, 'Shiny hunt', 2100);
+        check('another slot is renamed on this device', store[e.slotStorageKey(3)].saveName === 'Shiny hunt');
+        const msg = sent.find(m => m.type === 'CLOUD_RENAME_SLOT');
+        check('and in the cloud, by name only', msg && msg.slot === 3 && msg.name === 'Shiny hunt' && !msg.state,
+            JSON.stringify(msg));
+
+        const { slots } = await e.listSaveSlots();
+        check('the save screen shows both names',
+            slots[0].saveName === 'Main run' && slots[2].saveName === 'Shiny hunt',
+            JSON.stringify(slots.map(x => x.saveName)));
+
+        await e.renameSaveSlot(1, '', 2200);
+        check('an empty name goes back to "Slot n"', e.gameState.saveName === '');
+
+        // A rename made from another slot arrives as the document's own fields.
+        reset();
+        e.gameState = game(4, 12, { saveGeneration: 'g', saveName: 'Mine', saveNameAt: 10 });
+        cloud[1] = { state: game(4, 12), generation: 'g' };
+        const realSend = e.sendToWorker;
+        e.sendToWorker = async m => m.type === 'CLOUD_PULL'
+            ? { signedIn: true, state: game(4, 12), generation: 'g', saveName: 'From phone', saveNameAt: 50 }
+            : realSend(m);
+        await e.pullFromCloud();
+        check('a newer name from another device is taken', e.gameState.saveName === 'From phone');
+        e.sendToWorker = async m => m.type === 'CLOUD_PULL'
+            ? { signedIn: true, state: game(4, 12), generation: 'g', saveName: 'Old', saveNameAt: 5 }
+            : realSend(m);
+        await e.pullFromCloud();
+        check('an older one is not', e.gameState.saveName === 'From phone');
+        e.sendToWorker = realSend;
+
+        // Signed out, a slot with no save here has nowhere to keep a name.
+        reset();
+        e.gameState = game(4, 12);
+        e.sendToWorker = async m => m.type === 'AUTH_STATUS' ? { configured: true, signedIn: false } : realSend(m);
+        check('signed out, an empty slot cannot be named',
+            await e.renameSaveSlot(5, 'x').then(() => false, () => true));
+        e.sendToWorker = realSend;
+    }
+
     console.log('\n=== a reply for a slot already left is ignored ===');
     {
         reset();

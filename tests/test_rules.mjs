@@ -204,6 +204,14 @@ console.log('\n=== six save slots, and only an administrator deletes one ===');
         await denied(setDoc(slot(alice, A, 3),
             save({ generation: 'run-c', moneyEarned: 99999, moneySpent: 0 }))));
 
+    // Renaming a slot from another slot's screen writes the name alone.
+    check('a slot is renamed without resending the save',
+        await allowed(updateDoc(slot(alice, A, 3),
+            { saveName: 'Shiny hunt', saveNameAt: Date.now(), serverAt: serverTimestamp() })));
+    check('but only by its owner',
+        await denied(updateDoc(slot(bob, A, 3),
+            { saveName: 'mine now', saveNameAt: Date.now(), serverAt: serverTimestamp() })));
+
     check('a student cannot delete their own slot', await denied(deleteDoc(slot(alice, A, 2))));
     await seed(db => setDoc(doc(db, 'saves', A), save({ generation: 'run-1', serverAt: Timestamp.now() })));
     check('nor their own slot 1', await denied(deleteDoc(doc(alice, 'saves', A))));

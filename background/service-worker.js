@@ -12,7 +12,7 @@
 
 import { isConfigured } from './firebase-config.js';
 import { signIn, signOut, getStatus, switchAccount, getAuthDiagnostics } from './auth.js';
-import { pullState, pushState, checkAdmin, listSlots, wipeSlot } from './firestore.js';
+import { pullState, pushState, checkAdmin, listSlots, wipeSlot, renameSlot } from './firestore.js';
 import { codeForUid, openLobby, readBattle, joinBattle, submitAction, commitTurn, closeLobby } from './pvp.js';
 import { openTrade, readTrade, joinTrade, offerPokemon, confirmTrade, acknowledgeTrade, closeTrade } from './trade.js';
 import { claimUsername, releaseUsername, writeProfile, lookup,
@@ -241,6 +241,11 @@ const handlers = {
     /** Every save slot, summarised. Only the save screen asks. */
     async CLOUD_SLOTS() {
         return await listSlots();
+    },
+
+    /** Names a slot other than the one being played. See renameSlot. */
+    async CLOUD_RENAME_SLOT(msg) {
+        return await renameSlot({ slot: msg.slot, name: msg.name, at: msg.at });
     },
 
     /** Admin only; the rules refuse anyone else. See wipeSlot. */

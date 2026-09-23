@@ -43,6 +43,18 @@ const STARTER_REGIONS = [
     { gen: 0, region: 'Special', games: "Yellow & Let's Go" },
 ];
 
+/**
+ * Escapes text a player chose -- a nickname, a save's name -- for innerHTML.
+ * They can type anything, so anything they type is shown as text.
+ */
+function esc(text) {
+    return String(text ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[c]);
+}
+
+const pencilSvg = '<svg viewBox="0 0 512 512" width="13" height="13" fill="none" stroke="currentColor" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M364 64l84 84-264 264H100v-84z"/><path d="M308 120l84 84"/></svg>';
+
 // Kanto species offered on the Special tab rather than with the Kanto trio.
 const SPECIAL_STARTER_IDS = [25, 133];
 
@@ -115,6 +127,13 @@ class FlickemonUI {
                 ball.remove();
             }
         }
+    }
+
+    /** What the player calls one of their Pokémon: its nickname, or its species. */
+    nameOf(pokemon) {
+        if (pokemon && pokemon.nickname) return pokemon.nickname;
+        const species = pokemon ? this.engine.getSpeciesForPokemon(pokemon) : null;
+        return species ? species.name : '';
     }
 
     /** The games' HP colours: green above half, yellow above a fifth, red below. */
@@ -279,6 +298,8 @@ class FlickemonUI {
         // change rebuilds.
         const signature = [
             activeSpecies.id, active.level, isCaptureMode,
+            // A nickname is only drawn on a rebuild.
+            active.nickname || '',
             // The MEGA form, not just the species. getSpeciesForPokemon returns
             // the base species by design, so a mega toggle changes none of the
             // other fields here -- the signature matched, the widget took the
@@ -356,10 +377,10 @@ class FlickemonUI {
                 <div class="hud-columns">
                     <!-- Left: Active Partner -->
                     <div class="hud-col partner-col">
-                        <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(active), active.shiny)}" alt="${activeSpecies.name}" class="partner-mini-sprite${active.shiny ? ' is-shiny' : ''}${this.engine.activeMegaForm(active) ? ' is-mega' : ''}"/>
+                        <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(active), active.shiny)}" alt="${esc(this.nameOf(active))}" class="partner-mini-sprite${active.shiny ? ' is-shiny' : ''}${this.engine.activeMegaForm(active) ? ' is-mega' : ''}"/>
                         <div class="partner-info">
                             <div class="name-line">
-                                <strong class="pk-name">${activeSpecies.name}</strong>
+                                <strong class="pk-name" title="${active.nickname ? esc(activeSpecies.name) : ''}">${esc(this.nameOf(active))}</strong>
                                 <span class="pk-lvl">Lv.${active.level}</span>
                             </div>
                             <div class="exp-bar-track">
@@ -1039,16 +1060,20 @@ class FlickemonUI {
             if (tab === 'partner') {
                 if (active && activeSpecies) {
                     const expProg = this.engine.getExpProgress(active);
+                    const partnerName = `<span class="nameable">${esc(this.nameOf(active))}</span>`
+                        + `<button class="rename-btn partner-rename-btn" data-instance="${active.instanceId}"`
+                        + ` title="Give ${esc(this.nameOf(active))} a nickname" aria-label="Rename">${pencilSvg}</button>`;
                     content.innerHTML = `
                         <div class="partner-section">
-                            <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(active), active.shiny)}" alt="${activeSpecies.name}" class="partner-big-sprite${active.shiny ? ' is-shiny' : ''}${this.engine.activeMegaForm(active) ? ' is-mega' : ''}"/>
+                            <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(active), active.shiny)}" alt="${esc(this.nameOf(active))}" class="partner-big-sprite${active.shiny ? ' is-shiny' : ''}${this.engine.activeMegaForm(active) ? ' is-mega' : ''}"/>
                             <h2 class="partner-big-name">
-                                ${activeSpecies.name}
+                                ${partnerName}
                                 ${activeSpecies.isCustom ? `<span class="badge badge-custom" title="${this.config.CUSTOM_LABEL}">${this.config.CUSTOM_LABEL}</span>` : ''}
                                 ${activeSpecies.isLegendary ? '<span class="badge badge-legendary" title="Legendary">★</span>' : ''}
                                 ${active.shiny ? '<span class="badge badge-shiny" title="Shiny">✦</span>' : ''}
                                 ${this.engine.activeMegaForm(active) ? `<span class="badge badge-mega" title="${this.engine.activeMegaForm(active).name} — deals 1.3x damage">MEGA</span>` : ''}
                             </h2>
+                            ${active.nickname ? `<p class="partner-species-line">${esc(activeSpecies.name)}</p>` : ''}
                             <div class="partner-types">${activeSpecies.types.map(t => `<span class="type-badge" data-type="${t}">${t}</span>`).join('')}</div>
                             <p class="partner-big-level">Level ${active.level}</p>
                             
@@ -1067,6 +1092,20 @@ class FlickemonUI {
                             </div>
                         </div>
                     `;
+                    const renameBtn = content.querySelector('.partner-rename-btn');
+                    renameBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.editNameInline(content.querySelector('.partner-big-name .nameable'), {
+                            value: active.nickname || '',
+                            placeholder: activeSpecies.name,
+                            label: `Nickname for ${activeSpecies.name}`,
+                            hint: `Leave it empty to go back to ${activeSpecies.name}.`,
+                            onSave: async (name) => {
+                                await this.engine.renamePokemon(active.instanceId, name);
+                                renderTab('partner');
+                            },
+                        });
+                    });
                 } else {
                     content.innerHTML = `<div class="partner-section"><p>No partner selected.</p></div>`;
                 }
@@ -1118,13 +1157,16 @@ class FlickemonUI {
                             const megaReady = this.engine.availableMegaForms(pk);
                             const megaDormant = this.engine.dormantMegaStones(pk);
                             const stoneNames = [...megaReady, ...megaDormant].map(f => f.stone);
+                            // A nicknamed Pokémon still says what species it is.
+                            const rowName = `<span class="nameable">${esc(this.nameOf(pk))}</span>`
+                                + (pk.nickname ? `<span class="party-row-species">${esc(sp.name)}</span>` : dupe);
                             return `
                                 <div class="party-row ${isActive ? 'is-active' : ''} ${onTeam ? 'on-team' : ''}"
                                      data-instance="${pk.instanceId}">
-                                    <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(pk), pk.shiny)}" alt="${sp.name}" class="party-row-sprite${pk.shiny ? ' is-shiny' : ''}${megaOn ? ' is-mega' : ''}"/>
+                                    <img src="${this.config.getSpriteUrl(this.engine.spriteIdFor(pk), pk.shiny)}" alt="${esc(this.nameOf(pk))}" class="party-row-sprite${pk.shiny ? ' is-shiny' : ''}${megaOn ? ' is-mega' : ''}"/>
                                     <div class="party-row-info">
                                         <span class="party-row-name">
-                                            ${sp.name}${dupe}
+                                            ${rowName}
                                             ${sp.isCustom ? `<span class="badge badge-custom" title="${this.config.CUSTOM_LABEL}">${this.config.CUSTOM_LABEL}</span>` : ''}
                                             ${sp.isLegendary ? '<span class="badge badge-legendary" title="Legendary">★</span>' : ''}
                                             ${pk.shiny ? '<span class="badge badge-shiny" title="Shiny">✦</span>' : ''}
@@ -1139,6 +1181,9 @@ class FlickemonUI {
                                                 : ''}</span>
                                     </div>
                                     <div class="party-row-actions">
+                                        <button class="row-btn rename-btn party-rename-btn"
+                                                data-instance="${pk.instanceId}"
+                                                title="Give ${esc(this.nameOf(pk))} a nickname" aria-label="Rename">${pencilSvg}</button>
                                         <button class="row-btn partner-btn ${isActive ? 'on' : ''}"
                                                 data-instance="${pk.instanceId}"
                                                 ${isActive ? 'disabled' : ''}
@@ -1223,6 +1268,25 @@ class FlickemonUI {
                                 .find(pk => pk.instanceId === instanceId);
                             this.showMegaOverlay(res.scene, member);
                         }
+                    });
+                });
+                content.querySelectorAll('.party-rename-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const pk = this.engine.getParty().find(p => p.instanceId === btn.dataset.instance);
+                        const sp = pk && this.engine.getSpeciesForPokemon(pk);
+                        const row = btn.closest('.party-row');
+                        if (!pk || !sp || !row) return;
+                        this.editNameInline(row.querySelector('.party-row-name .nameable'), {
+                            value: pk.nickname || '',
+                            placeholder: sp.name,
+                            label: `Nickname for ${sp.name}`,
+                            hint: `Leave it empty to go back to ${sp.name}.`,
+                            onSave: async (name) => {
+                                await this.engine.renamePokemon(pk.instanceId, name);
+                                renderTab('party');
+                            },
+                        });
                     });
                 });
                 content.querySelectorAll('.team-btn').forEach(btn => {
@@ -1523,6 +1587,23 @@ class FlickemonUI {
                 return;
             }
             slotList.innerHTML = listing.slots.map(slot => this.renderSaveSlot(slot)).join('');
+            slotList.querySelectorAll('.save-slot-rename-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const n = Number(btn.dataset.slot);
+                    const slot = listing.slots.find(x => x.slot === n);
+                    this.editNameInline(btn.closest('.save-slot-title').querySelector('.nameable'), {
+                        value: (slot && slot.saveName) || '',
+                        placeholder: `Slot ${n}`,
+                        label: `Name for save slot ${n}`,
+                        hint: `Leave it empty to call it Slot ${n}.`,
+                        onSave: async (name) => {
+                            await this.engine.renameSaveSlot(n, name);
+                            await renderSlots();
+                        },
+                    });
+                });
+            });
             slotList.querySelectorAll('.save-slot-btn').forEach(btn => {
                 btn.addEventListener('click', async () => {
                     const slot = Number(btn.dataset.slot);
@@ -2841,6 +2922,60 @@ class FlickemonUI {
         return deltas.length ? `<div class="evo-gains">${deltas.join('')}</div>` : '';
     }
 
+    /**
+     * Swaps a name for a text box, in place. Saving hands the text to `onSave`,
+     * which re-renders; cancelling puts the name back.
+     *
+     * Keys typed here stop at the box. The lecture page listens for keys on the
+     * whole document -- the player's shortcuts among them -- and a nickname
+     * with a K or a space in it must not pause the lecture.
+     */
+    editNameInline(target, { value = '', placeholder = '', label = 'Name', hint = '', onSave }) {
+        if (!target || !target.parentNode) return;
+        const form = document.createElement('form');
+        form.className = 'name-edit';
+        form.innerHTML = `
+            <input class="name-edit-input" type="text" maxlength="60" autocomplete="off" spellcheck="false"
+                   aria-label="${esc(label)}" placeholder="${esc(placeholder)}"/>
+            <button type="submit" class="name-edit-save">Save</button>
+            <button type="button" class="name-edit-cancel" aria-label="Cancel">✕</button>
+            ${hint ? `<span class="name-edit-hint">${esc(hint)}</span>` : ''}
+            <span class="name-edit-error" role="alert"></span>`;
+        const input = form.querySelector('.name-edit-input');
+        input.value = value;
+
+        const hidden = [...target.parentNode.querySelectorAll('.rename-btn')];
+        const restore = () => {
+            form.replaceWith(target);
+            hidden.forEach(b => { b.hidden = false; });
+        };
+        for (const type of ['keydown', 'keyup', 'keypress']) {
+            form.addEventListener(type, (e) => {
+                e.stopPropagation();
+                if (type === 'keydown' && e.key === 'Escape') { e.preventDefault(); restore(); }
+            });
+        }
+        form.addEventListener('click', e => e.stopPropagation());
+        form.querySelector('.name-edit-cancel').addEventListener('click', restore);
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const save = form.querySelector('.name-edit-save');
+            save.disabled = true;
+            try {
+                await onSave(input.value);
+            } catch (err) {
+                form.querySelector('.name-edit-error').textContent =
+                    err && err.message ? err.message : 'Could not save that name.';
+                save.disabled = false;
+            }
+        });
+
+        hidden.forEach(b => { b.hidden = true; });
+        target.replaceWith(form);
+        input.focus();
+        input.select();
+    }
+
     /** One row of the save screen. */
     renderSaveSlot(slot) {
         const species = slot.hasStarted && slot.partnerSpecies
@@ -2849,12 +2984,17 @@ class FlickemonUI {
         const mins = Math.round((slot.totalMinutesWatched || 0) % 60);
         const studied = hours ? `${hours}h ${mins}m` : `${mins}m`;
         const art = species
-            ? `<img class="save-slot-sprite${slot.partnerShiny ? ' is-shiny' : ''}" src="${this.config.getSpriteUrl(species.id, slot.partnerShiny)}" alt="${species.name}"/>`
+            ? `<img class="save-slot-sprite${slot.partnerShiny ? ' is-shiny' : ''}" src="${this.config.getSpriteUrl(species.id, slot.partnerShiny)}" alt="${esc(species.name)}"/>`
             : '<span class="save-slot-empty-ball" aria-hidden="true"></span>';
+        const partner = slot.partnerNickname || (species ? species.name : 'Trainer');
+        const title = `<span class="save-slot-title"><span class="nameable">${esc(slot.saveName || `Slot ${slot.slot}`)}</span><button class="rename-btn save-slot-rename-btn" data-slot="${slot.slot}"
+                    title="Rename this save" aria-label="Rename save slot ${slot.slot}">${pencilSvg}</button></span>`;
         const detail = slot.hasStarted
-            ? `<span class="save-slot-name">${species ? species.name : 'Trainer'}${slot.partnerLevel ? ` · Lv${slot.partnerLevel}` : ''}</span>
+            ? `${title}
+               <span class="save-slot-name">${esc(partner)}${slot.partnerLevel ? ` · Lv${slot.partnerLevel}` : ''}</span>
                <span class="save-slot-meta">${slot.caughtCount} caught · ${studied} studied</span>`
-            : `<span class="save-slot-name">Empty</span>
+            : `${title}
+               <span class="save-slot-name">Empty</span>
                <span class="save-slot-meta">Start a new game here</span>`;
         const action = slot.active
             ? '<span class="save-slot-current">Playing</span>'

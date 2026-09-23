@@ -121,6 +121,8 @@
         async CLOUD_FLUSH_PENDING() { return { ok: true }; },
         // No cloud copies, so the save screen lists this browser's own.
         async CLOUD_SLOTS() { return { signedIn: false, slots: [] }; },
+        // The engine keeps this browser's copy of the slot, which is all there is.
+        async CLOUD_RENAME_SLOT() { return { signedIn: true, ok: true }; },
         // The sandbox player is an admin, and the server would agree.
         async CLOUD_WIPE_SLOT(msg) {
             return { signedIn: true, ok: true, slot: msg.slot,

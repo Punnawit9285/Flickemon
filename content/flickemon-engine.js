@@ -41,6 +41,22 @@ const LOCAL_SAVE_DEBOUNCE_MS = 1000;
 // corrupt value, and taken as a mark it would stop that lecture crediting ever.
 const MAX_LECTURE_SEC = 24 * 60 * 60;
 
+// Names a player chooses. Anything goes but invisible characters, which could
+// make a name that looks empty or reads backwards; the caps keep a name on one
+// line wherever it is shown. Counted in characters, so an emoji is one.
+const NICKNAME_MAX = 20;
+const SAVE_NAME_MAX = 24;
+
+/** A player-chosen name, cleaned, or '' for "use the default". */
+function cleanName(raw, max) {
+    if (typeof raw !== 'string') return '';
+    const text = raw
+        .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return Array.from(text).slice(0, max).join('').trim();
+}
+
 // How far Flick's rendering of a position can sit from the player's own. A row
 // shows its length in whole minutes and what is left rounded to one, so a
 // stretch played here is read with this much give either side before anything
@@ -385,6 +401,9 @@ class FlickemonEngine {
             // Which run of this slot the save belongs to, as the cloud names
             // it. Null until the cloud has been asked. See pullFromCloud.
             saveGeneration: null,
+            // What the player calls this save slot; '' shows "Slot n".
+            saveName: '',
+            saveNameAt: 0,
         };
     }
 
@@ -425,6 +444,9 @@ class FlickemonEngine {
         s.pokedex = s.pokedex.filter(e => e && Number.isFinite(e.speciesId));
 
         s.party.forEach(p => {
+            const nickname = cleanName(p.nickname, NICKNAME_MAX);
+            if (nickname) p.nickname = nickname; else delete p.nickname;
+            if (!Number.isFinite(p.nicknameAt) || p.nicknameAt < 0) p.nicknameAt = 0;
             if (!Number.isFinite(p.level)) p.level = 1;
             if (!Number.isFinite(p.totalExp)) p.totalExp = this.config.expForLevel(p.level);
             // Saves from before shinies existed have no flag; absent means no.
@@ -680,6 +702,8 @@ class FlickemonEngine {
         if (!Number.isFinite(s.lastSyncedAt)) s.lastSyncedAt = 0;
 
         if (typeof s.saveGeneration !== 'string' || !s.saveGeneration) s.saveGeneration = null;
+        s.saveName = cleanName(s.saveName, SAVE_NAME_MAX);
+        if (!Number.isFinite(s.saveNameAt) || s.saveNameAt < 0) s.saveNameAt = 0;
 
         // The active pointer must name a party member that actually exists.
         if (!s.party.some(p => p.instanceId === s.activeInstanceId)) {
@@ -1073,6 +1097,9 @@ class FlickemonEngine {
         if (res.unchanged) return true;
 
         this.adoptGeneration(res);
+        // A slot renamed from another slot's screen writes only these fields,
+        // not the save inside, so they are read on their own.
+        this.adoptSaveName(res.saveName, res.saveNameAt);
 
         if (!res.state) {
             // Account has no save yet — this device seeds it.
@@ -1099,6 +1126,66 @@ class FlickemonEngine {
     //
     // Students start games in empty slots and can switch between them, but
     // cannot delete one -- that is an administrator's, and the rules enforce it.
+
+    /** Takes a save name if it is newer than the one this slot has. */
+    adoptSaveName(name, at) {
+        if (!Number.isFinite(at) || at <= (this.gameState.saveNameAt || 0)) return;
+        this.gameState.saveName = cleanName(name, SAVE_NAME_MAX);
+        this.gameState.saveNameAt = at;
+    }
+
+    /**
+     * Names a save slot. Any slot, not only the one being played: the one on
+     * screen is saved as usual, and another is renamed on this device and in
+     * the cloud directly -- only the name is written, never the save inside,
+     * which this device may not have the newest copy of. An empty name goes
+     * back to "Slot n".
+     */
+    async renameSaveSlot(slot, raw, now = Date.now()) {
+        const target = this.validSlot(slot);
+        if (!target) throw new Error('No such save slot');
+        const name = cleanName(raw, SAVE_NAME_MAX);
+
+        if (target === this.activeSlot) {
+            this.gameState.saveName = name;
+            this.gameState.saveNameAt = now;
+            await this.saveGameState();
+            return name;
+        }
+
+        const owner = this.gameState.ownerUid || null;
+        const local = await this.readSlotLocally(target, owner);
+        if (local && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            local.saveName = name;
+            local.saveNameAt = now;
+            await chrome.storage.local.set({ [this.slotStorageKey(target)]: local });
+        }
+        const status = await this.getSyncStatus().catch(() => null);
+        if (status && status.signedIn) {
+            const res = await this.sendToWorker({ type: 'CLOUD_RENAME_SLOT', slot: target, name, at: now });
+            if (!res || !res.ok) throw new Error((res && res.error) || 'Could not rename the save.');
+        } else if (!local) {
+            // Signed out, a slot with no save here has nowhere to keep a name.
+            throw new Error('Start a game in that slot first, or sign in.');
+        }
+        return name;
+    }
+
+    /**
+     * Nicknames one of the player's own Pokémon. An empty name takes it back
+     * to its species name. Nicknames stay in the player's own save: trades,
+     * battles and friends' feeds build what they send field by field and never
+     * include one.
+     */
+    async renamePokemon(instanceId, raw, now = Date.now()) {
+        const pokemon = this.gameState.party.find(p => p.instanceId === instanceId);
+        if (!pokemon) throw new Error('That Pokémon is not in your party.');
+        const name = cleanName(raw, NICKNAME_MAX);
+        if (name) pokemon.nickname = name; else delete pokemon.nickname;
+        pokemon.nicknameAt = now;
+        await this.saveGameState();
+        return name;
+    }
 
     validSlot(slot) {
         const n = Number(slot);
@@ -1183,9 +1270,17 @@ class FlickemonEngine {
             // and always for the slot on screen, which is the freshest there is.
             const pick = n === this.activeSlot && localSummary ? localSummary
                 : (fromCloud && fromCloud.hasStarted ? fromCloud : (localSummary || fromCloud));
+            // The name is its own last-writer-wins value: a rename made while
+            // offline, or from another device, is not tied to whose save is
+            // fresher.
+            const named = [fromCloud, localSummary, n === this.activeSlot ? this.gameState : null]
+                .filter(x => x && x.saveName !== undefined)
+                .sort((a, b) => (b.saveNameAt || 0) - (a.saveNameAt || 0))[0];
             slots.push({
                 slot: n,
                 active: n === this.activeSlot,
+                saveName: (named && named.saveName) || '',
+                partnerNickname: (pick && pick.partnerNickname) || '',
                 hasStarted: Boolean(pick && pick.hasStarted),
                 partnerSpecies: (pick && pick.partnerSpecies) || null,
                 partnerLevel: (pick && pick.partnerLevel) || null,
@@ -1203,6 +1298,9 @@ class FlickemonEngine {
         const partner = party.find(p => p.instanceId === state.activeInstanceId) || party[0] || null;
         return {
             hasStarted: state.hasStarted === true,
+            saveName: state.saveName || '',
+            saveNameAt: state.saveNameAt || 0,
+            partnerNickname: partner && partner.nickname ? partner.nickname : '',
             partnerSpecies: partner ? partner.speciesId : null,
             partnerLevel: partner ? partner.level : null,
             partnerShiny: Boolean(partner && partner.shiny),
@@ -1407,6 +1505,8 @@ class FlickemonEngine {
             incubatingId: this.gameState.incubatingId || null,
             megaSpecies: this.gameState.megaSpecies || [],
             shopBoosts: this.gameState.shopBoosts || {},
+            saveName: this.gameState.saveName || '',
+            saveNameAt: this.gameState.saveNameAt || 0,
             lastSyncedAt: this.gameState.lastSyncedAt,
         };
     }
@@ -1421,6 +1521,7 @@ class FlickemonEngine {
         const before = JSON.stringify(this.buildCloudPayload());
 
         this.gameState.hasStarted = this.gameState.hasStarted || Boolean(cloud.hasStarted);
+        this.adoptSaveName(cloud.saveName, cloud.saveNameAt);
         // Study time merges per source and then sums. Each source is monotonic
         // on its own, so max() per key is still right — but taking the max of
         // the TOTALS, as this used to, threw away whatever the other device had
@@ -1575,6 +1676,15 @@ class FlickemonEngine {
                 // lastSyncedAt used for battleMode and the team lists. A device
                 // syncing later for an unrelated reason must not silently
                 // revert a mega it never touched.
+                // A nickname is the same kind of preference: last writer wins,
+                // on its own clock, so renaming on one device is not undone by
+                // another that merely synced later.
+                if ((remote.nicknameAt || 0) > (local.nicknameAt || 0)) {
+                    const nickname = cleanName(remote.nickname, NICKNAME_MAX);
+                    if (nickname) local.nickname = nickname; else delete local.nickname;
+                    local.nicknameAt = remote.nicknameAt;
+                }
+
                 if ((remote.megaActiveAt || 0) > (local.megaActiveAt || 0)) {
                     local.megaActive = typeof remote.megaActive === 'string' ? remote.megaActive : null;
                     local.megaActiveAt = remote.megaActiveAt || 0;
