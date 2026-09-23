@@ -1,7 +1,14 @@
 /**
  * Firestore REST Client (no SDK)
  * ──────────────────────────────
- * One document per student at saves/{uid}.
+ * One document per save slot. Slot 1 is saves/{uid}, where every save lived
+ * before there were slots, so nobody's had to move; slots 2-6 are
+ * saves/{uid}/slots/{n}.
+ *
+ * Quota: only the slot being played is ever polled or pushed, so six slots
+ * cost exactly what one did. Listing them is the only new traffic -- a masked
+ * read of each document that exists, at most six, and only when the student
+ * opens the save screen.
  *
  * The full game state rides as a JSON string in `state`. Firestore's 1MB
  * document limit leaves enormous headroom (a maxed save is ~50KB), and the
@@ -16,14 +23,46 @@ import { getIdToken } from './auth.js';
 const BASE = () => `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}` +
                    `/databases/(default)/documents`;
 
-function docUrl(uid) {
-    return `${BASE()}/${SAVES_COLLECTION}/${uid}`;
+export const SLOT_COUNT = 6;
+
+/** A slot number the rules will accept, or null. */
+export function validSlot(slot) {
+    const n = Number(slot === undefined || slot === null ? 1 : slot);
+    return Number.isInteger(n) && n >= 1 && n <= SLOT_COUNT ? n : null;
+}
+
+/** Where a slot lives, relative to the database root. */
+function slotPath(uid, slot) {
+    return slot === 1
+        ? `${SAVES_COLLECTION}/${uid}`
+        : `${SAVES_COLLECTION}/${uid}/slots/${slot}`;
+}
+
+function docUrl(uid, slot = 1) {
+    return `${BASE()}/${slotPath(uid, slot)}`;
 }
 
 /** The resource name a commit addresses, which is the URL without the host. */
-function docName(uid) {
+function docName(uid, slot = 1) {
     return `projects/${FIREBASE_CONFIG.projectId}/databases/(default)/documents` +
-           `/${SAVES_COLLECTION}/${uid}`;
+           `/${slotPath(uid, slot)}`;
+}
+
+/**
+ * A new run's name. Random rather than a counter: two devices starting a game
+ * in the same empty slot must not agree by accident.
+ */
+export function newGeneration() {
+    const bytes = new Uint8Array(9);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** An HTTP failure that keeps its status, so a refusal is not mistaken for being offline. */
+function httpError(message, status) {
+    const err = new Error(`${message} (${status})`);
+    err.status = status;
+    return err;
 }
 
 /**
@@ -63,12 +102,14 @@ export function isNewer(a, b) {
  * that guesses wrong stops a device seeing the other one's progress and says
  * nothing about it, which is a far worse failure than fetching too much.
  */
-export async function pullState({ since } = {}) {
+export async function pullState({ since, slot: rawSlot } = {}) {
+    const slot = validSlot(rawSlot);
+    if (!slot) throw new Error('No such save slot');
     const auth = await getIdToken();
     if (!auth) return { signedIn: false, state: null };
 
     if (since) {
-        const fresh = await fetch(`${docUrl(auth.uid)}?mask.fieldPaths=serverAt`, {
+        const fresh = await fetch(`${docUrl(auth.uid, slot)}?mask.fieldPaths=serverAt`, {
             headers: { Authorization: `Bearer ${auth.idToken}` },
         });
         if (fresh.status === 404) return { signedIn: true, state: null };
@@ -85,7 +126,7 @@ export async function pullState({ since } = {}) {
         // than reporting "no change" on the strength of a failed request.
     }
 
-    const res = await fetch(docUrl(auth.uid), {
+    const res = await fetch(docUrl(auth.uid, slot), {
         headers: { Authorization: `Bearer ${auth.idToken}` },
     });
 
@@ -94,15 +135,19 @@ export async function pullState({ since } = {}) {
 
     const doc = await res.json();
     const serverAt = doc.fields?.serverAt?.timestampValue || null;
+    // Which run this is. Absent on a save written before there were slots.
+    const generation = doc.fields?.generation?.stringValue || null;
+    // An administrator deleted this slot. See wipeSlot.
+    const wiped = Boolean(doc.fields?.wipedAt?.timestampValue);
     const raw = doc.fields?.state?.stringValue;
-    if (!raw) return { signedIn: true, state: null, serverAt };
+    if (!raw) return { signedIn: true, state: null, serverAt, generation, wiped };
 
     try {
-        return { signedIn: true, state: JSON.parse(raw), serverAt };
+        return { signedIn: true, state: JSON.parse(raw), serverAt, generation, wiped };
     } catch {
         // Corrupt blob shouldn't wipe local progress — treat as "no cloud save".
         console.warn('[Flickémon] Cloud save was unreadable, ignoring it');
-        return { signedIn: true, state: null };
+        return { signedIn: true, state: null, generation };
     }
 }
 
@@ -116,11 +161,16 @@ export async function pullState({ since } = {}) {
  * would be a rate limit the client sets, and a client with a skewed clock
  * would be locked out of syncing entirely. See the rule for the full argument.
  */
-export async function pushState(state) {
+export async function pushState(state, { slot: rawSlot, generation } = {}) {
+    const slot = validSlot(rawSlot);
+    if (!slot) throw new Error('No such save slot');
     const auth = await getIdToken();
     if (!auth) return { signedIn: false };
 
     const caughtCount = (state.pokedex || []).filter(e => e.caught).length;
+    // What the save screen shows for this slot, readable without the blob.
+    const party = Array.isArray(state.party) ? state.party : [];
+    const partner = party.find(p => p && p.instanceId === state.activeInstanceId) || party[0] || null;
 
     // Hoisted out of the blob so security rules can see them. Rules cannot read
     // inside a JSON string, so a number that has to be constrained server-side
@@ -136,7 +186,7 @@ export async function pushState(state) {
     const body = {
         writes: [{
             update: {
-                name: docName(auth.uid),
+                name: docName(auth.uid, slot),
                 fields: {
                     // Queryable columns for the admin monitoring portal.
                     email: { stringValue: auth.email || '' },
@@ -147,6 +197,15 @@ export async function pushState(state) {
                     caughtCount: { integerValue: String(caughtCount) },
                     moneyEarned: { doubleValue: moneyEarned },
                     moneySpent: { doubleValue: moneySpent },
+                    // For the save screen, so listing slots never downloads one.
+                    hasStarted: { booleanValue: state.hasStarted === true },
+                    partnerSpecies: { integerValue: String(Number(partner && partner.speciesId) || 0) },
+                    partnerLevel: { integerValue: String(Number(partner && partner.level) || 0) },
+                    partnerShiny: { booleanValue: Boolean(partner && partner.shiny) },
+                    // The run. The rules refuse any change to it but an admin's
+                    // wipe, which is what keeps a student from deleting a save
+                    // by writing a new game over it.
+                    ...(generation ? { generation: { stringValue: String(generation) } } : {}),
                     // Full save.
                     state: { stringValue: JSON.stringify(state) },
                 },
@@ -169,12 +228,111 @@ export async function pushState(state) {
         body: JSON.stringify(body),
     });
 
-    if (!res.ok) throw new Error(`Cloud write failed (${res.status})`);
+    if (!res.ok) throw httpError('Cloud write failed', res.status);
 
     // commitTime is the same clock serverAt was stamped from, so recording it
     // stops the next poll pulling back the document this device just wrote.
     const out = await res.json().catch(() => null);
     return { signedIn: true, ok: true, serverAt: out?.commitTime || null };
+}
+
+const SUMMARY_FIELDS = ['serverAt', 'updatedAt', 'hasStarted', 'caughtCount',
+                        'totalMinutesWatched', 'partnerSpecies', 'partnerLevel',
+                        'partnerShiny', 'generation', 'wipedAt'];
+
+/** One slot's document, reduced to what the save screen shows. */
+function summarize(slot, doc) {
+    const f = (doc && doc.fields) || {};
+    const num = v => Number(v && (v.integerValue ?? v.doubleValue)) || 0;
+    return {
+        slot,
+        exists: Boolean(doc),
+        hasStarted: f.hasStarted?.booleanValue === true
+            // A save written before this field existed: it has a wallet or a
+            // Pokédex, so a game was started in it.
+            || (f.hasStarted === undefined && Boolean(doc) && !f.wipedAt
+                && (num(f.caughtCount) > 0 || num(f.totalMinutesWatched) > 0)),
+        caughtCount: num(f.caughtCount),
+        totalMinutesWatched: num(f.totalMinutesWatched),
+        partnerSpecies: num(f.partnerSpecies) || null,
+        partnerLevel: num(f.partnerLevel) || null,
+        partnerShiny: f.partnerShiny?.booleanValue === true,
+        updatedAt: num(f.updatedAt) || null,
+        generation: f.generation?.stringValue || null,
+        wiped: Boolean(f.wipedAt),
+    };
+}
+
+/**
+ * Every slot, summarised, without downloading a single save.
+ *
+ * Two requests and at most six billed reads: slot 1 by itself, and slots 2-6
+ * in one listing. Both are field-masked, so the blob -- ~39 KiB each -- never
+ * travels. Only the save screen calls this.
+ */
+export async function listSlots() {
+    const auth = await getIdToken();
+    if (!auth) return { signedIn: false, slots: [] };
+
+    const mask = SUMMARY_FIELDS.map(f => `mask.fieldPaths=${f}`).join('&');
+    const headers = { Authorization: `Bearer ${auth.idToken}` };
+    const [first, rest] = await Promise.all([
+        fetch(`${docUrl(auth.uid, 1)}?${mask}`, { headers }),
+        fetch(`${BASE()}/${SAVES_COLLECTION}/${auth.uid}/slots?pageSize=${SLOT_COUNT}&${mask}`,
+              { headers }),
+    ]);
+    if (!first.ok && first.status !== 404) throw httpError('Could not list saves', first.status);
+    if (!rest.ok && rest.status !== 404) throw httpError('Could not list saves', rest.status);
+
+    const docs = { 1: first.ok ? await first.json() : null };
+    const listing = rest.ok ? await rest.json().catch(() => ({})) : {};
+    for (const doc of listing.documents || []) {
+        const n = validSlot(String(doc.name || '').split('/').pop());
+        if (n && n !== 1) docs[n] = doc;
+    }
+
+    const slots = [];
+    for (let n = 1; n <= SLOT_COUNT; n++) slots.push(summarize(n, docs[n] || null));
+    return { signedIn: true, slots };
+}
+
+/**
+ * Deletes a slot. Administrators only -- the rules refuse everyone else,
+ * including a student deleting their own.
+ *
+ * Written as an empty save under a new generation rather than a deleted
+ * document. Every other device still holds a copy of the old run, and a device
+ * that found the document missing would re-create it from that copy on its
+ * next push, undoing the delete. Finding a generation it does not know, it
+ * lets its copy go instead.
+ */
+export async function wipeSlot({ slot: rawSlot } = {}) {
+    const slot = validSlot(rawSlot);
+    if (!slot) throw new Error('No such save slot');
+    const auth = await getIdToken();
+    if (!auth) return { signedIn: false, ok: false };
+
+    const generation = newGeneration();
+    const res = await fetch(`${BASE()}:commit`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${auth.idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            writes: [{
+                update: {
+                    name: docName(auth.uid, slot),
+                    fields: { generation: { stringValue: generation } },
+                },
+                updateTransforms: [
+                    { fieldPath: 'wipedAt', setToServerValue: 'REQUEST_TIME' },
+                    { fieldPath: 'serverAt', setToServerValue: 'REQUEST_TIME' },
+                ],
+            }],
+        }),
+    });
+    if (res.status === 403) return { signedIn: true, ok: false, reason: 'forbidden' };
+    if (!res.ok) throw httpError('Could not delete the save', res.status);
+    const out = await res.json().catch(() => null);
+    return { signedIn: true, ok: true, slot, generation, serverAt: out?.commitTime || null };
 }
 
 /**

@@ -267,6 +267,26 @@ in `chrome://extensions` — those logs do **not** appear in the page console.
 | **Switch account** | Settings → **Switch account** re-opens Google's chooser with `prompt=select_account`, so any account is reachable — not just ones signed into Chrome. Local progress is discarded on switch, so the next student never inherits the previous one's party. It also appears after a *failed* sign-in, which is when reaching a different account matters most and was previously impossible without succeeding first. |
 | **Wrong account on the sign-in gate** | Google's error page names whichever account it silently reused, so any failure reads as "wrong account" to a student. The gate therefore offers **Use a different Google account** alongside the retry once an attempt fails; it passes `prompt=select_account consent`, because `select_account` alone can still be skipped for an account that already granted this client. |
 
+## Save slots
+
+Each student has up to **six** save slots. Slot 1 is `saves/{uid}`, where every save
+already lived, so no existing save moves; slots 2–6 are `saves/{uid}/slots/{n}`.
+Each slot has its own party, Pokédex, money and wallet ceiling. The active slot is a
+per-device choice (`flickemon_active_slot_v1`), and each slot's local copy is
+`flickemon_ext_save_v2` (slot 1) or `flickemon_ext_save_v2:slot<n>`.
+
+> ⚠️ **Redeploy the rules** (`firebase deploy --only firestore:rules`) before shipping
+> a build with slots. Until you do, the default-deny rule refuses every write to
+> slots 2–6.
+
+| | |
+|---|---|
+| **Quota** | Only the slot being played is polled and pushed, so six slots cost what one did. The save screen is the only new traffic: two field-masked requests, at most six billed reads, and only when a student opens it. |
+| **Switching** | Flushes the slot being left, then loads the other one from this device and the cloud. The Flick lecture marks move with the student, so progress already credited to one slot is never paid again to another. |
+| **Who deletes** | Only administrators (a document in `admins/`), which includes deleting their **own** save. Students can start a game in an empty slot, but the rules refuse to let them delete a slot or write a new game over one. Each game carries a `generation`, and no student can change it. |
+| **How a delete spreads** | An admin's delete replaces the slot with an empty save under a new `generation`, instead of removing the document. Another device that finds a generation it doesn't know drops its copy (keeping a snapshot) rather than merging it back. A removed document would just be re-created by that device's next push. |
+| **Refused writes** | A push the rules refuse (wallet over its ceiling, or a slot deleted since) is not parked for retry. Retrying the same document would only be refused again. |
+
 ## Cost / free-tier headroom
 
 Firestore's free (Spark) tier allows **20k writes + 50k reads per day**. Writes are

@@ -119,6 +119,13 @@
         async CLOUD_PUSH() { return { ok: true }; },
         async CLOUD_PULL() { return { ok: true, state: null }; },
         async CLOUD_FLUSH_PENDING() { return { ok: true }; },
+        // No cloud copies, so the save screen lists this browser's own.
+        async CLOUD_SLOTS() { return { signedIn: false, slots: [] }; },
+        // The sandbox player is an admin, and the server would agree.
+        async CLOUD_WIPE_SLOT(msg) {
+            return { signedIn: true, ok: true, slot: msg.slot,
+                     generation: Math.random().toString(16).slice(2), serverAt: null };
+        },
 
         // ── PVP: mirrors background/pvp.js ──
         async PVP_MY_CODE() {

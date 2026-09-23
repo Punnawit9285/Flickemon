@@ -1233,6 +1233,19 @@ class FlickemonUI {
                 <button class="flickemon-primary-btn sync-signout-btn" style="display:none; background: transparent; color: var(--flick-text-muted); border: 1px solid var(--flick-border); padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px;">Sign out</button>
             </div>
 
+            <div class="flickemon-list-card save-slots-card" style="margin-top: 16px;">
+                <div class="flickemon-list-item">
+                    <span class="flickemon-list-item-title">Save slots</span>
+                    <span class="flickemon-list-item-sub">
+                        Up to six separate games. Start a new one in an empty slot; every
+                        slot keeps its own party, Pokédex and money.
+                    </span>
+                </div>
+                <div class="save-slot-list" aria-live="polite">
+                    <p class="save-slot-loading">Loading saves…</p>
+                </div>
+            </div>
+
             <div class="flickemon-list-card" style="margin-top: 16px;">
                 <div class="flickemon-list-item">
                     <div class="flick-toggle-row">
@@ -1309,10 +1322,19 @@ class FlickemonUI {
                     <div style="background: rgba(239,68,68,0.06); padding: 12px; border-radius: 8px; margin-top: 12px;">
                         <h4 style="margin: 0 0 4px 0; color: var(--flick-danger);">⚠️ Danger Zone</h4>
                         <p style="margin: 0 0 10px 0; font-size: 0.75rem; color: var(--flick-text-muted);">
-                            Wipes this student's party, Pokédex and study time on every signed-in device.
-                            A snapshot is kept so it can be undone.
+                            Deletes a save slot on every signed-in device, checked by the server.
+                            Players cannot delete their own saves; only administrators can.
+                            A snapshot is kept on this device so it can be undone.
                         </p>
-                        <button class="flickemon-danger-btn reset-progress-btn">RESET GAME PROGRESS</button>
+                        <button class="flickemon-danger-btn reset-progress-btn">DELETE THIS SAVE SLOT</button>
+                        <div class="admin-slot-delete-row">
+                            <label class="admin-field-label" for="admin-slot-select">Or slot:</label>
+                            <select id="admin-slot-select" class="admin-slot-select">
+                                ${[1, 2, 3, 4, 5, 6].map(n => `<option value="${n}">Slot ${n}</option>`).join('')}
+                            </select>
+                            <button class="admin-slot-delete-btn">Delete</button>
+                        </div>
+                        <p class="admin-slot-delete-result"></p>
                         <button class="admin-restore-btn" style="display:none; width:100%; margin-top:8px; padding:10px; background:transparent; border:2px solid var(--flick-success); color:var(--flick-success); font-weight:700; border-radius:4px; cursor:pointer; text-transform:uppercase; font-size:0.85rem;">Restore last snapshot</button>
                         <p class="admin-restore-note" style="margin:6px 0 0 0; font-size:0.7rem; color:var(--flick-text-muted);"></p>
                     </div>
@@ -1359,12 +1381,69 @@ class FlickemonUI {
             restoreNote.textContent = `Snapshot from ${new Date(backup.savedAt).toLocaleString()}`;
         };
 
+        // Deleting is the server's decision, not this button's: the rules refuse
+        // anyone who is not an administrator, so a panel revealed by editing
+        // the extension still cannot delete anything.
+        const deleteSlot = async (slot, control, resultEl) => {
+            const which = slot === this.engine.activeSlot ? 'the save slot you are playing' : `save slot ${slot}`;
+            if (!confirm(`Delete ${which}?\n\nIts party, Pokédex, money and study time are cleared on every signed-in device. A snapshot is kept on this device so it can be undone.`)) return false;
+            control.disabled = true;
+            try {
+                await this.engine.adminDeleteSlot(slot);
+                if (resultEl) resultEl.textContent = `Slot ${slot} deleted.`;
+                await refreshRestore();
+                await renderSlots();
+                return true;
+            } catch (err) {
+                const msg = err && err.message ? err.message : 'Could not delete the save.';
+                if (resultEl) resultEl.textContent = msg; else alert(msg);
+                return false;
+            } finally {
+                control.disabled = false;
+            }
+        };
+
         resetBtn.addEventListener('click', async () => {
-            if (!confirm('Reset this student\'s Flickémon progress?\n\nParty, Pokédex and study time will be cleared on every signed-in device. A snapshot is kept so this can be undone.')) return;
-            await this.engine.resetGameState();
-            await refreshRestore();
-            this.closeModal(modal.overlay);
+            if (await deleteSlot(this.engine.activeSlot, resetBtn, modal.body.querySelector('.admin-slot-delete-result'))) {
+                this.closeModal(modal.overlay);
+            }
         });
+
+        const slotDeleteBtn = modal.body.querySelector('.admin-slot-delete-btn');
+        slotDeleteBtn.addEventListener('click', async () => {
+            const slot = Number(modal.body.querySelector('.admin-slot-select').value);
+            const deleted = await deleteSlot(slot, slotDeleteBtn, modal.body.querySelector('.admin-slot-delete-result'));
+            if (deleted && slot === this.engine.activeSlot) this.closeModal(modal.overlay);
+        });
+
+        // ── Save slots ──
+        const slotList = modal.body.querySelector('.save-slot-list');
+        const renderSlots = async () => {
+            let listing;
+            try {
+                listing = await this.engine.listSaveSlots();
+            } catch {
+                slotList.innerHTML = '<p class="save-slot-loading">Could not read your saves. Check your connection.</p>';
+                return;
+            }
+            slotList.innerHTML = listing.slots.map(slot => this.renderSaveSlot(slot)).join('');
+            slotList.querySelectorAll('.save-slot-btn').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const slot = Number(btn.dataset.slot);
+                    slotList.querySelectorAll('.save-slot-btn').forEach(b => { b.disabled = true; });
+                    btn.textContent = 'Loading…';
+                    try {
+                        await this.engine.switchSlot(slot);
+                        this.closeModal(modal.overlay);
+                        if (!this.engine.hasStarted()) this.openStarterModal();
+                    } catch (err) {
+                        alert(err && err.message ? err.message : 'Could not switch saves.');
+                        await renderSlots();
+                    }
+                });
+            });
+        };
+        renderSlots();
 
         restoreBtn.addEventListener('click', async () => {
             if (!confirm('Restore the last snapshot? This replaces current progress on every signed-in device.')) return;
@@ -2664,6 +2743,33 @@ class FlickemonUI {
                 : `<span>${label} <b class="down">${delta}</b></span>`);
 
         return deltas.length ? `<div class="evo-gains">${deltas.join('')}</div>` : '';
+    }
+
+    /** One row of the save screen. */
+    renderSaveSlot(slot) {
+        const species = slot.hasStarted && slot.partnerSpecies
+            ? this.config.getSpeciesById(slot.partnerSpecies) : null;
+        const hours = Math.floor((slot.totalMinutesWatched || 0) / 60);
+        const mins = Math.round((slot.totalMinutesWatched || 0) % 60);
+        const studied = hours ? `${hours}h ${mins}m` : `${mins}m`;
+        const art = species
+            ? `<img class="save-slot-sprite${slot.partnerShiny ? ' is-shiny' : ''}" src="${this.config.getSpriteUrl(species.id, slot.partnerShiny)}" alt="${species.name}"/>`
+            : '<span class="save-slot-empty-ball" aria-hidden="true"></span>';
+        const detail = slot.hasStarted
+            ? `<span class="save-slot-name">${species ? species.name : 'Trainer'}${slot.partnerLevel ? ` · Lv${slot.partnerLevel}` : ''}</span>
+               <span class="save-slot-meta">${slot.caughtCount} caught · ${studied} studied</span>`
+            : `<span class="save-slot-name">Empty</span>
+               <span class="save-slot-meta">Start a new game here</span>`;
+        const action = slot.active
+            ? '<span class="save-slot-current">Playing</span>'
+            : `<button class="save-slot-btn" data-slot="${slot.slot}">${slot.hasStarted ? 'Load' : 'New game'}</button>`;
+        return `
+            <div class="save-slot${slot.active ? ' is-active' : ''}${slot.hasStarted ? '' : ' is-empty'}">
+                <span class="save-slot-no">${slot.slot}</span>
+                ${art}
+                <div class="save-slot-copy">${detail}</div>
+                ${action}
+            </div>`;
     }
 
     createModalOverlay(title) {

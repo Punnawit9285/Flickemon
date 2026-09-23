@@ -24,9 +24,6 @@ service cloud.firestore {
              && allowedDomain();
     }
 
-    // Each student owns exactly one save document, keyed by their Firebase uid.
-    // They can read and write only their own; nobody can read anyone else's.
-    //
     // ── The wallet ──
     //
     // moneyEarned and moneySpent are lifetime counters, hoisted out of the save
@@ -78,22 +75,79 @@ service cloud.firestore {
              && (!hadWallet || after.moneyEarned - earnedBefore <= allowance);
     }
 
+    // A save game is a run: `generation` names it, is written by the extension
+    // when the run starts, and no student may change it afterwards. That is
+    // what makes "a student cannot delete their own save" a rule rather than a
+    // missing button: without it, overwriting a slot with a fresh game would
+    // be a delete by another name. See background/firestore.js.
+    function generationKept() {
+      return !('generation' in resource.data)
+             || ('generation' in request.resource.data
+                 && request.resource.data.generation == resource.data.generation);
+    }
+
+    // The owner's ordinary write: their own save, stamped with the commit
+    // time, wallet within the ceiling, and the same run it was before.
+    function ownSaveUpdate(uid) {
+      return signedInStudent() && request.auth.uid == uid
+             // serverAt, when written, must BE the commit time. Without this
+             // the client could back-date it and hand itself an arbitrarily
+             // large allowance on the following write.
+             && (!('serverAt' in request.resource.data)
+                 || request.resource.data.serverAt == request.time)
+             // The counters cannot be dropped once they exist, or a client
+             // could clear them and start again from anything.
+             && (!('moneyEarned' in resource.data)
+                 || 'moneyEarned' in request.resource.data)
+             && (!('moneyEarned' in request.resource.data) || saveWalletOk())
+             && generationKept();
+    }
+
+    // An administrator deleting a save. The only write an admin may make to
+    // somebody's save -- including their own -- is to replace it with an EMPTY
+    // one under a new generation: no state, no wallet, nothing to mint with.
+    // A tombstone rather than a deleted document, because a device that has not
+    // heard about the delete would re-create a missing document from its own
+    // copy on its next push; a new generation tells it to let go instead.
+    //
+    // Evaluated only after the owner's path has failed, so an ordinary push
+    // never pays for the lookup.
+    function adminWipe() {
+      return signedInStudent()
+             && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+             && request.resource.data.keys().hasOnly(['generation', 'wipedAt', 'serverAt'])
+             && request.resource.data.generation is string
+             && request.resource.data.generation != resource.data.get('generation', '')
+             && request.resource.data.wipedAt == request.time
+             && request.resource.data.serverAt == request.time;
+    }
+
+    function isAdmin() {
+      return signedInStudent()
+             && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Each student owns up to six save slots. Slot 1 is saves/{uid} -- where
+    // every save already lived, so nobody's was moved -- and slots 2-6 are
+    // saves/{uid}/slots/{n}. They can read and write only their own; nobody
+    // can read anyone else's. Every slot has its own wallet.
     match /saves/{uid} {
       allow read: if signedInStudent() && request.auth.uid == uid;
       // A first save has nothing to be measured against.
       allow create: if signedInStudent() && request.auth.uid == uid;
-      allow update: if signedInStudent() && request.auth.uid == uid
-                    // serverAt, when written, must BE the commit time. Without
-                    // this the client could back-date it and hand itself an
-                    // arbitrarily large allowance on the following write.
-                    && (!('serverAt' in request.resource.data)
-                        || request.resource.data.serverAt == request.time)
-                    // The counters cannot be dropped once they exist, or a
-                    // client could clear them and start again from anything.
-                    && (!('moneyEarned' in resource.data)
-                        || 'moneyEarned' in request.resource.data)
-                    && (!('moneyEarned' in request.resource.data) || saveWalletOk());
-      allow delete: if signedInStudent() && request.auth.uid == uid;
+      allow update: if ownSaveUpdate(uid) || adminWipe();
+      // Never the owner: a student cannot delete their own progress.
+      allow delete: if isAdmin();
+
+      match /slots/{slot} {
+        allow read: if signedInStudent() && request.auth.uid == uid
+                    && slot in ['2', '3', '4', '5', '6'];
+        allow create: if signedInStudent() && request.auth.uid == uid
+                      && slot in ['2', '3', '4', '5', '6'];
+        allow update: if slot in ['2', '3', '4', '5', '6']
+                      && (ownSaveUpdate(uid) || adminWipe());
+        allow delete: if isAdmin();
+      }
     }
 
     // Admin roster. Presence of admins/{uid} grants admin.

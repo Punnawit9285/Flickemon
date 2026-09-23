@@ -1553,6 +1553,77 @@
     background: rgba(var(--flick-primary-rgb), 0.1);
 }
 
+/* Save slots */
+.save-slot-list { display: flex; flex-direction: column; }
+.save-slot-loading {
+    margin: 0; padding: 12px 16px;
+    font-size: 0.8rem; color: var(--flick-text-muted);
+}
+.save-slot {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--flick-border, var(--flick-shadow-soft));
+    color: var(--flick-text);
+}
+.save-slot.is-active { background: rgba(var(--flick-primary-rgb), 0.08); }
+.save-slot-no {
+    flex: none; width: 22px; height: 22px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 700;
+    background: var(--flick-border, var(--flick-shadow-soft)); color: var(--flick-text);
+}
+.save-slot.is-active .save-slot-no { background: var(--flick-primary); color: var(--flick-on-primary); }
+.save-slot-sprite {
+    flex: none; width: 40px; height: 40px;
+    image-rendering: pixelated; object-fit: contain;
+}
+/* An empty slot is an empty Poké Ball outline. */
+.save-slot-empty-ball {
+    flex: none; width: 28px; height: 28px; margin: 6px;
+    border-radius: 50%;
+    border: 2px dashed var(--flick-text-muted);
+    opacity: 0.5;
+}
+.save-slot-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.save-slot-name {
+    font-size: 0.85rem; font-weight: 700;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.save-slot-meta { font-size: 0.75rem; color: var(--flick-text-muted); }
+.save-slot.is-empty .save-slot-name { color: var(--flick-text-muted); }
+.save-slot-btn {
+    flex: none;
+    background: var(--flick-primary); color: var(--flick-on-primary);
+    border: none; padding: 6px 12px; border-radius: 6px;
+    cursor: pointer; font-weight: 700; font-size: 0.8rem;
+}
+.save-slot.is-empty .save-slot-btn {
+    background: transparent; color: var(--flick-primary);
+    border: 1px solid var(--flick-primary);
+}
+.save-slot-btn:disabled { opacity: 0.5; cursor: default; }
+.save-slot-current {
+    flex: none; font-size: 0.75rem; font-weight: 700;
+    color: var(--flick-primary); text-transform: uppercase;
+}
+
+.admin-slot-delete-row {
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap; margin-top: 10px;
+}
+.admin-slot-select {
+    padding: 4px 6px; border-radius: 4px;
+    border: 1px solid var(--flick-border);
+    background: var(--flick-card-bg); color: var(--flick-text);
+}
+.admin-slot-delete-btn {
+    background: var(--flick-danger); color: var(--flick-on-semantic);
+    border: none; padding: 5px 12px; border-radius: 4px;
+    cursor: pointer; font-weight: 700;
+}
+.admin-slot-delete-btn:disabled { opacity: 0.5; cursor: default; }
+.admin-slot-delete-result { margin: 6px 0 0; font-size: 0.75rem; min-height: 1em; }
+
 /* Party List */
 
 

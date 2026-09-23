@@ -71,7 +71,15 @@ function fitPlayedHere(span) {
 
 class FlickemonEngine {
     constructor() {
+        // Slot 1's save. Slots 2-6 are this key with ':slot<n>' on the end, so
+        // a device that had one save before slots existed still has it, in
+        // slot 1, without anything being moved. See slotStorageKey.
         this.STORAGE_KEY = 'flickemon_ext_save_v2';
+        // Which slot this device is playing. A device preference, not game
+        // state: two devices on one account may be in different slots.
+        this.SLOT_KEY = 'flickemon_active_slot_v1';
+        this.SLOT_COUNT = 6;
+        this.activeSlot = 1;
         // Last state before anything destructive, so progress is recoverable.
         this.BACKUP_KEY = 'flickemon_ext_save_backup_v1';
         // Deliberately outside the game state: it identifies the device, not
@@ -374,6 +382,9 @@ class FlickemonEngine {
             // Firebase uid this save belongs to; guards against one student's
             // progress leaking into another's account on a shared device.
             ownerUid: null,
+            // Which run of this slot the save belongs to, as the cloud names
+            // it. Null until the cloud has been asked. See pullFromCloud.
+            saveGeneration: null,
         };
     }
 
@@ -668,6 +679,8 @@ class FlickemonEngine {
 
         if (!Number.isFinite(s.lastSyncedAt)) s.lastSyncedAt = 0;
 
+        if (typeof s.saveGeneration !== 'string' || !s.saveGeneration) s.saveGeneration = null;
+
         // The active pointer must name a party member that actually exists.
         if (!s.party.some(p => p.instanceId === s.activeInstanceId)) {
             s.activeInstanceId = s.party.length ? s.party[0].instanceId : null;
@@ -679,12 +692,12 @@ class FlickemonEngine {
     }
 
     /** Snapshots the current save so a destructive action stays recoverable. */
-    async backupState() {
+    async backupState(state = this.gameState, slot = this.activeSlot) {
         if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
-        if (!this.gameState || !this.gameState.hasStarted) return; // nothing worth keeping
+        if (!state || !state.hasStarted) return; // nothing worth keeping
         try {
             await chrome.storage.local.set({
-                [this.BACKUP_KEY]: { state: this.gameState, savedAt: Date.now() },
+                [this.BACKUP_KEY]: { state, slot, savedAt: Date.now() },
             });
         } catch (err) {
             console.warn('[Flickémon] Could not write backup:', err);
@@ -702,8 +715,18 @@ class FlickemonEngine {
     async restoreBackup() {
         const backup = await this.peekBackup();
         if (!backup || !backup.state) return false;
+        // Back into the slot it was taken from, never over whatever game
+        // happens to be on screen. A snapshot from before slots is slot 1's.
+        const slot = this.validSlot(backup.slot) || 1;
+        if (slot !== this.activeSlot) await this.switchSlot(slot);
 
+        // Restored INTO the run that is current now. The snapshot remembers the
+        // run it came from, which after a delete is one the cloud has retired:
+        // kept, the next pull would take it for the deleted copy and drop it.
+        const { saveGeneration, ownerUid } = this.gameState;
         this.gameState = this.normalizeState(backup.state);
+        this.gameState.saveGeneration = saveGeneration || null;
+        this.gameState.ownerUid = ownerUid || this.gameState.ownerUid || null;
         this.wildOpponent = null;
         if (this.respawnTimer) clearTimeout(this.respawnTimer);
 
@@ -724,9 +747,12 @@ class FlickemonEngine {
 
         // 1. Optimistic UI: Fast load from local storage
         if (chrome.storage.local) {
-            const localData = await chrome.storage.local.get([this.STORAGE_KEY]);
-            if (localData && localData[this.STORAGE_KEY]) {
-                this.gameState = this.normalizeState(localData[this.STORAGE_KEY]);
+            const pointer = await chrome.storage.local.get([this.SLOT_KEY]);
+            this.activeSlot = this.validSlot(pointer && pointer[this.SLOT_KEY]) || 1;
+            const key = this.slotStorageKey(this.activeSlot);
+            const localData = await chrome.storage.local.get([key]);
+            if (localData && localData[key]) {
+                this.gameState = this.normalizeState(localData[key]);
                 this.emitState();
             }
         }
@@ -809,13 +835,18 @@ class FlickemonEngine {
         // dropped — merging it is what produces a second starter. Only when the
         // account is empty is the local save adopted.
         if (!this.gameState.ownerUid && this.gameState.hasStarted) {
-            const existing = await this.sendToWorker({ type: 'CLOUD_PULL' });
+            const existing = await this.sendToWorker({ type: 'CLOUD_PULL', slot: this.activeSlot });
             if (existing && existing.signedIn && existing.state && existing.state.hasStarted) {
                 // Flick's accounting survives, though. It describes what this
                 // machine did to Flick's record, not the save: dropped, the
                 // account's older marks would pay every lecture watched here
                 // without signing in back as "studied on another device".
                 this.discardLocalState({ keepFlick: true });
+            } else if (existing && existing.generation) {
+                // Adopted into an empty slot -- one an administrator cleared,
+                // say. It joins that run now, before it gains an owner, or the
+                // next pull would take it for the copy that was deleted.
+                this.gameState.saveGeneration = existing.generation;
             }
         }
 
@@ -1023,10 +1054,14 @@ class FlickemonEngine {
         // that traffic was re-downloading a document to learn it had not
         // changed. Held in memory, so the first poll of a session always fetches
         // in full and a stale marker can never outlive the session that made it.
+        const slot = this.activeSlot;
         const res = await this.sendToWorker({
-            type: 'CLOUD_PULL', since: this.lastSeenServerAt || null,
+            type: 'CLOUD_PULL', since: this.lastSeenServerAt || null, slot,
         });
         if (!res || !res.signedIn) return false;
+        // The student switched slots while this was in flight: it describes a
+        // save that is no longer on screen, and merging it would cross them.
+        if (slot !== this.activeSlot) return false;
         if (res.serverAt) this.lastSeenServerAt = res.serverAt;
 
         // Retry anything parked while offline now that we know we're online.
@@ -1036,6 +1071,8 @@ class FlickemonEngine {
 
         // Nothing new since the last look, so there is nothing to merge.
         if (res.unchanged) return true;
+
+        this.adoptGeneration(res);
 
         if (!res.state) {
             // Account has no save yet — this device seeds it.
@@ -1050,6 +1087,257 @@ class FlickemonEngine {
             if (this.gameState.hasStarted && !this.wildOpponent) {
                 this.spawnWildOpponent();
             }
+        }
+        return true;
+    }
+
+    // ─────────────────────────── Save slots ───────────────────────────
+    //
+    // Up to six games per student. Only the slot being played is polled and
+    // pushed, so the Firestore bill is what it was with one; see
+    // background/firestore.js for the layout and what listing them costs.
+    //
+    // Students start games in empty slots and can switch between them, but
+    // cannot delete one -- that is an administrator's, and the rules enforce it.
+
+    validSlot(slot) {
+        const n = Number(slot);
+        return Number.isInteger(n) && n >= 1 && n <= this.SLOT_COUNT ? n : null;
+    }
+
+    /** Where a slot's save lives on this device. Slot 1 is the key it always was. */
+    slotStorageKey(slot) {
+        return slot === 1 ? this.STORAGE_KEY : `${this.STORAGE_KEY}:slot${slot}`;
+    }
+
+    newGeneration() {
+        const bytes = new Uint8Array(9);
+        if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(bytes);
+        else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+        return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    /**
+     * Squares this device's copy of the slot with the run the cloud holds.
+     *
+     * A generation this device has never been told about means an
+     * administrator deleted the slot, and what is here is the run that was
+     * deleted. Merged, it would come straight back -- the merge only ever adds
+     * -- which is exactly how an admin's reset used to undo itself. So it is
+     * let go instead, snapshot first.
+     *
+     * No generation locally means a save from before slots, which is adopted
+     * into whatever run the cloud has, as it always was -- except where that
+     * run is a wipe and this save was already the account's: then it is the
+     * very copy that was deleted. A save made before signing in has no owner
+     * and is still adopted.
+     *
+     * A generation is only ever MINTED here when the cloud has none, so a
+     * device can never push a name of its own over one it has not seen; the
+     * rules would refuse it.
+     */
+    adoptGeneration(res) {
+        const local = this.gameState.saveGeneration;
+        const cloud = res.generation || null;
+
+        if (cloud) {
+            const deleted = local ? local !== cloud
+                : (res.wiped && Boolean(this.gameState.ownerUid) && this.gameState.hasStarted);
+            if (deleted) this.letGoOfDeletedRun();
+            this.gameState.saveGeneration = cloud;
+            return;
+        }
+        if (!local) this.gameState.saveGeneration = this.newGeneration();
+    }
+
+    /** Drops this slot's local copy for an empty one, keeping who and what Flick has seen. */
+    letGoOfDeletedRun() {
+        const ownerUid = this.gameState.ownerUid;
+        this.discardLocalState({ keepFlick: true });
+        this.gameState.ownerUid = ownerUid;
+        this.writeLocal();
+        this.emitState();
+    }
+
+    /**
+     * Every slot, for the save screen.
+     *
+     * Signed in, the cloud answers -- at most six masked reads, and only when
+     * this is opened. This device's own copies fill in anything the cloud has
+     * not been told yet, and are all there is when signed out. Another
+     * student's save left on a shared machine is never shown.
+     */
+    async listSaveSlots() {
+        const status = await this.getSyncStatus().catch(() => null);
+        const cloud = status && status.signedIn
+            ? await this.sendToWorker({ type: 'CLOUD_SLOTS' }).catch(() => null) : null;
+        const cloudSlots = cloud && cloud.signedIn && Array.isArray(cloud.slots) ? cloud.slots : null;
+        const owner = (status && status.uid) || this.gameState.ownerUid || null;
+
+        const slots = [];
+        for (let n = 1; n <= this.SLOT_COUNT; n++) {
+            const fromCloud = cloudSlots ? cloudSlots.find(c => c.slot === n) : null;
+            const local = n === this.activeSlot ? this.gameState : await this.readSlotLocally(n, owner);
+            const localSummary = local && local.hasStarted ? this.summarizeSave(local) : null;
+            // This device's copy wins when it has a game the cloud does not yet,
+            // and always for the slot on screen, which is the freshest there is.
+            const pick = n === this.activeSlot && localSummary ? localSummary
+                : (fromCloud && fromCloud.hasStarted ? fromCloud : (localSummary || fromCloud));
+            slots.push({
+                slot: n,
+                active: n === this.activeSlot,
+                hasStarted: Boolean(pick && pick.hasStarted),
+                partnerSpecies: (pick && pick.partnerSpecies) || null,
+                partnerLevel: (pick && pick.partnerLevel) || null,
+                partnerShiny: Boolean(pick && pick.partnerShiny),
+                caughtCount: (pick && pick.caughtCount) || 0,
+                totalMinutesWatched: (pick && pick.totalMinutesWatched) || 0,
+                updatedAt: (pick && pick.updatedAt) || null,
+            });
+        }
+        return { signedIn: Boolean(status && status.signedIn), slots };
+    }
+
+    summarizeSave(state) {
+        const party = Array.isArray(state.party) ? state.party : [];
+        const partner = party.find(p => p.instanceId === state.activeInstanceId) || party[0] || null;
+        return {
+            hasStarted: state.hasStarted === true,
+            partnerSpecies: partner ? partner.speciesId : null,
+            partnerLevel: partner ? partner.level : null,
+            partnerShiny: Boolean(partner && partner.shiny),
+            caughtCount: (state.pokedex || []).filter(e => e.caught).length,
+            totalMinutesWatched: state.totalMinutesWatched || 0,
+            updatedAt: state.lastSyncedAt || null,
+        };
+    }
+
+    /**
+     * A slot's save as this device holds it, or null. A save that belongs to a
+     * different account -- a shared machine -- reads as nothing, and so does
+     * any owned save while nobody is signed in.
+     */
+    async readSlotLocally(slot, owner) {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return null;
+        const key = this.slotStorageKey(slot);
+        const data = await chrome.storage.local.get([key]);
+        const raw = data && data[key];
+        if (!raw) return null;
+        const state = this.normalizeState(raw);
+        if (state.ownerUid && state.ownerUid !== owner) return null;
+        return state;
+    }
+
+    /**
+     * Switches this device to another slot.
+     *
+     * The slot being left is written out first, locally and to the cloud, so
+     * nothing it earned waits on a timer that would now fire for the wrong
+     * save. The one arriving is read from this device, then brought up to date
+     * from the cloud.
+     *
+     * What this device has done to Flick's record comes too. It describes the
+     * lectures, not the game, and left behind it would pay one lecture twice:
+     * watched here in slot 2, the same progress would show up in slot 1's
+     * stale marks as studying on another device.
+     */
+    async switchSlot(slot) {
+        const target = this.validSlot(slot);
+        if (!target) throw new Error('No such save slot');
+        if (target === this.activeSlot) return false;
+
+        if (this.localSaveTimer) {
+            clearTimeout(this.localSaveTimer);
+            this.localSaveTimer = null;
+        }
+        this.writeLocal();
+        this.cloudDirty = this.cloudDirty || Boolean(this.cloudPushTimer);
+        await this.flushCloud();
+        // A push already in flight for the slot being left finishes first.
+        for (let i = 0; i < 50 && this.cloudInFlight; i++) await new Promise(r => setTimeout(r, 100));
+
+        const leaving = this.gameState;
+        const owner = leaving.ownerUid || null;
+        const arriving = (await this.readSlotLocally(target, owner)) || this.createEmptyState();
+        arriving.ownerUid = arriving.ownerUid || owner;
+        this.carryFlickAccounting(leaving, arriving);
+
+        // Everything the sync keeps about the slot being left.
+        this.cloudDirty = false;
+        this.cloudQueuedWhileInFlight = false;
+        if (this.cloudPushTimer) {
+            clearTimeout(this.cloudPushTimer);
+            this.cloudPushTimer = null;
+        }
+        this.lastPushedFingerprint = null;
+        this.lastSeenServerAt = null;
+
+        this.activeSlot = target;
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            await chrome.storage.local.set({ [this.SLOT_KEY]: target });
+        }
+        this.gameState = arriving;
+        this.wildOpponent = null;
+        if (this.respawnTimer) clearTimeout(this.respawnTimer);
+        if (arriving.hasStarted && arriving.wildOpponent && arriving.wildOpponent.status === 'fighting') {
+            this.wildOpponent = arriving.wildOpponent;
+            this.wildHpAcc = this.wildOpponent.currentHp;
+        }
+        this.writeLocal();
+        this.emitState();
+        this.emitWild();
+
+        await this.pullFromCloud().catch(() => false);
+        if (this.gameState.hasStarted && !this.wildOpponent) this.spawnWildOpponent();
+        return true;
+    }
+
+    /**
+     * Flick's accounting, from the save being left to the one arriving. The
+     * marks only ever rise, so the furthest of the two is what has been
+     * accounted for; the rest is this device's and simply moves.
+     */
+    carryFlickAccounting(from, to) {
+        const seen = { ...(to.flickSeen || {}) };
+        for (const [key, pos] of Object.entries(from.flickSeen || {})) {
+            if (!Number.isFinite(seen[key]) || pos > seen[key]) seen[key] = pos;
+        }
+        to.flickSeen = seen;
+        to.flickCheckedAt = Math.max(from.flickCheckedAt || 0, to.flickCheckedAt || 0);
+        to.flickLocalMinutes = from.flickLocalMinutes || 0;
+        to.flickPlayedHere = from.flickPlayedHere || {};
+        if (from.flickRebaseline === true) to.flickRebaseline = true;
+    }
+
+    /**
+     * Administrators only: deletes one of their slots, here and everywhere.
+     *
+     * The server decides -- the rules refuse anyone who is not in admins/ --
+     * so this asks it first and changes nothing locally unless it agreed. The
+     * slot is left empty under a new generation, which is what stops another
+     * device merging its copy of the deleted run back in.
+     */
+    async adminDeleteSlot(slot) {
+        const target = this.validSlot(slot);
+        if (!target) throw new Error('No such save slot');
+
+        const res = await this.sendToWorker({ type: 'CLOUD_WIPE_SLOT', slot: target });
+        if (!res || !res.signedIn) throw new Error('Sign in first — deleting a save is checked by the server.');
+        if (!res.ok) throw new Error(res.reason === 'forbidden'
+            ? 'The server refused: this account is not an administrator.'
+            : (res.error || 'Could not delete the save.'));
+
+        if (target === this.activeSlot) {
+            this.letGoOfDeletedRun();
+            this.gameState.saveGeneration = res.generation;
+            if (res.serverAt) this.lastSeenServerAt = res.serverAt;
+            this.writeLocal();
+            this.emitState();
+        } else if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            // Kept as a snapshot the restore button can reach, like the active one.
+            const gone = await this.readSlotLocally(target, this.gameState.ownerUid || null);
+            if (gone && gone.hasStarted) await this.backupState(gone, target);
+            await chrome.storage.local.remove([this.slotStorageKey(target)]);
         }
         return true;
     }
@@ -1486,8 +1774,15 @@ class FlickemonEngine {
 
         this.cloudDirty = false;
         this.cloudInFlight = true;
+        const slot = this.activeSlot;
         try {
-            const res = await this.sendToWorker({ type: 'CLOUD_PUSH', state: payload });
+            const res = await this.sendToWorker({
+                type: 'CLOUD_PUSH', state: payload, slot,
+                generation: this.gameState.saveGeneration || null,
+            });
+            // Written to a slot this device has since left. Its write time and
+            // contents describe that slot, not the one on screen now.
+            if (slot !== this.activeSlot) return;
             // Our own write moves serverAt; recording it here stops the next
             // poll pulling the document straight back.
             if (res && res.serverAt) this.lastSeenServerAt = res.serverAt;
@@ -1574,7 +1869,7 @@ class FlickemonEngine {
 
     writeLocal() {
         if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
-        const result = chrome.storage.local.set({ [this.STORAGE_KEY]: this.gameState });
+        const result = chrome.storage.local.set({ [this.slotStorageKey(this.activeSlot)]: this.gameState });
         if (result && typeof result.catch === 'function') {
             result.catch(err => console.warn('[Flickémon] Local save failed:', err));
         }

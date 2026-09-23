@@ -174,6 +174,69 @@ console.log('\n=== the wallet ceiling, enforced on the server ===');
         await allowed(setDoc(doc(alice, 'saves', A), save({ serverAt: serverTimestamp() }))));
 }
 
+console.log('\n=== six save slots, and only an administrator deletes one ===');
+{
+    const save = (extra = {}) => ({ email: 'alice@docchula.com', state: '{}',
+                                    serverAt: serverTimestamp(), ...extra });
+    const slot = (db, uid, n) => doc(db, 'saves', uid, 'slots', String(n));
+    const admin = student('uid_admin', 'admin@docchula.com');
+    await seed(db => setDoc(doc(db, 'admins', 'uid_admin'), { granted: true }));
+
+    check('a student starts a game in slot 2',
+        await allowed(setDoc(slot(alice, A, 2), save({ generation: 'run-a' }))));
+    check('and in slot 6', await allowed(setDoc(slot(alice, A, 6), save({ generation: 'run-f' }))));
+    check('but there is no slot 7', await denied(setDoc(slot(alice, A, 7), save())));
+    check('nor a second slot 1 in the subcollection', await denied(setDoc(slot(alice, A, 1), save())));
+    check('nobody reads another student\'s slot', await denied(getDoc(slot(bob, A, 2))));
+    check('nobody writes one', await denied(setDoc(slot(bob, A, 3), save())));
+
+    check('the same run keeps saving',
+        await allowed(setDoc(slot(alice, A, 2), save({ generation: 'run-a', state: '{"x":1}' }))));
+    check('a new game written over a slot is refused -- that would be a delete',
+        await denied(setDoc(slot(alice, A, 2), save({ generation: 'run-new' }))));
+    check('so is dropping the run to escape that',
+        await denied(setDoc(slot(alice, A, 2), save())));
+
+    // The wallet ceiling holds per slot, exactly as it does for slot 1.
+    await seed(db => setDoc(slot(db, A, 3), { generation: 'run-c', moneyEarned: 1000, moneySpent: 0,
+                                              serverAt: Timestamp.fromMillis(Date.now() - 3600000) }));
+    check('a slot\'s wallet has the same ceiling',
+        await denied(setDoc(slot(alice, A, 3),
+            save({ generation: 'run-c', moneyEarned: 99999, moneySpent: 0 }))));
+
+    check('a student cannot delete their own slot', await denied(deleteDoc(slot(alice, A, 2))));
+    await seed(db => setDoc(doc(db, 'saves', A), save({ generation: 'run-1', serverAt: Timestamp.now() })));
+    check('nor their own slot 1', await denied(deleteDoc(doc(alice, 'saves', A))));
+
+    const wipe = generation => ({ generation, wipedAt: serverTimestamp(), serverAt: serverTimestamp() });
+    check('nor wipe it the way an admin does', await denied(setDoc(doc(alice, 'saves', A), wipe('mine'))));
+
+    // The admin's own save, which is the case that could not be deleted.
+    await seed(db => setDoc(doc(db, 'saves', 'uid_admin'),
+        { generation: 'admin-run', state: '{"hasStarted":true}', moneyEarned: 5000, moneySpent: 10,
+          serverAt: Timestamp.fromMillis(Date.now() - 60000) }));
+    check('an admin wipes their own save, wallet and all',
+        await allowed(setDoc(doc(admin, 'saves', 'uid_admin'), wipe('admin-run-2'))));
+    check('and their account starts over from nothing',
+        await allowed(setDoc(doc(admin, 'saves', 'uid_admin'),
+            { generation: 'admin-run-2', state: '{}', moneyEarned: 0, moneySpent: 0,
+              serverAt: serverTimestamp() })));
+    await seed(db => setDoc(slot(db, 'uid_admin', 4), { generation: 'a4', state: '{}' }));
+    check('or one particular slot', await allowed(setDoc(slot(admin, 'uid_admin', 4), wipe('a4-2'))));
+    check('an admin may delete a slot outright', await allowed(deleteDoc(slot(admin, 'uid_admin', 4))));
+
+    check('a wipe carries nothing -- no smuggled state or money',
+        await denied(setDoc(doc(admin, 'saves', 'uid_admin'),
+            { ...wipe('admin-run-3'), moneyEarned: 999999 })));
+    check('and must be a new run', await denied(setDoc(slot(admin, A, 2), wipe('run-a'))));
+    check('a wipe cannot be back-dated',
+        await denied(setDoc(slot(admin, A, 2),
+            { generation: 'x', wipedAt: Timestamp.fromMillis(1), serverAt: serverTimestamp() })));
+    check('an admin may wipe a student\'s slot', await allowed(setDoc(slot(admin, A, 2), wipe('run-a2'))));
+    check('after which the student carries on in the new run',
+        await allowed(setDoc(slot(alice, A, 2), save({ generation: 'run-a2' }))));
+}
+
 console.log('\n=== a username cannot be taken from its holder ===');
 {
     check('claiming a free name with your own uid',

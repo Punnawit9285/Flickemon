@@ -12,7 +12,7 @@
 
 import { isConfigured } from './firebase-config.js';
 import { signIn, signOut, getStatus, switchAccount, getAuthDiagnostics } from './auth.js';
-import { pullState, pushState, checkAdmin } from './firestore.js';
+import { pullState, pushState, checkAdmin, listSlots, wipeSlot } from './firestore.js';
 import { codeForUid, openLobby, readBattle, joinBattle, submitAction, commitTurn, closeLobby } from './pvp.js';
 import { openTrade, readTrade, joinTrade, offerPokemon, confirmTrade, acknowledgeTrade, closeTrade } from './trade.js';
 import { claimUsername, releaseUsername, writeProfile, lookup,
@@ -47,8 +47,10 @@ if (chrome.tabs && chrome.tabs.onRemoved) {
 /** Offline pushes park here until connectivity returns. */
 const PENDING_KEY = 'flickemon_pending_push_v1';
 
-async function queuePendingPush(state) {
-    await chrome.storage.local.set({ [PENDING_KEY]: { state, queuedAt: Date.now() } });
+async function queuePendingPush(state, target) {
+    await chrome.storage.local.set({ [PENDING_KEY]: {
+        state, slot: target.slot || 1, generation: target.generation || null, queuedAt: Date.now(),
+    } });
 }
 
 async function takePendingPush() {
@@ -65,11 +67,17 @@ async function hasPendingPush() {
 
 /**
  * Pushes state, parking it for later if the network is down. A queued push is
- * always the newest state, so a single slot is enough — no unbounded queue.
+ * always the newest state, so one parked write is enough — no unbounded queue.
+ * It remembers its save slot: switching slots flushes first, so the parked
+ * write is always the slot that was being played when the network went.
+ *
+ * A REFUSAL is not parked. The rules said no -- a wallet over its ceiling, or a
+ * slot an administrator has wiped since -- and retrying the same document will
+ * be refused forever, while holding the queue against every write after it.
  */
-async function pushWithRetry(state) {
+async function pushWithRetry(state, target = {}) {
     try {
-        const result = await pushState(state);
+        const result = await pushState(state, target);
         if (!result.signedIn) return { ok: false, reason: 'signed-out' };
 
         // Drain anything queued earlier; the state we just wrote supersedes it.
@@ -77,7 +85,11 @@ async function pushWithRetry(state) {
         // Passed back so the engine can skip re-pulling its own write.
         return { ok: true, syncedAt: Date.now(), serverAt: result.serverAt || null };
     } catch (err) {
-        await queuePendingPush(state);
+        if (err && (err.status === 403 || err.status === 400)) {
+            await takePendingPush();
+            return { ok: false, reason: 'rejected', error: String(err.message || err) };
+        }
+        await queuePendingPush(state, target);
         return { ok: false, reason: 'offline', error: String(err.message || err) };
     }
 }
@@ -219,11 +231,26 @@ const handlers = {
         // `since` is the write time this device already has. Without it the
         // whole document comes back every time; with it, only the write time
         // does until something has actually changed.
-        return await pullState({ since: msg && msg.since });
+        return await pullState({ since: msg && msg.since, slot: msg && msg.slot });
     },
 
     async CLOUD_PUSH(msg) {
-        return await pushWithRetry(msg.state);
+        return await pushWithRetry(msg.state, { slot: msg.slot, generation: msg.generation });
+    },
+
+    /** Every save slot, summarised. Only the save screen asks. */
+    async CLOUD_SLOTS() {
+        return await listSlots();
+    },
+
+    /** Admin only; the rules refuse anyone else. See wipeSlot. */
+    async CLOUD_WIPE_SLOT(msg) {
+        // A write parked for the slot being wiped would put the old run back.
+        const data = await chrome.storage.local.get([PENDING_KEY]);
+        const pending = data && data[PENDING_KEY];
+        const result = await wipeSlot({ slot: msg.slot });
+        if (result.ok && pending && (pending.slot || 1) === result.slot) await takePendingPush();
+        return result;
     },
 
     /** Retries a push parked while offline. Called opportunistically. */
@@ -231,7 +258,8 @@ const handlers = {
         const pending = await takePendingPush();
         if (!pending) return { ok: true, flushed: false };
 
-        const result = await pushWithRetry(pending.state);
+        const result = await pushWithRetry(pending.state,
+            { slot: pending.slot || 1, generation: pending.generation || null });
         return { ...result, flushed: result.ok };
     },
 };
