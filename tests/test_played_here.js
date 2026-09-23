@@ -43,11 +43,14 @@ const highlight = id => {
 };
 
 class FakeVideo {
-    constructor({ currentTime = 0, readyState = 0, played = [] } = {}) {
+    constructor({ currentTime = 0, readyState = 0, played = [], duration = NaN } = {}) {
         this.listeners = {};
         this.dataset = {};
         this.currentTime = currentTime;
         this.readyState = readyState;
+        // What the loaded source says it is, which is how a row claiming to be
+        // that source is checked. NaN until loadedmetadata, as in a browser.
+        this.duration = duration;
         this.paused = true; this.seeking = false; this.ended = false;
         this.played = { length: played.length, start: i => played[i][0], end: i => played[i][1] };
     }
@@ -94,10 +97,13 @@ const last = () => reports[reports.length - 1];
 
     console.log('\n=== a lecture opened here reports from where it resumed ===');
     {
-        highlight('plexus');
+        // Nothing is open yet: FlickPlayer has no currentVideo until after it
+        // has called src(), so the row is coloured only once loading began.
+        highlight(null);
         hook();
         check('nothing is reported before a source loads', reports.length === 0);
         video.fire('loadstart');
+        highlight('plexus');
         video.currentTime = 0;
         video.fire('timeupdate');
         check('nor while it is loading, before the resume seek has landed',
@@ -140,7 +146,12 @@ const last = () => reports[reports.length - 1];
 
     console.log('\n=== another lecture starts a stretch of its own ===');
     {
-        highlight('axilla');
+        // FlickPlayer's own order, which is the whole point of this block:
+        // viewVideo() calls videoPlayer.src() and only THEN assigns
+        // currentVideo, so the list still shows the previous lecture as open
+        // until Angular's next change detection pass. The highlight is left on
+        // 'plexus' here for exactly that reason.
+        video.duration = NaN;
         video.fire('loadstart');
         const n = reports.length;
         video.currentTime = 1900;
@@ -149,17 +160,50 @@ const last = () => reports[reports.length - 1];
 
         video.currentTime = 0;                        // nothing saved, so no resume
         video.fire('canplay');
-        check('it starts where the new lecture did, under the new name',
-            reports.length === n + 1 && last().from === 0 && last().to === 0
-            && last().lecture.title === 'Axilla', JSON.stringify(last()));
+        check('a stale highlight is not believed -- the course is held instead',
+            reports.length === n + 1 && last().lecture === null && last().from === 0,
+            JSON.stringify(last()));
+
+        // Angular catches up and the list moves the colour to the row that is
+        // really playing.
+        highlight('axilla');
+        video.currentTime = 2;
+        video.fire('timeupdate');
+        check('once the page catches up it is named, under the new name',
+            last().lecture && last().lecture.title === 'Axilla', JSON.stringify(last()));
+        check('and it is the same stretch, so the engine can move it',
+            last().session === reports[n].session && last().from === 0,
+            JSON.stringify([reports[n].session, last().session]));
         video.fire('canplay');
-        check('a later canplay, after buffering, does not restart it', reports.length === n + 1);
+        check('a later canplay, after buffering, does not restart it',
+            last().from === 0, JSON.stringify(last()));
+    }
+
+    console.log('\n=== a row that does not match the loaded source is not believed ===');
+    {
+        // Two lectures, one 45 minutes and one 50. The source that loaded is the
+        // 45-minute one; a highlight still sitting on the 50-minute row is a
+        // render behind and cannot be what is playing.
+        highlight('plexus');                          // 50 min, open before
+        video.fire('emptied');                        // and still coloured after
+        video.duration = 45 * 60;                     // the source is Axilla's
+        video.currentTime = 0;
+        video.fire('canplay');
+        check('the length of the source contradicts the row, so nothing is named',
+            last().lecture === null, JSON.stringify(last()));
+
+        highlight('axilla');
+        video.currentTime = 3;
+        video.fire('timeupdate');
+        check('the row whose length agrees is taken',
+            last().lecture && last().lecture.title === 'Axilla', JSON.stringify(last()));
     }
 
     console.log('\n=== a lecture the page cannot name is still reported, for its course ===');
     {
         highlight(null);
         video.fire('emptied');
+        video.duration = NaN;
         video.currentTime = 90;
         video.fire('canplay');
         check('reported without a lecture, so the engine holds the whole course',
@@ -171,7 +215,8 @@ const last = () => reports[reports.length - 1];
     {
         highlight('plexus');
         // The site's router can put a fresh <video> in place of the old one.
-        video = new FakeVideo({ currentTime: 700, readyState: 4, played: [[500, 640], [660, 700]] });
+        video = new FakeVideo({ currentTime: 700, readyState: 4, played: [[500, 640], [660, 700]],
+                                duration: 3000 });
         hook();
         check('reports at once, from the first moment it played to the furthest',
             last().from === 500 && last().to === 700 && last().lecture.title === 'Brachial Plexus',

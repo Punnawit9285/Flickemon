@@ -595,6 +595,37 @@ console.log('\n=== a lecture the player cannot name holds its course, then lets 
         String(phone.rawMinutes));
 }
 
+console.log('\n=== a stretch first named wrongly is moved, not left behind ===');
+{
+    // FlickPlayer calls src() before it assigns currentVideo, so the player can
+    // report a stretch under the previous lecture's name, or under none, and
+    // name it properly a moment later. Left where it first landed, the lecture
+    // really playing has nothing against it and comes back as another device's.
+    reset();
+    await e.creditFlickProgress(watched(0), NOW - 120 * MIN);
+    const before = { course: openHere.course,
+                     lecture: { ...openHere.lecture, title: 'Some Earlier Lecture' } };
+    await e.recordPlayedHere({ ...before, from: 0, to: 300, session: 'p9' }, NOW - 40 * MIN);
+    await e.recordPlayedHere({ course: openHere.course, lecture: null, from: 0, to: 400,
+                               session: 'p1' }, NOW - 31 * MIN);
+    await e.recordPlayedHere({ ...before, from: 0, to: 600, session: 'p1' }, NOW - 31 * MIN);
+    await e.recordPlayedHere({ ...openHere, from: 0, to: 30 * 60, session: 'p1' }, NOW - 30 * MIN);
+
+    const keys = Object.keys(e.gameState.flickPlayedHere);
+    check('the unnamed hold on the course is taken back',
+        !keys.some(k => k.startsWith('c:')), JSON.stringify(keys));
+    const onBefore = Object.values(e.gameState.flickPlayedHere).find(s => s.claims && s.claims.p9);
+    check('another session\'s stretch is left exactly as it was',
+        onBefore && onBefore.to === 300, JSON.stringify(e.gameState.flickPlayedHere));
+    check('and this session holds exactly one entry',
+        Object.values(e.gameState.flickPlayedHere).filter(s => s.claims && s.claims.p1).length === 1,
+        JSON.stringify(e.gameState.flickPlayedHere));
+
+    const here = await e.creditFlickProgress(watched(30), NOW);
+    check('so the lecture really played here is not paid as another device\'s',
+        !(here.rawMinutes > 0.1), JSON.stringify(here));
+}
+
 console.log('\n=== a spent day still settles what was played here ===');
 {
     // Otherwise the stretch would wait for tomorrow's allowance and be paid from it.

@@ -214,17 +214,74 @@
         // jump to the saved position lands -- so canplay is the first moment the
         // position means "where this device picked the lecture up". Anything
         // below it was studied somewhere else, and must still be paid.
+        //
+        // NAMING the lecture is the delicate part, and getting it wrong is what
+        // makes this device's own watching read as a phone's. FlickPlayer calls
+        // videoPlayer.src() BEFORE it assigns currentVideo (course.page.ts), and
+        // the list's [color] binding only catches up on the next change
+        // detection pass -- so at canplay the row Flick highlights is still the
+        // PREVIOUS lecture. Read once and cached, as this used to be, every
+        // lecture after the first in a session was filed under its predecessor:
+        // the row that was really playing had no stretch against it, and the
+        // whole of it came back at the next reading as "studied on another
+        // device". That is the excess.
+        //
+        // So an identity is corroborated before it is believed, and re-read
+        // until it is. The loaded source knows its own length, and must agree
+        // with the row's; and the row must either differ from the one showing as
+        // open when this source began loading -- which is exactly what a stale
+        // highlight shows -- or have stood there while the page settled. Until
+        // one of those passes the lecture is reported as unknown, which holds
+        // the whole course and pays nothing. That is the right way to be wrong.
         function trackPlayedHere(video) {
             const engine = window.flickemonEngine;
             const FP = window.FlickProgress;
             if (!engine || !FP || typeof engine.recordPlayedHere !== 'function') return;
 
+            // Flick prints a row's length to the nearest whole minute, so the
+            // source behind it can sit half a minute either side. The rest is
+            // slack for a stored length that disagrees slightly with the media.
+            const DURATION_TOLERANCE_SEC = 45;
+            // How long the page gets to re-render the highlight before the row
+            // standing there is believed on its own evidence. Change detection
+            // takes milliseconds; this exists only so that re-opening the
+            // lecture already playing is not held back forever.
+            const SETTLE_MS = 2500;
+
             let span = null;
+            let sessions = 0;
+            // Unique to this page load: a session may only take back its own
+            // claim, and a bare counter would restart at p1 in every new tab and
+            // take back a stretch an earlier one left unsettled.
+            const page = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+            // What the list showed as open when the current source started
+            // loading -- the value a stale highlight keeps showing.
+            let stale = null;
+
+            const same = (a, b) => Boolean(a && b && a.title === b.title
+                && a.durationSec === b.durationSec);
+
+            /** The highlighted row, once there is a reason to believe it. */
+            const identify = () => {
+                const found = FP.activeLecture(document);
+                if (!found || !found.title) return null;
+
+                // The source that is actually loaded knows how long it is, and
+                // a row for a different lecture will not match it.
+                const length = Number(video.duration);
+                if (Number.isFinite(length) && length > 0 && found.durationSec !== null
+                    && Math.abs(length - found.durationSec) > DURATION_TOLERANCE_SEC) {
+                    return null;
+                }
+                if (!same(found, stale)) return found;
+                return Date.now() - span.startedAt >= SETTLE_MS ? found : null;
+            };
 
             const begin = () => {
                 const at = video.currentTime;
                 if (!Number.isFinite(at) || at < 0) return;
-                span = { from: at, to: at, sentTo: -1, lecture: null, course: '', lookedAt: 0 };
+                span = { from: at, to: at, sentTo: -1, lecture: null, course: '',
+                         startedAt: Date.now(), sid: page + '.' + (++sessions) };
                 // Hooked late, after part of this source had already played.
                 const played = video.played;
                 if (played && played.length) {
@@ -239,24 +296,41 @@
                 if (Number.isFinite(at) && at > span.to) span.to = at;
                 if (!force && span.to - span.sentTo < 1) return;
 
-                // Named once per source and then remembered: a search typed
-                // while it plays can filter the highlighted row off the page.
-                if (!span.lecture && Date.now() - span.lookedAt >= 1000) {
-                    span.lookedAt = Date.now();
-                    span.lecture = FP.activeLecture(document);
-                    span.course = FP.parseCourseName(document);
-                }
+                // Re-read rather than cached once. An identity that is never
+                // revisited is one that can never be corrected, and the first
+                // reading of it is the one most likely to be a render behind. A
+                // row a search has filtered off the page reads as nothing at
+                // all, and keeps whatever was last believed.
+                const found = identify();
+                if (found) span.lecture = found;
+                // The course is read whether or not the lecture could be: the
+                // header does not lag the source the way the highlight does, and
+                // a stretch that cannot be named must still hold its course.
+                const course = FP.parseCourseName(document);
+                if (course) span.course = course;
+
                 span.sentTo = span.to;
+                // The session id is what lets a correction land: the engine
+                // files one stretch of playback under one name, and moves it
+                // when this names it better.
                 Promise.resolve(engine.recordPlayedHere({
-                    course: span.course, lecture: span.lecture, from: span.from, to: span.to,
+                    course: span.course, lecture: span.lecture,
+                    from: span.from, to: span.to, session: span.sid,
                 })).catch(err => console.warn('[Flickémon] Could not record playback:', err));
             };
 
             // A new source is a new lecture, or the same one opened again.
-            video.addEventListener('loadstart', () => { span = null; });
-            video.addEventListener('emptied', () => { span = null; });
+            const reset = () => {
+                stale = FP.activeLecture(document);
+                span = null;
+            };
+            video.addEventListener('loadstart', reset);
+            video.addEventListener('emptied', reset);
             video.addEventListener('canplay', () => { if (!span) { begin(); report(true); } });
             video.addEventListener('timeupdate', () => report(false));
+            // The moment the source's own length becomes known is the moment an
+            // identity that could not be corroborated before may settle.
+            video.addEventListener('loadedmetadata', () => report(true));
             // The moments FlickPlayer itself posts, so the stretch is never
             // behind what Flick has recorded.
             for (const evt of ['seeked', 'pause', 'ended']) {

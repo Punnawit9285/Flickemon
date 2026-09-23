@@ -58,6 +58,17 @@ const FEED_PUBLISH_FLOOR_MS = 600000;
 // figure that resets daily while costing ten writes across a long study day.
 const BOARD_PUBLISH_FLOOR_MS = 1800000;
 
+/**
+ * Refits a played-here stretch to the union of what its sessions claim.
+ * Claims only ever come from the stretch itself, so it can only shrink back.
+ */
+function fitPlayedHere(span) {
+    const parts = Object.values(span.claims).filter(Array.isArray);
+    if (!parts.length) return;
+    span.from = Math.min(...parts.map(c => c[0]));
+    span.to = Math.max(...parts.map(c => c[1]));
+}
+
 class FlickemonEngine {
     constructor() {
         this.STORAGE_KEY = 'flickemon_ext_save_v2';
@@ -557,6 +568,20 @@ class FlickemonEngine {
             // From the future, it would hold a whole course until the clock
             // caught up; unknown, it would never settle.
             if (!Number.isFinite(span.at) || span.at < 0 || span.at > Date.now()) span.at = Date.now();
+            // Who claimed what, only ever used to take one session's part back.
+            // A doubtful claim is forgotten rather than trusted: the entry then
+            // just keeps what it holds, which withholds rather than pays.
+            if (span.claims !== undefined) {
+                const claims = span.claims;
+                const fine = claims && typeof claims === 'object' && !Array.isArray(claims)
+                    && Object.keys(claims).length > 0
+                    && Object.values(claims).every(c => (whole ? c === true
+                        : Array.isArray(c) && c.length === 2
+                          && Number.isFinite(c[0]) && Number.isFinite(c[1])
+                          && c[0] >= span.from && c[0] <= c[1] && c[1] <= span.to));
+                if (!fine) delete span.claims;
+            }
+            delete span.session;
         }
         // Published to the whole cohort, so it must never carry an address —
         // truncation happens before the write, and this is the backstop.
@@ -3677,21 +3702,60 @@ class FlickemonEngine {
      * whole course is held until FLICK_UNIDENTIFIED_SETTLE_MS after the player
      * stops. That costs any phone progress made in the same course meanwhile,
      * which is the right way to be wrong.
+     *
+     * `session` names one continuous stretch of playback, and is what lets the
+     * player CORRECT itself. The row Flick highlights can be a render behind the
+     * source that is loaded -- FlickPlayer assigns currentVideo after it calls
+     * src() -- so a stretch can arrive under the previous lecture's name, or
+     * under no name at all, and be named properly a moment later. One session
+     * therefore holds exactly one entry: naming it again moves it, rather than
+     * leaving a stretch against a lecture nobody played while the one that WAS
+     * played has nothing against it and comes back as another device's work.
      */
-    async recordPlayedHere({ course = '', lecture = null, from, to } = {}, now = Date.now()) {
+    async recordPlayedHere({ course = '', lecture = null, from, to, session = '' } = {},
+                           now = Date.now()) {
         if (!this.gameState.hasStarted) return;
         if (!Number.isFinite(from) || !Number.isFinite(to)
             || from < 0 || to < from || to > MAX_LECTURE_SEC) return;
         const here = this.gameState.flickPlayedHere || (this.gameState.flickPlayedHere = {});
 
-        if (lecture && lecture.title) {
-            const key = await this.flickKey(course, lecture);
-            const prev = here[key];
-            here[key] = prev && Number.isFinite(prev.from)
-                ? { from: Math.min(prev.from, from), to: Math.max(prev.to, to), at: now }
-                : { from, to, at: now };
+        const named = Boolean(lecture && lecture.title);
+        const key = named
+            ? await this.flickKey(course, lecture)
+            : await this.courseHereKey(course);
+
+        // Move this session off whatever it was called before. Each entry keeps
+        // what every session claimed of it, so a session only ever takes back
+        // its OWN part: an entry it merged into -- the earlier lecture it was
+        // misnamed as, which this device may genuinely have played -- keeps the
+        // rest of what it held.
+        const id = session || '';
+        if (session) {
+            for (const [other, span] of Object.entries(here)) {
+                if (other === key || !span || !span.claims
+                    || !Object.prototype.hasOwnProperty.call(span.claims, id)) continue;
+                delete span.claims[id];
+                if (!Object.keys(span.claims).length) delete here[other];
+                else fitPlayedHere(span);
+            }
+        }
+
+        const prev = here[key];
+        if (named) {
+            const entry = prev && Number.isFinite(prev.from)
+                ? prev : { from, to, claims: {} };
+            // Written before sessions were tracked: nobody's to take back.
+            const claims = entry.claims || (entry.claims = { '': [entry.from, entry.to] });
+            const mine = claims[id];
+            claims[id] = mine ? [Math.min(mine[0], from), Math.max(mine[1], to)] : [from, to];
+            fitPlayedHere(entry);
+            entry.at = now;
+            here[key] = entry;
         } else {
-            here[await this.courseHereKey(course)] = { at: now };
+            const entry = prev || { claims: {} };
+            (entry.claims || (entry.claims = { '': true }))[id] = true;
+            entry.at = now;
+            here[key] = entry;
         }
         this.prunePlayedHere();
         // Local only, and never a reason to redraw: this runs at the player's
