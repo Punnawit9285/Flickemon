@@ -753,6 +753,7 @@ class FlickemonUI {
         const modal = this.createModalOverlay('Choose Your Partner');
         modal.overlay.classList.add('starter-overlay');
         const options = this.engine.getStarterOptions();
+        const generations = STARTER_REGIONS.filter(r => r.gen > 0).length;
 
         modal.body.innerHTML = `
             <div class="starter-modal-content">
@@ -764,16 +765,35 @@ class FlickemonUI {
                     </p>
                 </header>
 
+                <!-- Most trainers never noticed there was a choice of region and
+                     took a Kanto starter. So the choice is announced, every tab
+                     shows the three it holds, and the trio can be stepped through
+                     region by region without finding the tabs at all. -->
+                <p class="gen-tabs-lead">
+                    <strong>${options.length} starters from all ${generations} generations.</strong>
+                    Pick a region to meet its partners.
+                </p>
                 <div class="gen-tabs" role="tablist" aria-label="Region">
                     ${STARTER_REGIONS.map(r => `
                         <button class="gen-tab-btn ${r.gen === 1 ? 'active' : ''}"
-                                role="tab" aria-selected="${r.gen === 1}" data-gen="${r.gen}">
+                                role="tab" aria-selected="${r.gen === 1}" tabindex="${r.gen === 1 ? 0 : -1}"
+                                data-gen="${r.gen}" title="${r.region} — ${r.games}">
+                            <span class="gen-tab-sprites" aria-hidden="true">
+                                ${this.startersForRegion(options, r.gen).map(sp =>
+                                    `<img class="gen-tab-sprite" src="${this.config.getSpriteUrl(sp.id)}" alt="" loading="lazy"/>`).join('')}
+                            </span>
+                            <span class="gen-tab-gen">${r.gen ? `Gen ${r.gen}` : 'Bonus'}</span>
                             <strong>${r.region}</strong>
                             <small>${r.games}</small>
                         </button>
                     `).join('')}
                 </div>
 
+                <div class="region-nav">
+                    <button class="region-step" data-step="-1" aria-label="Previous region">‹</button>
+                    <div class="region-now" aria-live="polite"></div>
+                    <button class="region-step" data-step="1" aria-label="Next region">›</button>
+                </div>
                 <div class="starters-grid" role="radiogroup" aria-label="Starter Pokémon"></div>
                 <section class="starter-detail" aria-live="polite"></section>
             </div>
@@ -857,19 +877,49 @@ class FlickemonUI {
             }
         });
 
-        modal.body.querySelectorAll('.gen-tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                modal.body.querySelectorAll('.gen-tab-btn').forEach(b => {
-                    b.classList.remove('active');
-                    b.setAttribute('aria-selected', 'false');
-                });
-                btn.classList.add('active');
-                btn.setAttribute('aria-selected', 'true');
-                renderGrid(Number(btn.dataset.gen));
+        const tabs = [...modal.body.querySelectorAll('.gen-tab-btn')];
+        const regionNow = modal.body.querySelector('.region-now');
+        let current = 0;
+
+        const showRegion = (index, { focusTab = false } = {}) => {
+            current = (index + tabs.length) % tabs.length;
+            tabs.forEach((b, i) => {
+                const on = i === current;
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-selected', String(on));
+                b.tabIndex = on ? 0 : -1;
+            });
+            const region = STARTER_REGIONS[current];
+            regionNow.innerHTML = `
+                <span class="region-now-count">${region.gen
+                    ? `Generation ${region.gen} of ${generations}` : 'Bonus starters'}</span>
+                <strong>${region.region}</strong>`;
+            if (focusTab) tabs[current].focus();
+            if (typeof tabs[current].scrollIntoView === 'function') {
+                tabs[current].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            }
+            renderGrid(region.gen);
+        };
+
+        tabs.forEach((btn, i) => {
+            btn.addEventListener('click', () => showRegion(i));
+            // A tablist is walked with the arrow keys, as screen readers expect.
+            btn.addEventListener('keydown', (e) => {
+                const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+                if (step) {
+                    e.preventDefault();
+                    showRegion(i + step, { focusTab: true });
+                } else if (e.key === 'Home' || e.key === 'End') {
+                    e.preventDefault();
+                    showRegion(e.key === 'Home' ? 0 : tabs.length - 1, { focusTab: true });
+                }
             });
         });
+        modal.body.querySelectorAll('.region-step').forEach(btn => {
+            btn.addEventListener('click', () => showRegion(current + Number(btn.dataset.step)));
+        });
 
-        renderGrid(1);
+        showRegion(0);
     }
 
     /** The starters shown on one region tab. Every option belongs to exactly one. */

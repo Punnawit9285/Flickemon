@@ -536,35 +536,113 @@
 
 /* Region tabs — pills that wrap, rather than a scroll strip that hid the
    later regions entirely behind an edge most people never dragged. */
+/* The regions. A grid of five on a wide screen, so all ten are visible at
+   once with the starters on each; a single swipeable row on a narrow one, with
+   the arrows below doing the same job. */
+.gen-tabs-lead {
+    margin: 0 0 0.6rem;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--flick-text-muted);
+}
+.gen-tabs-lead strong { color: var(--flick-text); }
 .gen-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
-    margin-bottom: 1.25rem;
+    margin-bottom: 0.75rem;
 }
 .gen-tab-btn {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 1px;
+    min-width: 0;
     background: var(--flick-card-bg);
     border: 2px solid var(--flick-border);
     border-radius: 10px;
     color: var(--flick-text-muted);
-    padding: 6px 11px;
+    padding: 4px 6px 6px;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.15s;
 }
-.gen-tab-btn:hover { transform: translateY(-1px); color: var(--flick-text); }
-.gen-tab-btn strong { font-size: 0.82rem; font-weight: 800; letter-spacing: 0.02em; }
-.gen-tab-btn small { font-size: 0.6rem; font-weight: 600; opacity: 0.75; white-space: nowrap; }
+.gen-tab-btn:hover { transform: translateY(-1px); color: var(--flick-text); border-color: var(--flick-primary); }
+.gen-tab-btn:focus-visible { outline: 2px solid var(--flick-primary); outline-offset: 2px; }
+.gen-tab-sprites {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 34px;
+    margin-bottom: 1px;
+}
+/* The sprite files carry wide transparent margins, so each is drawn larger than
+   its slot and overlapped with its neighbours to read at this size. */
+.gen-tab-sprite {
+    width: 44px;
+    height: 44px;
+    margin: 0 -10px;
+    image-rendering: pixelated;
+    object-fit: contain;
+}
+.gen-tab-gen {
+    font-size: 0.58rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    opacity: 0.8;
+}
+.gen-tab-btn strong { font-size: 0.8rem; font-weight: 800; letter-spacing: 0.02em; }
+.gen-tab-btn small {
+    max-width: 100%;
+    font-size: 0.58rem; font-weight: 600; opacity: 0.75;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .gen-tab-btn.active {
     color: var(--flick-on-primary);
     background: var(--flick-primary);
     border-color: var(--flick-primary);
 }
-.gen-tab-btn.active small { opacity: 0.85; }
+.gen-tab-btn.active small, .gen-tab-btn.active .gen-tab-gen { opacity: 0.9; }
+
+@media (max-width: 560px) {
+    .gen-tabs {
+        display: flex;
+        overflow-x: auto;
+        scroll-snap-type: x proximity;
+        padding-bottom: 4px;
+    }
+    .gen-tab-btn { flex: 0 0 88px; scroll-snap-align: center; }
+}
+
+/* Which region the trio is from, with a way to the next one. */
+.region-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+.region-step {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 2px solid var(--flick-border);
+    background: var(--flick-card-bg);
+    color: var(--flick-text);
+    font-size: 1.3rem; line-height: 1;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+.region-step:hover { border-color: var(--flick-primary); color: var(--flick-primary); }
+.region-step:focus-visible { outline: 2px solid var(--flick-primary); outline-offset: 2px; }
+.region-now {
+    min-width: 150px;
+    display: flex; flex-direction: column; align-items: center;
+    color: var(--flick-text);
+}
+.region-now strong { font-size: 1rem; font-weight: 800; }
+.region-now-count {
+    font-size: 0.65rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--flick-text-muted);
+}
 
 /* The trio */
 .starters-grid {
@@ -783,6 +861,7 @@
     .starter-card.selected .starter-card-img { animation: none; }
     .starter-detail-inner { animation: none; }
     .starter-card:hover, .gen-tab-btn:hover, .starter-confirm-btn:hover:not(:disabled) { transform: none; }
+    .gen-tab-btn, .region-step { transition: none; }
 }
 
 /* Pokédex Styles */
