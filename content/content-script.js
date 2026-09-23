@@ -80,6 +80,7 @@
         }
 
         injectUI();
+        flickemonUI.syncToolbarLogo();
 
         // The player mutates its DOM constantly during playback (progress bar,
         // captions, buffering indicators), and injectUI queries the document on
@@ -94,6 +95,7 @@
                 injectQueued = false;
                 injectUI();
                 harvestFlickProgress();
+                flickemonUI.syncToolbarLogo();
             });
         });
         observer.observe(document.body, { childList: true, subtree: true });

@@ -5106,6 +5106,170 @@ body.pokemon-theme ::-webkit-scrollbar-thumb:hover {
     filter: drop-shadow(0 0 6px var(--pkmn-shiny-glow));
 }
 
+/* ── The Poké Ball ──
+ *
+ * Drawn from tokens rather than an image, so it follows the palette and costs
+ * no request: red top, white bottom, the black band, and the button in the
+ * middle. The inset shadow is the shading the games give it. */
+
+.flickemon-pokeball {
+    display: inline-block;
+    flex: none;
+    width: 22px;
+    height: 22px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    border: 2px solid var(--pkmn-dark);
+    background:
+        radial-gradient(circle at 50% 50%,
+            var(--pkmn-white) 0 15%,
+            var(--pkmn-dark) 16% 27%,
+            transparent 28%),
+        linear-gradient(to bottom,
+            var(--pkmn-primary) 0 44%,
+            var(--pkmn-dark) 44% 56%,
+            var(--pkmn-white) 56% 100%);
+    box-shadow:
+        inset -2px -3px 0 var(--pkmn-shadow-soft),
+        0 1px 3px var(--pkmn-shadow-drop);
+}
+
+/* The widget header shows the controller normally and the ball in the theme. */
+.header-pokeball { display: none; }
+.flickemon-card.pokemon-theme .header-pokeball { display: inline-block; }
+.flickemon-card.pokemon-theme .header-icon-svg { display: none; }
+
+/* In Flick's top bar, beside the course name. The bar is Poké Ball red, so the
+   ball gets a white ring to stand off it, as the logo does on the Pokédex. */
+.flickemon-toolbar-ball {
+    width: 26px;
+    height: 26px;
+    margin: 0 4px 0 10px;
+    box-shadow:
+        inset -2px -3px 0 var(--pkmn-shadow-soft),
+        0 0 0 2px var(--pkmn-white),
+        0 2px 6px var(--pkmn-shadow-heavy);
+}
+body:not(.pokemon-theme) .flickemon-toolbar-ball { display: none; }
+
+/* A wobble, like one that has just been thrown. */
+.flickemon-card.pokemon-theme .flickemon-header:hover .header-pokeball,
+body.pokemon-theme ion-toolbar:hover .flickemon-toolbar-ball {
+    animation: pokeball-wobble 0.9s ease-in-out;
+}
+@keyframes pokeball-wobble {
+    0%, 100% { transform: rotate(0); }
+    20% { transform: rotate(-18deg); }
+    40% { transform: rotate(14deg); }
+    60% { transform: rotate(-8deg); }
+    80% { transform: rotate(4deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .flickemon-card.pokemon-theme .flickemon-header:hover .header-pokeball,
+    body.pokemon-theme ion-toolbar:hover .flickemon-toolbar-ball { animation: none; }
+}
+
+/* ── HP the way the games colour it ── */
+
+.flickemon-card.pokemon-theme .hp-bar-fill[data-hp="ok"]   { background: var(--pkmn-success); }
+.flickemon-card.pokemon-theme .hp-bar-fill[data-hp="warn"] { background: var(--pkmn-warning); }
+.flickemon-card.pokemon-theme .hp-bar-fill[data-hp="low"]  { background: var(--pkmn-danger); }
+.flickemon-card.pokemon-theme .hp-bar-track {
+    border: 1.5px solid var(--pkmn-dark);
+    border-radius: 6px;
+}
+
+/* ── Battle boxes: the games' status panels, square on one corner ── */
+
+.flickemon-card.pokemon-theme .battle-col-box {
+    border: 2px solid var(--pkmn-border);
+    border-radius: 4px 16px 4px 16px;
+    box-shadow: inset 0 0 0 2px var(--pkmn-dark), 0 2px 8px var(--pkmn-shadow-mid);
+}
+
+/* ── Menus as the games' dialogue boxes ──
+ *
+ * The double frame -- a dark outer line, a gold inner one -- is the text box
+ * every Pokémon game has used since the first. Modals are appended to <body>,
+ * so they are reached through the body's theme class. */
+
+body.pokemon-theme .flickemon-modal-container {
+    position: relative;
+    border: 3px solid var(--pkmn-dark);
+    border-radius: 14px;
+    box-shadow: 0 12px 40px var(--pkmn-shadow-heavy);
+}
+/* The inner gold line, on a layer of its own above the header and the body:
+   they would paint over an inset shadow or an outline. It takes no clicks. */
+body.pokemon-theme .flickemon-modal-container::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border: 2px solid var(--pkmn-border);
+    border-radius: 9px;
+    pointer-events: none;
+    z-index: 5;
+}
+body.pokemon-theme .flickemon-modal-header {
+    background: linear-gradient(90deg, var(--pkmn-primary) 0%, var(--pkmn-primary-tint) 100%);
+    border-bottom: 4px solid var(--pkmn-dark);
+}
+/* The band's centre button, as on the widget header. */
+body.pokemon-theme .flickemon-modal-header::after {
+    content: '';
+    position: absolute;
+    right: 20px;
+    bottom: -11px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--pkmn-white);
+    border: 3px solid var(--pkmn-dark);
+}
+body.pokemon-theme .flickemon-list-card {
+    border: 1.5px solid var(--pkmn-slate-border);
+    border-radius: 10px;
+}
+
+/* ── Switches: the knob is a Poké Ball while on ── */
+
+body.pokemon-theme .flick-toggle.is-on::after {
+    background:
+        radial-gradient(circle at 50% 50%,
+            var(--pkmn-white) 0 16%,
+            var(--pkmn-dark) 17% 28%,
+            transparent 29%),
+        linear-gradient(to bottom,
+            var(--pkmn-primary) 0 44%,
+            var(--pkmn-dark) 44% 56%,
+            var(--pkmn-white) 56% 100%);
+    box-shadow: 0 0 0 1.5px var(--pkmn-dark);
+}
+
+/* ── The lecture playing now ──
+ *
+ * Flick marks it color="secondary", which paints Ionic's default secondary
+ * through the item's shadow root -- ignoring the --background set above. Its
+ * colour variables are what reach inside. */
+
+body.pokemon-theme ion-list ion-item.ion-color-secondary {
+    --ion-color-base: var(--pkmn-card-mid) !important;
+    --ion-color-contrast: var(--pkmn-text) !important;
+    --ion-color-shade: var(--pkmn-card-mid) !important;
+    --ion-color-tint: var(--pkmn-card-mid) !important;
+    border-left: 4px solid var(--pkmn-primary) !important;
+}
+
+/* ── Scrollbars in Poké Ball red ── */
+
+body.pokemon-theme ::-webkit-scrollbar-thumb {
+    background: var(--pkmn-primary);
+    border: 2px solid var(--pkmn-dark);
+}
+body.pokemon-theme ::-webkit-scrollbar-thumb:hover {
+    background: var(--pkmn-primary-tint);
+}
+
 /* ── Entrance transition ── */
 
 .flickemon-card.pokemon-theme-entering {

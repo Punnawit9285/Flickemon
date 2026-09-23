@@ -77,6 +77,7 @@ const window = {
     FlickemonUI: class {
         constructor() { this.music = null; }
         renderWidget() { return page.createElement('div'); }
+        syncToolbarLogo() {}
     },
 };
 const context = vm.createContext({

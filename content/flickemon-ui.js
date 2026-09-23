@@ -81,6 +81,46 @@ class FlickemonUI {
         if (targetCard) {
             targetCard.classList.toggle('pokemon-theme', isTheme);
         }
+        this.syncToolbarLogo();
+    }
+
+    /**
+     * The Poké Ball in Flick's own top bar, while the Pokémon theme is on.
+     *
+     * A real element in the toolbar's start slot rather than a pseudo-element:
+     * ion-toolbar and ion-title render through shadow roots, where a ::before
+     * lands in front of the layout instead of inside it. Angular re-creates the
+     * header on navigation, which drops the element, so the content script's
+     * DOM tick calls this again -- cheap when there is nothing to do.
+     */
+    syncToolbarLogo() {
+        // Decoration: a document it cannot search is simply left undecorated.
+        if (typeof document === 'undefined' || !document.body
+            || typeof document.querySelectorAll !== 'function') return;
+        const on = document.body.classList.contains('pokemon-theme');
+        const toolbars = document.querySelectorAll('ion-header ion-toolbar');
+        for (const toolbar of toolbars) {
+            const ball = toolbar.querySelector(':scope > .flickemon-toolbar-ball');
+            if (on && !ball) {
+                const el = document.createElement('span');
+                el.className = 'flickemon-pokeball flickemon-toolbar-ball';
+                el.setAttribute('slot', 'start');
+                el.setAttribute('aria-hidden', 'true');
+                // After the back button, so the arrow stays at the very edge.
+                const back = toolbar.querySelector(':scope > ion-back-button, :scope > ion-buttons[slot="start"]');
+                if (back && back.nextSibling) toolbar.insertBefore(el, back.nextSibling);
+                else if (back) toolbar.appendChild(el);
+                else toolbar.insertBefore(el, toolbar.firstChild);
+            } else if (!on && ball) {
+                ball.remove();
+            }
+        }
+    }
+
+    /** The games' HP colours: green above half, yellow above a fifth, red below. */
+    hpBand(wild) {
+        const pct = wild && wild.maxHp ? wild.currentHp / wild.maxHp : 0;
+        return pct > 0.5 ? 'ok' : (pct > 0.2 ? 'warn' : 'low');
     }
 
     renderWidget() {
@@ -166,6 +206,9 @@ class FlickemonUI {
 
     updateWidgetView(card, state, wild) {
         const gameControllerSvg = `<svg class="header-icon-svg" viewBox="0 0 512 512" width="22" height="22" fill="currentColor"><path d="M483.13 245.38C461.92 149.49 430 98.31 382.65 84.33A107.1 107.1 0 0 0 352 80c-13.71 0-25.65 3.34-38.28 6.88C298.5 91.15 281.21 96 256 96s-42.51-4.84-57.76-9.11C185.6 83.34 173.67 80 160 80a115.7 115.7 0 0 0-31.73 4.32c-47.1 13.92-79 65.08-100.52 161C4.61 348.54 16 413.71 59.69 428.83a56.6 56.6 0 0 0 18.64 3.22c29.93 0 53.93-24.93 70.33-45.34 18.53-23.1 40.22-34.82 107.34-34.82 59.95 0 84.76 8.13 106.19 34.82 13.47 16.78 26.2 28.52 38.9 35.91 16.89 9.82 33.77 12 50.16 6.37 25.82-8.81 40.62-32.1 44-69.24 2.57-28.48-1.39-65.89-12.12-114.37M208 240h-32v32a16 16 0 0 1-32 0v-32h-32a16 16 0 0 1 0-32h32v-32a16 16 0 0 1 32 0v32h32a16 16 0 0 1 0 32m84 4a20 20 0 1 1 20-20 20 20 0 0 1-20 20m44 44a20 20 0 1 1 20-19.95A20 20 0 0 1 336 288m0-88a20 20 0 1 1 20-20 20 20 0 0 1-20 20m44 44a20 20 0 1 1 20-20 20 20 0 0 1-20 20"/></svg>`;
+        // Shown in place of the controller while the Pokémon theme is on; the
+        // stylesheet decides which of the two is visible.
+        const headerBall = '<span class="flickemon-pokeball header-pokeball" aria-hidden="true"></span>';
         const ellipsisSvg = `<svg viewBox="0 0 512 512" width="18" height="18" fill="currentColor"><circle cx="256" cy="96" r="48"/><circle cx="256" cy="256" r="48"/><circle cx="256" cy="416" r="48"/></svg>`;
         const chevronDownSvg = `<svg viewBox="0 0 512 512" width="18" height="18" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="48"><path d="M112 184l144 144 144-144"/></svg>`;
         const chevronUpSvg = `<svg viewBox="0 0 512 512" width="18" height="18" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="48"><path d="M112 328l144-144 144 144"/></svg>`;
@@ -207,7 +250,7 @@ class FlickemonUI {
             card.innerHTML = `
                 <div class="flickemon-header start-header">
                     <div class="header-left">
-                        ${gameControllerSvg}
+                        ${gameControllerSvg}${headerBall}
                         <span class="header-title">Flickémon</span>
                     </div>
                     <button class="start-game-badge-btn">Start Game ✨</button>
@@ -265,7 +308,7 @@ class FlickemonUI {
         card.innerHTML = `
             <div class="flickemon-header">
                 <div class="header-left">
-                    ${gameControllerSvg}
+                    ${gameControllerSvg}${headerBall}
                     <span class="header-title">Flickémon</span>
                 </div>
                 <div class="header-actions">
@@ -337,7 +380,7 @@ class FlickemonUI {
                                     <span class="pk-lvl">Lv.${wild.wildLevel}</span>
                                 </div>
                                 <div class="hp-bar-track">
-                                    <div class="hp-bar-fill" style="width: ${Math.round((wild.currentHp / wild.maxHp) * 100)}%;"></div>
+                                    <div class="hp-bar-fill" data-hp="${this.hpBand(wild)}" style="width: ${Math.round((wild.currentHp / wild.maxHp) * 100)}%;"></div>
                                 </div>
                                 ${wild.wildSpecies.isCustom ? `<div class="custom-flag">${this.config.CUSTOM_MARK} ${this.config.CUSTOM_LABEL}!</div>` : ''}
                                 ${wild.wildSpecies.isLegendary ? '<div class="legendary-flag">★ Legendary!</div>' : ''}
@@ -522,7 +565,10 @@ class FlickemonUI {
         if (!wild) return;
 
         const hpFill = card.querySelector('.hp-bar-fill');
-        if (hpFill) hpFill.style.width = `${Math.round((wild.currentHp / wild.maxHp) * 100)}%`;
+        if (hpFill) {
+            hpFill.style.width = `${Math.round((wild.currentHp / wild.maxHp) * 100)}%`;
+            hpFill.dataset.hp = this.hpBand(wild);
+        }
 
         const statusEl = card.querySelector('.status-line');
         if (statusEl && wild.status === 'fighting') {
