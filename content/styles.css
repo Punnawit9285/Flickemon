@@ -4684,6 +4684,10 @@ html.pokemon-theme,
 body.pokemon-theme {
     background-color: var(--pkmn-bg) !important;
     color: var(--pkmn-text) !important;
+    /* The skin is dark whatever FlickPlayer's own scheme is, so native
+       controls and scrollbars have to be told. FlickPlayer sets data-theme,
+       never color-scheme, so nothing here fights it. */
+    color-scheme: dark;
 }
 
 body.pokemon-theme ion-app,
@@ -4693,6 +4697,21 @@ body.pokemon-theme main {
     background: var(--pkmn-bg) !important;
     --background: var(--pkmn-bg) !important;
     color: var(--pkmn-text) !important;
+}
+
+/* FlickPlayer's own background picture. Its theme system paints the picture on
+   ion-app::before and makes the page transparent over it (the
+   flick-has-background-image class); painting the page solid here would hide
+   a picture the student chose. The skin keeps the cards and toolbars, and the
+   picture shows between them as it does in any other theme. */
+body.pokemon-theme.flick-has-background-image ion-content,
+body.pokemon-theme.flick-has-background-image .scroll-area,
+body.pokemon-theme.flick-has-background-image main {
+    background: transparent !important;
+    --background: transparent !important;
+}
+body.pokemon-theme.flick-has-background-image ion-app {
+    background: transparent !important;
 }
 
 /* Header & Navigation Bar: Iconic Pokéball Red bar */

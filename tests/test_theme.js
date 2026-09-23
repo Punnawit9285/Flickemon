@@ -343,5 +343,36 @@ console.log('\n=== Pokémon theme whole-webpage & popover rules ===');
         /document\.documentElement\.classList\.add\('pokemon-theme'/.test(cs));
 }
 
+console.log('\n=== FlickPlayer\'s theme system and this stylesheet stay out of each other\'s way ===');
+{
+    // What FlickPlayer's appearance system (the themes-split branch) writes onto
+    // the document, inline on <html>. It shares the --flick- prefix with this
+    // stylesheet, and an inline style beats every rule here: a token of ours
+    // with one of these names would be silently replaced by FlickPlayer's value.
+    // Snapshotted from src/app/theme/palette.ts and src/global.scss; refresh it
+    // when FlickPlayer adds a variable.
+    const flickPlayerWrites = [
+        '--flick-accent', '--flick-accent-rgb', '--flick-accent-text',
+        '--flick-background-blur', '--flick-background-image', '--flick-background-repeat',
+        '--flick-background-scrim', '--flick-background-size', '--flick-companion-text',
+        '--flick-muted-text', '--flick-series-fallback', '--flick-series-fallback-contrast',
+        '--flick-surface', '--flick-surface-muted', '--flick-tag-background', '--flick-tag-color',
+        '--flick-theme-transition-duration', '--flick-theme-transition-easing', '--flick-warning-text',
+    ];
+    const ours = new Set([...css.matchAll(/(--flick-[a-z0-9-]+)\s*:/g)].map(m => m[1]));
+    const clash = flickPlayerWrites.filter(v => ours.has(v))
+        .concat([...ours].filter(v => /^--flick-(series|heat)-\d/.test(v)));
+    check('no token of ours shares a name FlickPlayer writes', clash.length === 0, clash.join(', '));
+
+    // A picture the student chose sits behind a transparent page; the skin must
+    // not paint over it.
+    check('the Pokémon skin leaves FlickPlayer\'s background picture showing',
+        /body\.pokemon-theme\.flick-has-background-image ion-content[\s\S]{0,200}background: transparent !important/.test(css));
+    // FlickPlayer sets data-theme and never color-scheme, so a dark skin on a
+    // light FlickPlayer theme must say so itself.
+    check('the Pokémon skin declares itself dark to native controls',
+        /body\.pokemon-theme \{[^}]*color-scheme: dark/.test(css));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
