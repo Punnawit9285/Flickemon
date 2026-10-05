@@ -640,6 +640,94 @@ console.log('\n=== a spent day still settles what was played here ===');
         && Object.values(e.gameState.flickSeen)[0] === 20 * 60, JSON.stringify(e.gameState.flickSeen));
 }
 
+console.log('\n=== another Flick tab\'s accounting is folded in, and can only withhold ===');
+{
+    // Each tab runs its own engine. What one tab played, settled or paid has
+    // to reach the others through the save, or the second tab pays it again.
+    // test_flick_sim.js runs the tabs; these are the merge rules on their own.
+    const merged = (mine, stored, own = []) => {
+        reset();
+        e.ownSessions = new Set(own);
+        Object.assign(e.gameState, JSON.parse(JSON.stringify(mine)));
+        e.mergeFlickAccounting(JSON.parse(JSON.stringify(stored)));
+        return e.gameState;
+    };
+    const T0 = NOW - 30 * MIN, T1 = NOW - 10 * MIN;
+
+    let s = merged({ flickSeen: { a: 100, b: 500 } }, { flickSeen: { a: 300, b: 200, c: 50 } });
+    check('a mark takes the furthest of the two',
+        s.flickSeen.a === 300 && s.flickSeen.b === 500 && s.flickSeen.c === 50, JSON.stringify(s.flickSeen));
+
+    s = merged({ flickSeen: {} }, { flickSeen: { d: -5, f: 1e9, g: 'x' } });
+    check('a poisoned mark on disk is not adopted', Object.keys(s.flickSeen).length === 0,
+        JSON.stringify(s.flickSeen));
+
+    s = merged({ flickCheckedAt: T0, flickLocalMinutes: 30 }, { flickCheckedAt: T1, flickLocalMinutes: 2 });
+    check('a later reading by another tab replaces the clock and the watching counted since',
+        s.flickCheckedAt === T1 && s.flickLocalMinutes === 2, JSON.stringify([s.flickCheckedAt, s.flickLocalMinutes]));
+    s = merged({ flickCheckedAt: T1, flickLocalMinutes: 3 }, { flickCheckedAt: T1, flickLocalMinutes: 8 });
+    check('at the same reading, the watching of whichever tab saw more', s.flickLocalMinutes === 8);
+    s = merged({ flickCheckedAt: T1, flickLocalMinutes: 3 }, { flickCheckedAt: T0, flickLocalMinutes: 40 });
+    check('an older reading changes nothing', s.flickCheckedAt === T1 && s.flickLocalMinutes === 3);
+
+    s = merged({ flickSeen: { L: 100 } },
+        { flickSeen: { L: 100 }, flickPlayedHere: { L: { from: 100, to: 900, at: T1, claims: { 'tabB.1': [100, 900] } } } });
+    check('a stretch another tab is playing is adopted, so it is not paid here',
+        s.flickPlayedHere.L && s.flickPlayedHere.L.to === 900, JSON.stringify(s.flickPlayedHere));
+
+    // Flick rounds a lecture's length to the minute, so a mark read off the
+    // page can sit just above a stretch that is still being played. Dropped
+    // for that, the next checkmark was paid as the whole lecture.
+    s = merged({ flickSeen: { L: 723 } },
+        { flickPlayedHere: { L: { from: 0, to: 722.5, at: T1, claims: { 'tabB.1': [0, 722.5] } } } });
+    check('a stretch just below a rounded-up mark is still adopted',
+        s.flickPlayedHere.L && s.flickPlayedHere.L.to === 722.5, JSON.stringify(s.flickPlayedHere));
+
+    reset();
+    e.ownSessions = new Set();
+    e.flickSettledAt = new Map([['L', T1]]);
+    e.mergeFlickAccounting({ flickPlayedHere: {
+        L: { from: 100, to: 900, at: T1 - MIN, claims: { 'tabB.1': [100, 900] } } } });
+    check('but one this tab settled since it was last reported is not brought back',
+        !e.gameState.flickPlayedHere.L, JSON.stringify(e.gameState.flickPlayedHere));
+    e.mergeFlickAccounting({ flickPlayedHere: {
+        L: { from: 100, to: 960, at: T1 + MIN, claims: { 'tabB.1': [100, 960] } } } });
+    check('while the same stretch reported again since is',
+        e.gameState.flickPlayedHere.L && e.gameState.flickPlayedHere.L.to === 960,
+        JSON.stringify(e.gameState.flickPlayedHere));
+    e.flickSettledAt = new Map();
+
+    s = merged({ flickPlayedHere: { L: { from: 0, to: 100, at: T0, claims: { 'me.1': [0, 100] } } } },
+        { flickPlayedHere: { L: { from: 0, to: 400, at: T1, claims: { 'me.1': [0, 50], 'tabB.1': [300, 400] } } } },
+        ['me.1']);
+    check('two tabs on one lecture hold the union of what each played',
+        s.flickPlayedHere.L.from === 0 && s.flickPlayedHere.L.to === 400
+        && s.flickPlayedHere.L.claims['tabB.1'][1] === 400, JSON.stringify(s.flickPlayedHere.L));
+    check('and this tab\'s own session is taken from memory, not from a stale disk',
+        s.flickPlayedHere.L.claims['me.1'][1] === 100, JSON.stringify(s.flickPlayedHere.L.claims));
+
+    // A stretch this tab first filed under the previous lecture and has since
+    // moved. On disk it is still under the old name; read back, it would undo
+    // the move.
+    s = merged({ flickPlayedHere: {} },
+        { flickPlayedHere: { WRONG: { from: 0, to: 600, at: T1, claims: { 'me.2': [0, 600] } } } }, ['me.2']);
+    check('a stretch this tab moved is not brought back under its old name', !s.flickPlayedHere.WRONG);
+
+    // Against the real clock: the merge has no reading's `now` to go by.
+    s = merged({ flickPlayedHere: {} }, { flickPlayedHere: {
+        'c:fresh': { at: Date.now() - 1 * MIN, claims: { 'tabB.1': true } },
+        'c:spent': { at: Date.now() - 60 * MIN, claims: { 'tabB.2': true } },
+    } });
+    check('a course another tab is holding is held here too', Boolean(s.flickPlayedHere['c:fresh']));
+    check('but one long past its settling time is not revived', !s.flickPlayedHere['c:spent']);
+
+    s = merged({ ownerUid: 'uid-bob', flickSeen: { a: 10 } }, { ownerUid: 'uid-alice', flickSeen: { a: 999 },
+        flickCheckedAt: T1, flickPlayedHere: { a: { from: 0, to: 999, at: T1 } } });
+    check('another student\'s save is left out entirely',
+        s.flickSeen.a === 10 && !s.flickPlayedHere.a && s.flickCheckedAt !== T1, JSON.stringify(s.flickSeen));
+    e.ownSessions = new Set();
+}
+
 console.log('\n=== where this device has played never leaves it ===');
 {
     reset();
@@ -716,6 +804,31 @@ console.log('\n=== Flick\'s rounding and its checkmark are not somebody else\'s 
     const phone = await e.creditFlickProgress(odd(true), NOW);
     check('but a phone finishing what this device barely started is still paid',
         near(phone.rawMinutes, 58 - 11, 0.1), String(phone.rawMinutes));
+
+    // Read once before Flick's page has caught up with the player -- its post
+    // still on the way, a websocket push missed -- and once after. Let go at
+    // the first reading, the stretch was gone by the second, and the
+    // checkmark's rounding was paid as somebody else's.
+    const at = mins => FP.readCourse(page([row({ title: 'Odd Length', durationMin: 58,
+        leftMin: 58 - mins, barValue: (mins * 60) / 3460 })], ''));
+    reset();
+    await e.creditFlickProgress(odd(false), NOW - 90 * MIN);
+    await e.recordPlayedHere({ ...name, from: 0, to: 3300, session: 's1' }, NOW - 3 * MIN);
+    const behind = await e.creditFlickProgress(at(50), NOW - 2 * MIN);
+    check('a reading behind the player keeps the stretch', Object.keys(e.gameState.flickPlayedHere).length === 1,
+        JSON.stringify(behind));
+    const caught = await e.creditFlickProgress(odd(true), NOW);
+    check('so the checkmark that follows is not paid', !(caught.credited > 0), JSON.stringify(caught));
+    check('and the stretch goes once the page has caught up',
+        Object.keys(e.gameState.flickPlayedHere).length === 0, JSON.stringify(e.gameState.flickPlayedHere));
+
+    reset();
+    await e.creditFlickProgress(odd(false), NOW - 90 * MIN);
+    await e.recordPlayedHere({ ...name, from: 0, to: 3300, session: 's1' }, NOW - 10 * MIN);
+    await e.creditFlickProgress(at(20), NOW - 9 * MIN);           // went back to 20:00 and stopped
+    await e.creditFlickProgress(at(20), NOW);
+    check('a page that never catches up lets go once the player has been still',
+        Object.keys(e.gameState.flickPlayedHere).length === 0, JSON.stringify(e.gameState.flickPlayedHere));
 }
 
 console.log('\n=== a save from before the fix does not pay its standing rise once ===');

@@ -63,6 +63,37 @@ function cleanName(raw, max) {
 // beyond it counts as somebody else's.
 const FLICK_ROUNDING_SEC = 60;
 
+// Every Flick tab runs its own copy of this engine, against one save. They take
+// turns on this lock to read and write it. See mergeFlickAccounting.
+const SAVE_LOCK = 'flickemon-save';
+// How long a storage call made while holding that lock may take before the
+// lock is let go regardless. A tab whose extension was reloaded under it must
+// not hold every other tab up for good.
+const STORAGE_TIMEOUT_MS = 5000;
+// A stretch played here that grows by more than this in one report -- a seek,
+// a skip -- is written at once rather than on the save debounce, so another
+// tab sees it before Flick's post of the new position reaches that tab.
+const PLAYED_HERE_JUMP_SEC = 10;
+
+/**
+ * Rejects if `promise` has not settled within `ms`. The timer only starts once
+ * the promise has had a microtask to settle in, so a storage call that answers
+ * at once never races a timer at all.
+ */
+function withTimeout(promise, ms) {
+    return new Promise((resolve, reject) => {
+        let done = false;
+        Promise.resolve(promise).then(
+            value => { done = true; resolve(value); },
+            err => { done = true; reject(err); });
+        Promise.resolve().then(() => {
+            if (done) return;
+            const timer = setTimeout(() => { if (!done) reject(new Error('timed out')); }, ms);
+            Promise.resolve(promise).finally(() => clearTimeout(timer)).catch(() => {});
+        });
+    });
+}
+
 // How rarely the friend feed may be republished. See publishFriendFeed: this
 // number was chosen from a measurement, not an estimate.
 const FEED_PUBLISH_FLOOR_MS = 600000;
@@ -1102,7 +1133,7 @@ class FlickemonEngine {
         // Nothing new since the last look, so there is nothing to merge.
         if (res.unchanged) return true;
 
-        this.adoptGeneration(res);
+        await this.adoptGeneration(res);
         // A slot renamed from another slot's screen writes only these fields,
         // not the save inside, so they are read on their own.
         this.adoptSaveName(res.saveName, res.saveNameAt);
@@ -1115,7 +1146,7 @@ class FlickemonEngine {
 
         const changed = this.mergeCloudState(res.state);
         if (changed) {
-            this.writeLocal();
+            await this.writeLocal();
             this.emitState();
             if (this.gameState.hasStarted && !this.wildOpponent) {
                 this.spawnWildOpponent();
@@ -1236,20 +1267,25 @@ class FlickemonEngine {
         if (cloud) {
             const deleted = local ? local !== cloud
                 : (res.wiped && Boolean(this.gameState.ownerUid) && this.gameState.hasStarted);
-            if (deleted) this.letGoOfDeletedRun();
+            const written = deleted ? this.letGoOfDeletedRun() : null;
             this.gameState.saveGeneration = cloud;
-            return;
+            return written;
         }
         if (!local) this.gameState.saveGeneration = this.newGeneration();
+        return null;
     }
 
-    /** Drops this slot's local copy for an empty one, keeping who and what Flick has seen. */
+    /**
+     * Drops this slot's local copy for an empty one, keeping who and what Flick
+     * has seen. Returns the write, for a caller that needs it on disk.
+     */
     letGoOfDeletedRun() {
         const ownerUid = this.gameState.ownerUid;
         this.discardLocalState({ keepFlick: true });
         this.gameState.ownerUid = ownerUid;
-        this.writeLocal();
+        const written = this.writeLocal();
         this.emitState();
+        return written;
     }
 
     /**
@@ -1983,12 +2019,172 @@ class FlickemonEngine {
         this.scheduleCloudPush(opts.immediate === true);
     }
 
+    /**
+     * Writes the save to this device. Resolves once it has landed; never rejects.
+     *
+     * Another Flick tab may have written the same save since this one last
+     * did, so what that tab knows about Flick is folded in first, under the
+     * lock, rather than written over. See mergeFlickAccounting.
+     *
+     * The slot and the state are taken now, not when the lock comes free: a
+     * slot switch in between must not file one slot's game under another's key.
+     */
     writeLocal() {
-        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
-        const result = chrome.storage.local.set({ [this.slotStorageKey(this.activeSlot)]: this.gameState });
-        if (result && typeof result.catch === 'function') {
-            result.catch(err => console.warn('[Flickémon] Local save failed:', err));
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+            return Promise.resolve();
         }
+        const key = this.slotStorageKey(this.activeSlot);
+        const state = this.gameState;
+        return this.withSaveLock(async () => {
+            this.mergeFlickAccounting(await this.readStoredSave(key), state);
+            await withTimeout(chrome.storage.local.set({ [key]: state }), STORAGE_TIMEOUT_MS);
+        }).catch(err => console.warn('[Flickémon] Local save failed:', err));
+    }
+
+    /**
+     * Runs `fn` while no other Flick tab on this device holds the save.
+     *
+     * Web Locks are per origin, which here is per device: every Flick tab in
+     * this browser profile queues on the same lock, and nothing else does.
+     * Without them -- an old browser, a test -- `fn` simply runs, which is all
+     * a single tab needs.
+     */
+    withSaveLock(fn) {
+        const locks = typeof navigator !== 'undefined' && navigator && navigator.locks;
+        if (!locks || typeof locks.request !== 'function') return Promise.resolve().then(fn);
+        return locks.request(SAVE_LOCK, () => fn());
+    }
+
+    /** This device's stored copy of a slot's save, or null. Never rejects. */
+    async readStoredSave(key = this.slotStorageKey(this.activeSlot)) {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return null;
+        try {
+            const data = await withTimeout(chrome.storage.local.get([key]), STORAGE_TIMEOUT_MS);
+            const stored = data && data[key];
+            return stored && typeof stored === 'object' ? stored : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Folds what other Flick tabs on this device have done to Flick's
+     * accounting into `state`.
+     *
+     * Each tab runs its own engine with its own copy of the save in memory. A
+     * second tab on the same course used to read the first tab's lecture rise
+     * on its own page, find no stretch played here to explain it -- that was in
+     * the first tab's memory -- and pay it as "studied on another device". A
+     * seek made it worse, since one jump was worth the whole allowance. And a
+     * phone session was paid once by every Flick tab open on this computer,
+     * each against its own marks.
+     *
+     * So the save on disk is the meeting point. Every rule here can only
+     * withhold credit, never create it: a mark takes the furthest position, a
+     * stretch played here takes the union of what every session claimed, and
+     * the clock takes the latest reading along with the watching counted since.
+     * Nothing outside Flick's accounting is touched.
+     */
+    mergeFlickAccounting(stored, state = this.gameState) {
+        if (!stored || typeof stored !== 'object' || !state || stored === state) return;
+        // Another student's save, left by a tab that has not caught up with a
+        // change of account. Their marks say nothing about this student's
+        // Flick record; adopted, they would be paid as rises.
+        if ((stored.ownerUid || null) !== (state.ownerUid || null)) return;
+        const now = Date.now();
+        const isMap = v => v && typeof v === 'object' && !Array.isArray(v);
+
+        const marks = isMap(state.flickSeen) ? state.flickSeen : (state.flickSeen = {});
+        if (isMap(stored.flickSeen)) {
+            for (const [key, pos] of Object.entries(stored.flickSeen)) {
+                if (!Number.isFinite(pos) || pos < 0 || pos > MAX_LECTURE_SEC) continue;
+                if (!(marks[key] >= pos)) marks[key] = pos;
+            }
+        }
+
+        // The clock, and the watching here that the allowance subtracts. A
+        // later reading by another tab already counted everything before it,
+        // so its tally replaces this one; at the same reading, the larger.
+        const theirs = Number.isFinite(stored.flickCheckedAt)
+            && stored.flickCheckedAt > 0 && stored.flickCheckedAt <= now ? stored.flickCheckedAt : 0;
+        const theirLocal = Number.isFinite(stored.flickLocalMinutes) && stored.flickLocalMinutes >= 0
+            ? stored.flickLocalMinutes : 0;
+        const mine = state.flickCheckedAt || 0;
+        if (theirs > mine) {
+            state.flickCheckedAt = theirs;
+            state.flickLocalMinutes = theirLocal;
+            if (stored.flickRebaseline === true) state.flickRebaseline = true;
+            else delete state.flickRebaseline;
+        } else if (theirs === mine) {
+            state.flickLocalMinutes = Math.max(state.flickLocalMinutes || 0, theirLocal);
+        }
+
+        if (!isMap(stored.flickPlayedHere)) return;
+        const here = isMap(state.flickPlayedHere) ? state.flickPlayedHere : (state.flickPlayedHere = {});
+        const holdMs = this.config.FLICK_UNIDENTIFIED_SETTLE_MS;
+        // This tab's own sessions are known best from memory. On disk they can
+        // be a step behind -- a stretch this tab has since moved to the right
+        // lecture, still filed under the wrong one -- and taken back from there
+        // they would undo the move.
+        const own = this.ownSessions || new Set();
+        const settled = this.flickSettledAt || new Map();
+        for (const [key, span] of Object.entries(stored.flickPlayedHere)) {
+            if (!isMap(span)) continue;
+            const at = Number.isFinite(span.at) && span.at >= 0 && span.at <= now ? span.at : 0;
+            const ours = isMap(here[key]) ? here[key] : null;
+
+            // Settled here since it was last reported: a stale copy that some
+            // other tab has not let go of yet. A stretch still being played is
+            // reported again within a second, which makes it newer than that.
+            if (!ours && settled.has(key) && settled.get(key) >= at) continue;
+
+            if (key.startsWith('c:')) {
+                // A course held for a lecture nobody could name. One already
+                // past its settling time would be let go at the next reading.
+                if (!ours && now - at >= holdMs) continue;
+                const ids = Object.keys(isMap(span.claims) ? span.claims : { '': true })
+                    .filter(id => !own.has(id));
+                if (!ids.length) continue;
+                const entry = ours || (here[key] = { claims: {}, at });
+                if (!isMap(entry.claims)) entry.claims = { '': true };
+                for (const id of ids) entry.claims[id] = true;
+                entry.at = Math.max(entry.at || 0, at);
+                continue;
+            }
+
+            if (!(Number.isFinite(span.from) && Number.isFinite(span.to)
+                && span.from >= 0 && span.from <= span.to && span.to <= MAX_LECTURE_SEC)) continue;
+            const claims = {};
+            if (isMap(span.claims)) {
+                for (const [id, c] of Object.entries(span.claims)) {
+                    if (own.has(id)) continue;
+                    if (Array.isArray(c) && c.length === 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])
+                        && c[0] >= 0 && c[0] <= c[1] && c[1] <= MAX_LECTURE_SEC) claims[id] = [c[0], c[1]];
+                }
+                if (!Object.keys(claims).length) continue;
+            } else {
+                claims[''] = [span.from, span.to];
+            }
+
+            if (!ours) {
+                // Not dropped for lying below the mark: a mark is in Flick's
+                // rendered seconds, which round a lecture's length up, so it can
+                // sit above a stretch still being played -- and that stretch is
+                // what stops a checkmark being paid as the whole lecture.
+                here[key] = { from: span.from, to: span.to, claims, at };
+                fitPlayedHere(here[key]);
+                continue;
+            }
+            if (!isMap(ours.claims)) ours.claims = { '': [ours.from, ours.to] };
+            for (const [id, c] of Object.entries(claims)) {
+                const had = ours.claims[id];
+                ours.claims[id] = Array.isArray(had)
+                    ? [Math.min(had[0], c[0]), Math.max(had[1], c[1])] : c;
+            }
+            fitPlayedHere(ours);
+            ours.at = Math.max(ours.at || 0, at);
+        }
+        if (state === this.gameState) this.prunePlayedHere();
     }
 
     scheduleLocalSave() {
@@ -4129,6 +4325,7 @@ class FlickemonEngine {
         if (!Number.isFinite(from) || !Number.isFinite(to)
             || from < 0 || to < from || to > MAX_LECTURE_SEC) return;
         const here = this.gameState.flickPlayedHere || (this.gameState.flickPlayedHere = {});
+        if (session) (this.ownSessions || (this.ownSessions = new Set())).add(session);
 
         const named = Boolean(lecture && lecture.title);
         const key = named
@@ -4152,6 +4349,7 @@ class FlickemonEngine {
         }
 
         const prev = here[key];
+        const reachedBefore = prev && Number.isFinite(prev.to) ? prev.to : null;
         if (named) {
             const entry = prev && Number.isFinite(prev.from)
                 ? prev : { from, to, claims: {} };
@@ -4170,8 +4368,24 @@ class FlickemonEngine {
         }
         this.prunePlayedHere();
         // Local only, and never a reason to redraw: this runs at the player's
-        // own cadence, several times a second.
-        this.scheduleLocalSave();
+        // own cadence, several times a second. A new stretch, or one that just
+        // jumped, is written at once instead: another Flick tab reads the save
+        // when it reads Flick, and Flick posting a skip ahead must not reach
+        // that tab before the stretch that explains it.
+        const entry = here[key];
+        const jumped = !prev || (named && (reachedBefore === null
+            || entry.to - reachedBefore > PLAYED_HERE_JUMP_SEC));
+        if (jumped) this.writeLocal();
+        else this.scheduleLocalSave();
+    }
+
+    /**
+     * When this tab last settled a stretch, so a copy another tab writes back
+     * before it has caught up is recognised as spent. In memory only: a new
+     * tab has settled nothing, and simply settles such a copy once itself.
+     */
+    noteSettled(key, at) {
+        (this.flickSettledAt || (this.flickSettledAt = new Map())).set(key, at);
     }
 
     /** The flickPlayedHere key that holds a whole course. Hashed like every mark. */
@@ -4226,11 +4440,32 @@ class FlickemonEngine {
      * forge, and the thing other students trade for.
      *
      * Returns what was credited, or null when there was nothing to do.
+     *
+     * Every Flick tab on this device reads the same course, so this runs under
+     * the save lock: what the other tabs have played and paid is read in first,
+     * and what this reading settled is written before the next tab may look.
+     * Two tabs reading at once each paid the same phone session.
      */
     async creditFlickProgress(reading, now = Date.now()) {
         if (!this.gameState.hasStarted) return null;
         if (!reading || !Array.isArray(reading.lectures) || !reading.lectures.length) return null;
 
+        return this.withSaveLock(async () => {
+            const key = this.slotStorageKey(this.activeSlot);
+            const state = this.gameState;
+            this.mergeFlickAccounting(await this.readStoredSave(key), state);
+            const result = await this.settleFlickReading(reading, now);
+            if (this.gameState === state && typeof chrome !== 'undefined' && chrome.storage
+                && chrome.storage.local) {
+                await withTimeout(chrome.storage.local.set({ [key]: state }), STORAGE_TIMEOUT_MS)
+                    .catch(err => console.warn('[Flickémon] Local save failed:', err));
+            }
+            return result;
+        });
+    }
+
+    /** creditFlickProgress, once this tab has the save to itself. */
+    async settleFlickReading(reading, now) {
         // A misparse must credit nothing. The rows and the header come from the
         // same object by different expressions, so when they disagree the markup
         // has moved underneath us and every number here is a guess -- and the
@@ -4290,7 +4525,22 @@ class FlickemonEngine {
                     riseSec += Math.max(0, playedSec - mark - covered);
                 }
                 marks[key] = Math.max(mark, playedSec, span ? span.to : 0);
-                delete here[key];
+                // The stretch itself is let go once Flick's page has caught up
+                // with it. The mark is in the player's own seconds, and Flick
+                // renders a position rounded -- up to a minute high, and as the
+                // whole lecture once it is past 95% -- so a page still behind
+                // the player would otherwise catch up AFTER the stretch was gone
+                // and pay that rounding as somebody else's. Kept, the next
+                // reading reads it with the rounding allowed for, as above. A
+                // page that never catches up -- the student went back and
+                // stopped there -- lets go once the player has been still for
+                // as long as an unnamed course is held.
+                const caughtUp = playedSec >= (span ? span.to : 0) - FLICK_ROUNDING_SEC
+                    || now - ((span && span.at) || 0) >= this.config.FLICK_UNIDENTIFIED_SETTLE_MS;
+                if (span && (wholeCourse || caughtUp)) {
+                    this.noteSettled(key, now);
+                    delete here[key];
+                }
                 settled = true;
                 continue;
             }
@@ -4308,6 +4558,7 @@ class FlickemonEngine {
         // Let the course go once the player has been still long enough for
         // everything it did to have reached this page.
         if (wholeCourse && now - wholeCourse.at >= this.config.FLICK_UNIDENTIFIED_SETTLE_MS) {
+            this.noteSettled(courseKey, now);
             delete here[courseKey];
             settled = true;
         }

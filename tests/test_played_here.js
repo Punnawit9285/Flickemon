@@ -212,6 +212,53 @@ const last = () => reports[reports.length - 1];
             JSON.stringify(last()));
     }
 
+    console.log('\n=== a skip made while the lecture loads is this device\'s, not a phone\'s ===');
+    {
+        // FlickPlayer resumes inside video.js's loadedmetadata handler, which
+        // runs before ours. The bar answers from then on, and canplay can be
+        // seconds away on a slow connection -- read there, a skip in between
+        // was taken for where Flick had left off.
+        highlight('axilla');
+        video.fire('emptied');
+        video.duration = NaN;
+        video.currentTime = 0;
+        video.fire('loadstart');
+        video.duration = 45 * 60;
+        video.currentTime = 600;                      // Flick's resume, already applied
+        video.fire('loadedmetadata');
+        video.currentTime = 1800;                     // the student drags ahead
+        video.fire('seeking');
+        video.fire('seeked');
+        video.fire('canplay');
+        check('the stretch starts where Flick resumed the lecture',
+            last().from === 600, JSON.stringify(last()));
+        check('and reaches where the skip landed', last().to === 1800, JSON.stringify(last()));
+
+        // Nothing saved: Flick does not jump, and the lecture starts at zero.
+        video.fire('emptied');
+        video.currentTime = 0;
+        video.fire('loadstart');
+        video.fire('loadedmetadata');
+        video.currentTime = 900;
+        video.fire('seeked');
+        video.fire('canplay');
+        check('from the start, when Flick had nothing to resume',
+            last().from === 0 && last().to === 900, JSON.stringify(last()));
+
+        // A skip BACK while loading starts the stretch at the skip. Flick's
+        // record above it is not this device's doing, so it is not held.
+        video.fire('emptied');
+        video.currentTime = 0;
+        video.fire('loadstart');
+        video.currentTime = 1200;
+        video.fire('loadedmetadata');
+        video.currentTime = 300;
+        video.fire('seeked');
+        video.fire('canplay');
+        check('and from where a skip back took it',
+            last().from === 300 && last().to === 300, JSON.stringify(last()));
+    }
+
     console.log('\n=== a player hooked after it had already played ===');
     {
         highlight('plexus');

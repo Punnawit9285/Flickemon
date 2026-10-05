@@ -72,7 +72,10 @@ const game = (speciesId, level, extra = {}) => e.normalizeState({
     ...extra,
 });
 
-const reset = () => {
+const reset = async () => {
+    // Writes queue on the save lock, so one from the block before can still be
+    // waiting. It lands first, then the store is cleared.
+    await e.withSaveLock(() => {});
     for (const k of Object.keys(store)) delete store[k];
     cloud = {}; sent = []; wipeAnswer = null;
     e.activeSlot = 1;
@@ -86,7 +89,7 @@ const reset = () => {
 
     console.log('\n=== a save from before slots is slot 1, where it always was ===');
     {
-        reset();
+        await reset();
         store[e.STORAGE_KEY] = game(4, 12);
         await e.init();
         check('it loads without being moved',
@@ -98,7 +101,7 @@ const reset = () => {
 
     console.log('\n=== switching slots keeps the games apart ===');
     {
-        reset();
+        await reset();
         e.gameState = game(4, 12, { flickSeen: { lecA: 600, lecB: 100 }, flickLocalMinutes: 7 });
         e.writeLocal();
         store[e.slotStorageKey(3)] = game(7, 20, { flickSeen: { lecB: 900 } });
@@ -135,7 +138,7 @@ const reset = () => {
 
     console.log('\n=== the slot being left is pushed to its own document ===');
     {
-        reset();
+        await reset();
         e.gameState = game(4, 12, { saveGeneration: 'g1' });
         e.cloudDirty = true;
         sent = [];
@@ -148,7 +151,7 @@ const reset = () => {
 
     console.log('\n=== a generation is only minted where the cloud has none ===');
     {
-        reset();
+        await reset();
         e.gameState = game(4, 12);                    // a save from before slots
         cloud[1] = { state: { ...game(4, 12), totalMinutesWatched: 50 }, generation: 'cloud-gen' };
         await e.pullFromCloud();
@@ -156,7 +159,7 @@ const reset = () => {
             e.gameState.saveGeneration === 'cloud-gen' && e.gameState.hasStarted
             && e.gameState.party.length === 1, JSON.stringify(e.gameState.saveGeneration));
 
-        reset();
+        await reset();
         e.gameState = game(4, 12);
         cloud[1] = { state: game(4, 12) };            // the cloud's save predates slots too
         await e.pullFromCloud();
@@ -168,7 +171,7 @@ const reset = () => {
     {
         // The admin reset that undid itself: the merge only ever adds, so the
         // next pull put every Pokémon back.
-        reset();
+        await reset();
         e.gameState = game(4, 12, { saveGeneration: 'old-run', flickSeen: { lecA: 300 } });
         e.writeLocal();
         cloud[1] = { generation: 'new-run', wiped: true };
@@ -182,13 +185,13 @@ const reset = () => {
         const backup = await e.peekBackup();
         check('a snapshot of the deleted run is kept', backup && backup.state.party[0].speciesId === 4);
 
-        reset();
+        await reset();
         e.gameState = game(4, 12);                    // pre-slot copy of a save since deleted
         cloud[1] = { generation: 'new-run', wiped: true };
         await e.pullFromCloud();
         check('an owned save from before slots is the deleted copy too', !e.gameState.hasStarted);
 
-        reset();
+        await reset();
         e.gameState = game(4, 12, { ownerUid: null }); // played before ever signing in
         cloud[1] = { generation: 'new-run', wiped: true };
         await e.pullFromCloud();
@@ -198,7 +201,7 @@ const reset = () => {
 
     console.log('\n=== only an administrator deletes, and the server decides ===');
     {
-        reset();
+        await reset();
         e.gameState = game(4, 12, { saveGeneration: 'g1' });
         wipeAnswer = { signedIn: true, ok: false, reason: 'forbidden' };
         const refused = await e.adminDeleteSlot(1).then(() => null, err => err.message);
@@ -212,7 +215,7 @@ const reset = () => {
         check('the request named the slot',
             sent.some(m => m.type === 'CLOUD_WIPE_SLOT' && m.slot === 1));
 
-        reset();
+        await reset();
         e.gameState = game(4, 12);
         store[e.slotStorageKey(4)] = game(150, 70);
         await e.adminDeleteSlot(4);
@@ -232,7 +235,7 @@ const reset = () => {
 
     console.log('\n=== the save screen ===');
     {
-        reset();
+        await reset();
         e.gameState = game(4, 12);
         store[e.slotStorageKey(2)] = game(7, 20);
         store[e.slotStorageKey(3)] = game(1, 5, { ownerUid: 'uid_someone_else' });
@@ -249,7 +252,7 @@ const reset = () => {
 
     console.log('\n=== naming a Pokémon ===');
     {
-        reset();
+        await reset();
         e.gameState = game(25, 10);
         await e.renamePokemon('p25', '  Sparky ⚡  ', 1000);
         check('a nickname is kept, trimmed', e.gameState.party[0].nickname === 'Sparky ⚡',
@@ -269,7 +272,7 @@ const reset = () => {
             await e.renamePokemon('nope', 'x').then(() => false, () => true));
 
         // Two devices: the later rename wins, whichever syncs last.
-        reset();
+        await reset();
         e.gameState = game(25, 10);
         e.gameState.party[0].nickname = 'Old'; e.gameState.party[0].nicknameAt = 500;
         const remote = game(25, 10);
@@ -288,7 +291,7 @@ const reset = () => {
 
     console.log('\n=== naming a save slot ===');
     {
-        reset();
+        await reset();
         e.gameState = game(4, 12);
         sent = [];
         await e.renameSaveSlot(1, 'Main run', 2000);
@@ -314,7 +317,7 @@ const reset = () => {
         check('an empty name goes back to "Slot n"', e.gameState.saveName === '');
 
         // A rename made from another slot arrives as the document's own fields.
-        reset();
+        await reset();
         e.gameState = game(4, 12, { saveGeneration: 'g', saveName: 'Mine', saveNameAt: 10 });
         cloud[1] = { state: game(4, 12), generation: 'g' };
         const realSend = e.sendToWorker;
@@ -331,7 +334,7 @@ const reset = () => {
         e.sendToWorker = realSend;
 
         // Signed out, a slot with no save here has nowhere to keep a name.
-        reset();
+        await reset();
         e.gameState = game(4, 12);
         e.sendToWorker = async m => m.type === 'AUTH_STATUS' ? { configured: true, signedIn: false } : realSend(m);
         check('signed out, an empty slot cannot be named',
@@ -341,7 +344,7 @@ const reset = () => {
 
     console.log('\n=== a reply for a slot already left is ignored ===');
     {
-        reset();
+        await reset();
         e.gameState = game(4, 12, { saveGeneration: 'g1' });
         const realSend = e.sendToWorker;
         e.sendToWorker = async msg => {

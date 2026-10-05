@@ -211,11 +211,18 @@
         // was. The player therefore reports the stretch of the lecture it
         // covered, and that stretch is never paid for. See recordPlayedHere.
         //
-        // Measured from where the player RESUMED. video.js holds a seek made
-        // while a source is loading until canplay, which is where FlickPlayer's
-        // jump to the saved position lands -- so canplay is the first moment the
-        // position means "where this device picked the lecture up". Anything
-        // below it was studied somewhere else, and must still be paid.
+        // Measured from where the player RESUMED. Anything below that was
+        // studied somewhere else, and must still be paid. FlickPlayer jumps to
+        // the saved position inside video.js's own loadedmetadata handler, which
+        // runs before ours on the same event -- so ours reads exactly where Flick
+        // picked the lecture up, before the student can touch the bar. Reading
+        // it at canplay instead, as this used to, took a skip made while the
+        // lecture was still loading for where Flick had left off, and paid
+        // everything skipped as "studied on another device". Should Flick ever
+        // move its jump later than loadedmetadata, this reads the start of the
+        // lecture instead and withholds whatever lay below the jump: less
+        // credit, never more. Canplay remains the reading for a player hooked
+        // after loadedmetadata had come and gone.
         //
         // NAMING the lecture is the delicate part, and getting it wrong is what
         // makes this device's own watching read as a phone's. FlickPlayer calls
@@ -251,6 +258,8 @@
             const SETTLE_MS = 2500;
 
             let span = null;
+            // Where FlickPlayer resumed the source now loading, once it has.
+            let pickup = null;
             let sessions = 0;
             // Unique to this page load: a session may only take back its own
             // claim, and a bare counter would restart at p1 in every new tab and
@@ -282,7 +291,10 @@
             const begin = () => {
                 const at = video.currentTime;
                 if (!Number.isFinite(at) || at < 0) return;
-                span = { from: at, to: at, sentTo: -1, lecture: null, course: '',
+                // A skip made before canplay is this device's doing, so it
+                // stretches the span up rather than moving where it starts.
+                const from = pickup === null ? at : Math.min(pickup, at);
+                span = { from, to: Math.max(at, from), sentTo: -1, lecture: null, course: '',
                          startedAt: Date.now(), sid: page + '.' + (++sessions) };
                 // Hooked late, after part of this source had already played.
                 const played = video.played;
@@ -325,14 +337,20 @@
             const reset = () => {
                 stale = FP.activeLecture(document);
                 span = null;
+                pickup = null;
             };
             video.addEventListener('loadstart', reset);
             video.addEventListener('emptied', reset);
             video.addEventListener('canplay', () => { if (!span) { begin(); report(true); } });
             video.addEventListener('timeupdate', () => report(false));
             // The moment the source's own length becomes known is the moment an
-            // identity that could not be corroborated before may settle.
-            video.addEventListener('loadedmetadata', () => report(true));
+            // identity that could not be corroborated before may settle. It is
+            // also the moment FlickPlayer has just resumed the lecture.
+            video.addEventListener('loadedmetadata', () => {
+                const at = video.currentTime;
+                if (!span && pickup === null && Number.isFinite(at) && at >= 0) pickup = at;
+                report(true);
+            });
             // The moments FlickPlayer itself posts, so the stretch is never
             // behind what Flick has recorded.
             for (const evt of ['seeked', 'pause', 'ended']) {
