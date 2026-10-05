@@ -225,6 +225,13 @@
     --pkmn-purple: #9f7aea;
     --pkmn-purple-light: #c4b5fd;
     --pkmn-gold-light: #fcd34d;
+    /* Text that sits on the page or a card rather than on the red bar. The
+     * same colours as their decorative twins in the dark palette; the light
+     * palette needs darker ones to stay legible on white. */
+    --pkmn-title: #ffffff;
+    --pkmn-gold-text: #fcd34d;
+    --pkmn-link: #60a5fa;
+    --pkmn-on-gold: #1a1a2e;
     --pkmn-fill-subtle: rgba(255, 255, 255, 0.04);
     --pkmn-fill: rgba(255, 255, 255, 0.08);
     --pkmn-fill-mid: rgba(255, 255, 255, 0.10);
@@ -4739,6 +4746,53 @@
     .flick-toggle, .flick-toggle::after { transition: none; }
 }
 
+/* ── Which skin: off, match Flick, light, dark ── */
+
+.theme-choice {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    margin: 10px 0 4px;
+    padding: 4px;
+    border-radius: 10px;
+    background: var(--flick-fill);
+}
+
+.theme-choice-btn {
+    min-width: 0;
+    padding: 8px 4px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--flick-text-muted);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 700;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.theme-choice-btn:hover {
+    color: var(--flick-text);
+    background: var(--flick-fill-strong);
+}
+
+.theme-choice-btn[aria-checked="true"] {
+    background: var(--flick-primary);
+    color: var(--flick-on-primary);
+    box-shadow: 0 1px 3px var(--flick-shadow);
+}
+
+.theme-choice-btn:focus-visible {
+    outline: 2px solid var(--flick-primary);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .theme-choice-btn { transition: none; }
+}
+
 /* ── Token overrides ── */
 
 html.pokemon-theme,
@@ -4817,16 +4871,103 @@ body.pokemon-theme,
         inset 0 1px 0 var(--pkmn-fill-subtle);
 }
 
+/* ── The light palette ──
+ *
+ * The same skin by daylight: the games' white menus, with the red bar, the gold
+ * frame and the Poké Ball kept. Only the tokens change -- every rule in this
+ * section reads them -- so the light skin cannot drift from the dark one.
+ * Declared on html, body and the card alike because the dark values are
+ * declared on :root AND body, and the card carries its own copy of the class.
+ * Which palette is worn is the student's choice in Settings, or Flick's own
+ * light or dark scheme; see applyPokemonTheme. */
+
+html.pokemon-theme-light,
+body.pokemon-theme-light,
+.flickemon-card.pokemon-theme-light {
+    --pkmn-bg: #eef2f7;
+    --pkmn-bg-rgb: 238, 242, 247;
+    --pkmn-card-bg: #ffffff;
+    --pkmn-card-bg-rgb: 255, 255, 255;
+    --pkmn-card-mid: #e3eaf5;
+    --pkmn-text: #1c2433;
+    --pkmn-text-rgb: 28, 36, 51;
+    --pkmn-text-muted: #556072;
+    --pkmn-title: #1c2433;
+    --pkmn-border: #c08a0c;
+    --pkmn-border-dark: #946a05;
+    --pkmn-gold-text: #8a6100;
+    --pkmn-link: #1d4ed8;
+    --pkmn-slate: #ffffff;
+    --pkmn-slate-border: #cfd8e3;
+    --pkmn-danger: #c53030;
+    --pkmn-success: #2f855a;
+    --pkmn-warning: #c27c0e;
+    --pkmn-purple-light: #6b46c1;
+    --pkmn-fill-subtle: rgba(28, 36, 51, 0.03);
+    --pkmn-fill: rgba(28, 36, 51, 0.05);
+    --pkmn-fill-mid: rgba(28, 36, 51, 0.07);
+    --pkmn-fill-item: rgba(28, 36, 51, 0.08);
+    --pkmn-fill-strong: rgba(28, 36, 51, 0.10);
+    --pkmn-fill-hover: rgba(28, 36, 51, 0.10);
+    --pkmn-track: rgba(28, 36, 51, 0.16);
+    --pkmn-hover-strong: rgba(28, 36, 51, 0.14);
+    --pkmn-border-light: rgba(28, 36, 51, 0.20);
+    --pkmn-text-soft: rgba(28, 36, 51, 0.70);
+    --pkmn-text-dim: rgba(28, 36, 51, 0.85);
+    --pkmn-shadow-soft: rgba(15, 23, 42, 0.10);
+    --pkmn-shadow-drop: rgba(15, 23, 42, 0.14);
+    --pkmn-shadow-mid: rgba(15, 23, 42, 0.14);
+    --pkmn-shadow: rgba(15, 23, 42, 0.18);
+    --pkmn-shadow-heavy: rgba(15, 23, 42, 0.24);
+    --pkmn-shadow-strong: rgba(15, 23, 42, 0.30);
+}
+
+/* The widget's header is Poké Ball red in either palette, so what sits on it --
+   the mode switch, the PVP, Trade, Friends and Shop buttons, the menu icons --
+   keeps its light-on-red values whichever palette the rest of the card has. */
+.flickemon-card.pokemon-theme .flickemon-header {
+    --pkmn-fill-mid: rgba(255, 255, 255, 0.10);
+    --pkmn-fill-item: rgba(255, 255, 255, 0.12);
+    --pkmn-fill-hover: rgba(255, 255, 255, 0.15);
+    --pkmn-hover-strong: rgba(255, 255, 255, 0.25);
+    --pkmn-border-light: rgba(255, 255, 255, 0.30);
+    --pkmn-text-soft: rgba(255, 255, 255, 0.70);
+    --pkmn-text-dim: rgba(255, 255, 255, 0.85);
+    --pkmn-shadow-soft: rgba(0, 0, 0, 0.25);
+    --pkmn-border: #d4a017;
+}
+
+/* FlickPlayer's own appearance system colours some of its text with tokens of
+   its own -- the course header's hours left, lecture dates, the home page's
+   notes -- written inline on <html> for whatever palette the student chose.
+   Under the skin they would be that palette's grey on the skin's page, which on
+   a light Flick theme with the dark skin is grey on navy. Declared on <body>,
+   these win over the inline values for everything beneath it. */
+body.pokemon-theme {
+    --flick-muted-text: var(--pkmn-text-muted);
+    --flick-companion-text: var(--pkmn-text-muted);
+    --flick-warning-text: var(--pkmn-gold-text);
+    --flick-surface: var(--pkmn-card-bg);
+    --flick-surface-muted: var(--pkmn-card-mid);
+    --flick-accent: var(--pkmn-primary);
+    --flick-accent-rgb: var(--pkmn-primary-rgb);
+    --flick-accent-text: var(--pkmn-link);
+}
+
 /* ── Whole-Webpage Pokémon Theme ── */
 
 html.pokemon-theme,
 body.pokemon-theme {
     background-color: var(--pkmn-bg) !important;
     color: var(--pkmn-text) !important;
-    /* The skin is dark whatever FlickPlayer's own scheme is, so native
-       controls and scrollbars have to be told. FlickPlayer sets data-theme,
-       never color-scheme, so nothing here fights it. */
+    /* The skin picks its own palette whatever FlickPlayer's scheme is, so
+       native controls and scrollbars have to be told which. FlickPlayer sets
+       data-theme, never color-scheme, so nothing here fights it. */
     color-scheme: dark;
+}
+html.pokemon-theme.pokemon-theme-light,
+body.pokemon-theme.pokemon-theme-light {
+    color-scheme: light;
 }
 
 body.pokemon-theme ion-app,
@@ -4895,12 +5036,12 @@ body.pokemon-theme ion-card {
 }
 
 body.pokemon-theme ion-card-title {
-    color: var(--pkmn-white) !important;
+    color: var(--pkmn-title) !important;
     font-weight: 700 !important;
 }
 
 body.pokemon-theme ion-card-subtitle {
-    color: var(--pkmn-gold-light) !important;
+    color: var(--pkmn-gold-text) !important;
     font-weight: 600 !important;
 }
 
@@ -4915,7 +5056,7 @@ body.pokemon-theme ion-list {
 }
 
 body.pokemon-theme ion-list-header {
-    color: var(--pkmn-gold-light) !important;
+    color: var(--pkmn-gold-text) !important;
     font-weight: 700 !important;
 }
 
@@ -4984,11 +5125,11 @@ body.pokemon-theme ion-badge {
 
 /* Links & Searchbars */
 body.pokemon-theme a {
-    color: var(--pkmn-blue-light);
+    color: var(--pkmn-link);
 }
 
 body.pokemon-theme a:hover {
-    color: var(--pkmn-gold-light);
+    color: var(--pkmn-gold-text);
 }
 
 body.pokemon-theme ion-searchbar {
@@ -5106,7 +5247,7 @@ body.pokemon-theme ::-webkit-scrollbar-thumb:hover {
 }
 .flickemon-card.pokemon-theme .mode-seg[data-mode="capture"][aria-pressed="true"] {
     background: var(--pkmn-border);
-    color: var(--pkmn-bg);
+    color: var(--pkmn-on-gold);
 }
 .flickemon-card.pokemon-theme .mode-seg[data-mode="exp"][aria-pressed="true"] {
     background: var(--pkmn-blue);
@@ -5194,7 +5335,7 @@ body.pokemon-theme ::-webkit-scrollbar-thumb:hover {
     color: var(--pkmn-purple-light);
 }
 .flickemon-card.pokemon-theme .shiny-flag {
-    color: var(--pkmn-gold-light);
+    color: var(--pkmn-gold-text);
 }
 .flickemon-card.pokemon-theme .guaranteed-flag {
     color: var(--pkmn-success);
@@ -5244,7 +5385,7 @@ body.pokemon-theme ::-webkit-scrollbar-thumb:hover {
 
 .flickemon-card.pokemon-theme .catch-now-btn {
     background: linear-gradient(135deg, var(--pkmn-border), var(--pkmn-border-dark));
-    color: var(--pkmn-bg);
+    color: var(--pkmn-on-gold);
     border-color: var(--pkmn-border);
     font-weight: 800;
 }

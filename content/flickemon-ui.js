@@ -84,16 +84,69 @@ class FlickemonUI {
         });
     }
 
-    applyPokemonTheme(on, targetCard = this.widgetCard) {
-        const isTheme = Boolean(on);
+    /**
+     * Puts the Pokémon skin on the page and the widget, or takes it off.
+     *
+     * `mode` is what Settings stores -- 'off', 'auto', 'light' or 'dark' -- and
+     * a plain true or false still works, as the dark skin or none. 'auto' wears
+     * whichever palette Flick itself is in, and keeps following it.
+     */
+    applyPokemonTheme(mode, targetCard = this.widgetCard) {
+        if (mode === true) mode = 'dark';
+        if (!['auto', 'light', 'dark'].includes(mode)) mode = 'off';
+        this.themeMode = mode;
+        const isTheme = mode !== 'off';
+        const isLight = isTheme && (mode === 'auto' ? this.flickScheme() : mode) === 'light';
+        const targets = [];
         if (typeof document !== 'undefined') {
-            if (document.documentElement) document.documentElement.classList.toggle('pokemon-theme', isTheme);
-            if (document.body) document.body.classList.toggle('pokemon-theme', isTheme);
+            if (document.documentElement) targets.push(document.documentElement);
+            if (document.body) targets.push(document.body);
         }
-        if (targetCard) {
-            targetCard.classList.toggle('pokemon-theme', isTheme);
+        if (targetCard) targets.push(targetCard);
+        for (const el of targets) {
+            el.classList.toggle('pokemon-theme', isTheme);
+            el.classList.toggle('pokemon-theme-light', isLight);
         }
+        if (mode === 'auto') this.followFlickScheme();
         this.syncToolbarLogo();
+    }
+
+    /**
+     * Whether Flick is light or dark right now. Its appearance system writes
+     * data-theme on <html>; the build without one follows the computer's own
+     * setting, as Flick's stylesheet does.
+     */
+    flickScheme() {
+        const root = typeof document !== 'undefined' && document.documentElement;
+        const set = root && typeof root.getAttribute === 'function' ? root.getAttribute('data-theme') : null;
+        if (set === 'light' || set === 'dark') return set;
+        try {
+            return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark' : 'light';
+        } catch {
+            return 'dark';
+        }
+    }
+
+    /**
+     * Re-applies the skin when Flick changes scheme, for as long as the skin is
+     * set to match it. Watches once; a later change of mode is read from
+     * this.themeMode when either fires.
+     */
+    followFlickScheme() {
+        if (this.followingFlickScheme) return;
+        this.followingFlickScheme = true;
+        const again = () => { if (this.themeMode === 'auto') this.applyPokemonTheme('auto'); };
+        try {
+            if (typeof MutationObserver === 'function' && document.documentElement) {
+                new MutationObserver(again).observe(document.documentElement,
+                    { attributes: true, attributeFilter: ['data-theme'] });
+            }
+            const query = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+            if (query && typeof query.addEventListener === 'function') query.addEventListener('change', again);
+        } catch {
+            // Decoration: a page that cannot be watched keeps the palette it has.
+        }
     }
 
     /**
@@ -156,9 +209,9 @@ class FlickemonUI {
         // Apply the Pokémon theme skin if the student opted in on this device.
         // Async but fire-and-forget: the class lands within a frame or two of
         // render, and the transition means any flash is invisible.
-        if (this.engine && typeof this.engine.getPokemonTheme === 'function') {
-            this.engine.getPokemonTheme().then(on => {
-                this.applyPokemonTheme(on, card);
+        if (this.engine && typeof this.engine.getPokemonThemeMode === 'function') {
+            this.engine.getPokemonThemeMode().then(mode => {
+                this.applyPokemonTheme(mode, card);
             }).catch(() => {});
         }
 
@@ -1408,12 +1461,15 @@ class FlickemonUI {
 
             <div class="flickemon-list-card" style="margin-top: 16px;">
                 <div class="flickemon-list-item">
-                    <div class="flick-toggle-row">
-                        <div class="flick-toggle-copy">
-                            <span class="flick-toggle-label">Pokémon Theme</span>
-                            <span class="flick-toggle-sub">Classic Pokémon game-inspired dark look.</span>
-                        </div>
-                        <button class="flick-toggle pokemon-theme-toggle" role="switch" aria-checked="false" aria-label="Pokémon Theme"></button>
+                    <div class="flick-toggle-copy">
+                        <span class="flick-toggle-label" id="pokemon-theme-label">Pokémon Theme</span>
+                        <span class="flick-toggle-sub">Poké Ball red and gold, the games' menus. Match Flick wears light or dark as Flick does.</span>
+                    </div>
+                    <div class="theme-choice" role="radiogroup" aria-labelledby="pokemon-theme-label">
+                        <button type="button" class="theme-choice-btn" role="radio" aria-checked="false" data-theme-mode="off">Off</button>
+                        <button type="button" class="theme-choice-btn" role="radio" aria-checked="false" data-theme-mode="auto">Match Flick</button>
+                        <button type="button" class="theme-choice-btn" role="radio" aria-checked="false" data-theme-mode="light">Light</button>
+                        <button type="button" class="theme-choice-btn" role="radio" aria-checked="false" data-theme-mode="dark">Dark</button>
                     </div>
                 </div>
             </div>
@@ -1730,30 +1786,47 @@ class FlickemonUI {
 
         renderSyncStatus();
 
-        // ── Pokémon theme toggle ──
-        const themeToggle = modal.body.querySelector('.pokemon-theme-toggle');
-        if (themeToggle) {
-            // Reflect the stored preference.
-            this.engine.getPokemonTheme().then(on => {
-                themeToggle.classList.toggle('is-on', on);
-                themeToggle.setAttribute('aria-checked', String(on));
-            });
+        // ── Pokémon theme: off, match Flick, light or dark ──
+        const themeChoice = modal.body.querySelector('.theme-choice');
+        if (themeChoice) {
+            const buttons = [...themeChoice.querySelectorAll('.theme-choice-btn')];
+            const show = mode => {
+                for (const btn of buttons) {
+                    const on = btn.dataset.themeMode === mode;
+                    btn.setAttribute('aria-checked', String(on));
+                    btn.tabIndex = on ? 0 : -1;
+                }
+            };
+            show('off');
+            this.engine.getPokemonThemeMode().then(show).catch(() => {});
 
-            themeToggle.addEventListener('click', async () => {
-                const nowOn = !themeToggle.classList.contains('is-on');
-                themeToggle.classList.toggle('is-on', nowOn);
-                themeToggle.setAttribute('aria-checked', String(nowOn));
-                await this.engine.setPokemonTheme(nowOn);
-
-                // Apply immediately to the whole webpage and the live widget card.
-                this.applyPokemonTheme(nowOn);
-                if (nowOn && this.widgetCard) {
+            const choose = async (btn) => {
+                const mode = btn.dataset.themeMode;
+                const wasOn = this.themeMode && this.themeMode !== 'off';
+                show(mode);
+                // Apply at once to the whole webpage and the live widget card,
+                // then remember it for this device.
+                this.applyPokemonTheme(mode);
+                if (mode !== 'off' && !wasOn && this.widgetCard) {
                     // Brief entrance flash so the change reads as deliberate.
                     this.widgetCard.classList.add('pokemon-theme-entering');
                     setTimeout(() => {
                         if (this.widgetCard) this.widgetCard.classList.remove('pokemon-theme-entering');
                     }, 500);
                 }
+                await this.engine.setPokemonThemeMode(mode);
+            };
+            for (const btn of buttons) btn.addEventListener('click', () => choose(btn));
+            // A radio group: arrow keys move the choice, as they would natively.
+            themeChoice.addEventListener('keydown', (e) => {
+                const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+                if (!step) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const at = buttons.findIndex(b => b.getAttribute('aria-checked') === 'true');
+                const next = buttons[(at + step + buttons.length) % buttons.length];
+                next.focus();
+                choose(next);
             });
         }
 

@@ -22,28 +22,20 @@
             window.flickemonEngine.startFlickAccountGuard();
         }
 
-        // Apply Pokémon theme to document as early as possible if enabled
-        if (window.flickemonEngine && typeof window.flickemonEngine.getPokemonTheme === 'function') {
-            window.flickemonEngine.getPokemonTheme().then(on => {
-                if (on) {
-                    if (document.documentElement) document.documentElement.classList.add('pokemon-theme');
-                    if (document.body) {
-                        document.body.classList.add('pokemon-theme');
-                    } else {
-                        document.addEventListener('DOMContentLoaded', () => {
-                            if (document.body) document.body.classList.add('pokemon-theme');
-                        });
-                    }
-                }
-            }).catch(() => {});
-        }
-
         // Create extension container root
         const rootContainer = document.createElement('div');
         rootContainer.className = 'flickemon-ext-root';
 
         // Instantiate Flickémon UI
         const flickemonUI = new window.FlickemonUI(window.flickemonEngine);
+
+        // The Pokémon skin, on the whole page as early as possible if this
+        // device wears it -- in the palette it was set to, or Flick's own.
+        if (window.flickemonEngine && typeof window.flickemonEngine.getPokemonThemeMode === 'function') {
+            window.flickemonEngine.getPokemonThemeMode().then(mode => {
+                if (mode !== 'off') flickemonUI.applyPokemonTheme(mode);
+            }).catch(() => {});
+        }
 
         // Inject widget into DOM
         function injectUI() {

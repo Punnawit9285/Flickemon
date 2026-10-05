@@ -26,7 +26,18 @@ console.log('\n=== no component rule hardcodes a colour ===');
 
     // Blank out comment bodies rather than skipping comment *lines*: the prose
     // wraps, and a continuation line looks like a declaration.
-    const code = rules.replace(/\/\*[\s\S]*?\*\//g, (c) => ' '.repeat(c.length));
+    //
+    // A block that defines nothing but custom properties is a token block
+    // wherever it sits -- the Pokémon skin's light palette, the values pinned
+    // on its always-red header -- so it is blanked too. A rule that mixes a
+    // literal into ordinary declarations is still caught.
+    const code = rules
+        .replace(/\/\*[\s\S]*?\*\//g, (c) => ' '.repeat(c.length))
+        .replace(/\{([^{}]*)\}/g, (block, body) => {
+            const decls = body.split(';').map(d => d.trim()).filter(Boolean);
+            return decls.length && decls.every(d => d.startsWith('--'))
+                ? '{' + ' '.repeat(body.length) + '}' : block;
+        });
 
     const offenders = [];
     const re = /#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d/g;
@@ -336,11 +347,19 @@ console.log('\n=== Pokémon theme whole-webpage & popover rules ===');
         /\.flickemon-card\.pokemon-theme\s+\.flickemon-header\s*\{[^}]*overflow:\s*visible;/.test(rules));
     check('Pokémon theme popover menu has high z-index',
         /\.flickemon-card\.pokemon-theme\s+\.options-popover-menu\s*\{[^}]*z-index:\s*100000;/.test(rules));
-    check('FlickemonUI applies theme to document body and root',
-        /document\.documentElement\.classList\.toggle\('pokemon-theme'/.test(ui) &&
-        /document\.body\.classList\.toggle\('pokemon-theme'/.test(ui));
-    check('content-script initializes theme on document body and root',
-        /document\.documentElement\.classList\.add\('pokemon-theme'/.test(cs));
+    // Behaviour is checked in test_features.js; these keep the wiring honest.
+    check('FlickemonUI puts the skin and its palette on root, body and card alike',
+        /targets\.push\(document\.documentElement\)/.test(ui) && /targets\.push\(document\.body\)/.test(ui)
+        && /classList\.toggle\('pokemon-theme', isTheme\)/.test(ui)
+        && /classList\.toggle\('pokemon-theme-light', isLight\)/.test(ui));
+    check('content-script puts the stored skin on the page before the widget renders',
+        /getPokemonThemeMode\(\)\.then\(mode => \{\s*if \(mode !== 'off'\) flickemonUI\.applyPokemonTheme\(mode\)/.test(cs));
+    check('the light palette redefines the skin\'s tokens on html, body and card',
+        /html\.pokemon-theme-light,\s*body\.pokemon-theme-light,\s*\.flickemon-card\.pokemon-theme-light \{\s*--pkmn-bg:/.test(rules));
+    check('and tells native controls it is light',
+        /body\.pokemon-theme\.pokemon-theme-light \{[^}]*color-scheme: light/.test(rules));
+    check('the red header keeps light-on-red values in either palette',
+        /\.flickemon-card\.pokemon-theme \.flickemon-header \{\s*--pkmn-fill-mid: rgba\(255, 255, 255/.test(rules));
 }
 
 console.log('\n=== FlickPlayer\'s theme system and this stylesheet stay out of each other\'s way ===');
@@ -359,10 +378,22 @@ console.log('\n=== FlickPlayer\'s theme system and this stylesheet stay out of e
         '--flick-surface', '--flick-surface-muted', '--flick-tag-background', '--flick-tag-color',
         '--flick-theme-transition-duration', '--flick-theme-transition-easing', '--flick-warning-text',
     ];
-    const ours = new Set([...css.matchAll(/(--flick-[a-z0-9-]+)\s*:/g)].map(m => m[1]));
+    // One block takes over a handful of these names on purpose: while the
+    // Pokémon skin is on, FlickPlayer's own text and surface tokens follow the
+    // skin. It is declared on <body>, where a rule does beat the inline value on
+    // <html> for everything beneath; it is checked on its own below.
+    const takeover = css.match(/\nbody\.pokemon-theme \{\n((?:\s*--flick-[a-z-]+: var\(--pkmn-[a-z-]+\);\n)+)\}/);
+    const ours = new Set([...css.replace(takeover ? takeover[0] : '', '')
+        .matchAll(/(--flick-[a-z0-9-]+)\s*:/g)].map(m => m[1]));
     const clash = flickPlayerWrites.filter(v => ours.has(v))
         .concat([...ours].filter(v => /^--flick-(series|heat)-\d/.test(v)));
     check('no token of ours shares a name FlickPlayer writes', clash.length === 0, clash.join(', '));
+
+    const taken = takeover ? [...takeover[1].matchAll(/(--flick-[a-z-]+):/g)].map(m => m[1]) : [];
+    check('under the skin, FlickPlayer\'s grey text follows the skin\'s palette',
+        taken.includes('--flick-muted-text') && taken.includes('--flick-companion-text'), taken.join(', '));
+    check('and only names FlickPlayer actually writes are taken over',
+        taken.length > 0 && taken.every(v => flickPlayerWrites.includes(v)), taken.join(', '));
 
     // A picture the student chose sits behind a transparent page; the skin must
     // not paint over it.

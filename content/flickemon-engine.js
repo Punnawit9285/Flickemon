@@ -41,6 +41,9 @@ const LOCAL_SAVE_DEBOUNCE_MS = 1000;
 // corrupt value, and taken as a mark it would stop that lecture crediting ever.
 const MAX_LECTURE_SEC = 24 * 60 * 60;
 
+// The Pokémon skin: off, matched to Flick's own light or dark scheme, or fixed.
+const POKEMON_THEME_MODES = ['off', 'auto', 'light', 'dark'];
+
 // Names a player chooses. Anything goes but invisible characters, which could
 // make a name that looks empty or reads backwards; the caps keep a name on one
 // line wherever it is shown. Counted in characters, so an emoji is one.
@@ -4193,22 +4196,39 @@ class FlickemonEngine {
     }
 
     /**
-     * Whether the Pokémon theme skin is enabled on this device.
+     * Which Pokémon skin this device wears: 'off', 'auto' (light or dark as
+     * Flick itself is), 'light' or 'dark'.
      *
      * A UI preference, not game state: it lives in chrome.storage.local next
      * to the device ID and never syncs. A student can wear the theme on their
      * laptop and not on their phone without one overwriting the other.
+     *
+     * The key once held a plain true or false, from when the skin was dark only;
+     * true still reads as the dark skin it turned on.
      */
-    async getPokemonTheme() {
-        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return false;
+    async getPokemonThemeMode() {
+        if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return 'off';
         const data = await chrome.storage.local.get([this.THEME_KEY]);
-        return data && data[this.THEME_KEY] === true;
+        const stored = data && data[this.THEME_KEY];
+        if (stored === true) return 'dark';
+        return POKEMON_THEME_MODES.includes(stored) ? stored : 'off';
     }
 
-    async setPokemonTheme(on) {
+    async setPokemonThemeMode(mode) {
+        if (!POKEMON_THEME_MODES.includes(mode)) mode = 'off';
         if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
-        await chrome.storage.local.set({ [this.THEME_KEY]: on === true });
+        await chrome.storage.local.set({ [this.THEME_KEY]: mode });
         this.emitState();
+    }
+
+    /** Whether any Pokémon skin is on. */
+    async getPokemonTheme() {
+        return (await this.getPokemonThemeMode()) !== 'off';
+    }
+
+    /** On means the dark skin, as it always has; see setPokemonThemeMode for the rest. */
+    async setPokemonTheme(on) {
+        await this.setPokemonThemeMode(on === true ? 'dark' : 'off');
     }
 
     /**

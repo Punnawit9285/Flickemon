@@ -1312,6 +1312,56 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
     check('applyPokemonTheme(false) removes pokemon-theme from widgetCard',
       !mockCard.classList.contains('pokemon-theme'));
 
+    // ── Light and dark ──
+    // The key held true from when the skin was dark only.
+    storageStore[e.THEME_KEY] = true;
+    check('a device that turned the old skin on keeps the dark one',
+      (await e.getPokemonThemeMode()) === 'dark');
+    await e.setPokemonThemeMode('light');
+    check('the light skin is remembered', (await e.getPokemonThemeMode()) === 'light'
+      && (await e.getPokemonTheme()) === true);
+    await e.setPokemonThemeMode('purple');
+    check('a mode that does not exist is stored as off', (await e.getPokemonThemeMode()) === 'off');
+
+    const wearing = () => ['pokemon-theme', 'pokemon-theme-light']
+      .map(c => [mockDocElement, mockBody, mockCard].every(el => el.classList.contains(c)));
+    ui.applyPokemonTheme('light');
+    check('the light skin puts both classes on the page and the widget',
+      JSON.stringify(wearing()) === '[true,true]', JSON.stringify(wearing()));
+    ui.applyPokemonTheme('dark');
+    check('the dark skin takes the light class off again',
+      !mockBody.classList.contains('pokemon-theme-light') && mockBody.classList.contains('pokemon-theme'));
+
+    // Match Flick: its appearance system writes data-theme on <html>.
+    let flickTheme = 'light';
+    let watchFlick = null;
+    mockDocElement.getAttribute = (name) => (name === 'data-theme' ? flickTheme : null);
+    const oldObserver = global.MutationObserver;
+    global.MutationObserver = class { constructor(cb) { watchFlick = cb; } observe() {} };
+    ui.applyPokemonTheme('auto');
+    check('matching Flick wears light while Flick is light',
+      JSON.stringify(wearing()) === '[true,true]', JSON.stringify(wearing()));
+    flickTheme = 'dark';
+    if (watchFlick) watchFlick([]);
+    check('and goes dark the moment Flick does',
+      mockBody.classList.contains('pokemon-theme') && !mockBody.classList.contains('pokemon-theme-light'));
+    ui.applyPokemonTheme('light');
+    flickTheme = 'dark';
+    if (watchFlick) watchFlick([]);
+    check('a fixed choice is not changed by Flick\'s scheme',
+      mockBody.classList.contains('pokemon-theme-light'));
+    ui.applyPokemonTheme('off');
+    if (watchFlick) watchFlick([]);
+    check('nor is the skin put back once it is off', !mockBody.classList.contains('pokemon-theme'));
+
+    // The build without an appearance system follows the computer's setting.
+    flickTheme = null;
+    const oldMatch = global.window.matchMedia;
+    global.window.matchMedia = () => ({ matches: false, addEventListener() {} });
+    check('without data-theme, Flick\'s scheme is the computer\'s', ui.flickScheme() === 'light');
+    global.window.matchMedia = oldMatch;
+    global.MutationObserver = oldObserver;
+
     global.chrome.storage.local = oldStorage;
     global.document = oldDoc;
   }
