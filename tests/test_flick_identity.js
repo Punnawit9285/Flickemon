@@ -96,6 +96,121 @@ console.log('=== reading the Flick account off the page ===');
             ?.source === 'localStorage:user');
 }
 
+console.log('\n=== Flick\'s Firebase sign-in record ===');
+{
+    // What Flick actually has. AngularFire's getAuth() persists to IndexedDB,
+    // so the first release -- which read only Web Storage and the page --
+    // found nothing and refused every student.
+    const KEY = 'firebase:authUser:AIzaTestKey:[DEFAULT]';
+    const user = (email) => ({ fbase_key: KEY, value: { uid: 'u1', email, stsTokenManager: { accessToken: 'secret' } } });
+
+    const found = readFlickIdentity({ firebaseUsers: [{ fbase_key: '__sak', value: '__sak' }, user('Alice@Docchula.com')] });
+    check('the Firebase user record in IndexedDB is read',
+        found?.email === 'alice@docchula.com', JSON.stringify(found));
+    check('and is reported as its source', found?.source === 'indexedDB:firebase:authUser');
+
+    check('it beats a stale address elsewhere in storage',
+        readFlickIdentity({
+            firebaseUsers: [user('alice@docchula.com')],
+            localStorage: store({ user: '{"email":"previous@docchula.com"}' }),
+        })?.email === 'alice@docchula.com');
+
+    check('another Firebase app on the page is not Flick\'s sign-in',
+        readFlickIdentity({
+            firebaseUsers: [{ fbase_key: 'firebase:authUser:k:other-app', value: { email: 'x@docchula.com' } }],
+        })?.email == null);
+
+    // Flick signed out: Firebase deletes the record. Its database is still
+    // there, and that absence is an answer, not a gap for guesses to fill --
+    // on a library PC the guess would be the last student's address.
+    const out = readFlickIdentity({
+        firebaseUsers: [{ fbase_key: '__sak', value: '__sak' }],
+        localStorage: store({ user: '{"email":"previous@docchula.com"}' }),
+        document: { querySelector: () => ({ getAttribute: () => 'mailto:previous@docchula.com' }) },
+    });
+    check('a database with no user means Flick is signed out',
+        out && out.signedOut === true && out.email === null, JSON.stringify(out));
+
+    check('where IndexedDB is unavailable, Firebase\'s localStorage copy is read',
+        readFlickIdentity({ localStorage: store({ [KEY]: JSON.stringify({ uid: 'u', email: 'b@docchula.com' }) }) })
+            ?.source === 'localStorage:firebase:authUser');
+
+    check('and sessionStorage\'s, for session persistence',
+        readFlickIdentity({ sessionStorage: store({ [KEY]: JSON.stringify({ uid: 'u', email: 'c@docchula.com' }) }) })
+            ?.email === 'c@docchula.com');
+
+    check('with no Firebase database at all, the older probes still run',
+        readFlickIdentity({ firebaseUsers: null, localStorage: store({ user: '{"email":"d@docchula.com"}' }) })
+            ?.email === 'd@docchula.com');
+}
+
+console.log('\n=== reading Firebase\'s database without disturbing it ===');
+{
+    const { readFirebaseUsers } = identity;
+
+    /** Just enough of indexedDB.open() for the reader. */
+    const fakeIdb = ({ exists = true, stores = ['firebaseLocalStorage'], rows = [], hang = false, throwOnOpen = false } = {}) => {
+        const log = { aborted: false, closed: false, opened: [] };
+        const idb = {
+            open(name, version) {
+                if (throwOnOpen) throw new Error('SecurityError');
+                log.opened.push([name, version]);
+                const req = { transaction: { abort() { log.aborted = true; } } };
+                if (hang) return req;
+                setImmediate(() => {
+                    if (!exists) { req.onupgradeneeded && req.onupgradeneeded(); req.onerror && req.onerror(); return; }
+                    req.result = {
+                        objectStoreNames: { contains: n => stores.includes(n) },
+                        transaction: () => ({ objectStore: () => ({ getAll() {
+                            const get = {};
+                            setImmediate(() => { get.result = rows; get.onsuccess && get.onsuccess(); });
+                            return get;
+                        } }) }),
+                        close() { log.closed = true; },
+                    };
+                    req.onsuccess && req.onsuccess();
+                });
+                return req;
+            },
+        };
+        return { idb, log };
+    };
+
+    let { idb, log } = fakeIdb({ rows: [{ fbase_key: 'firebase:authUser:k:[DEFAULT]', value: { email: 'a@docchula.com' } }] });
+    const rows = await readFirebaseUsers(idb);
+    check('the records are returned', Array.isArray(rows) && rows.length === 1);
+    check('the database is opened by name, with no version to upgrade it',
+        log.opened.length === 1 && log.opened[0][0] === 'firebaseLocalStorageDb' && log.opened[0][1] === undefined,
+        JSON.stringify(log.opened));
+    check('and the connection is closed straight after', log.closed);
+
+    ({ idb, log } = fakeIdb({ exists: false }));
+    check('a database that does not exist reads as null', (await readFirebaseUsers(idb)) === null);
+    // Creating it would leave an empty database for Firebase to delete and
+    // rebuild under Flick.
+    check('and is NOT created: the upgrade is aborted', log.aborted);
+
+    ({ idb } = fakeIdb({ stores: [] }));
+    check('a database without Firebase\'s store reads as null', (await readFirebaseUsers(idb)) === null);
+
+    ({ idb } = fakeIdb({ throwOnOpen: true }));
+    check('an open that throws reads as null', (await readFirebaseUsers(idb)) === null);
+
+    ({ idb } = fakeIdb({ hang: true }));
+    check('an open that never answers times out to null',
+        (await readFirebaseUsers(idb, { timeoutMs: 20 })) === null);
+
+    check('no indexedDB at all reads as null', (await readFirebaseUsers(undefined)) === null);
+
+    // End to end through the live-page wrapper.
+    ({ idb } = fakeIdb({ rows: [{ fbase_key: 'firebase:authUser:k:[DEFAULT]', value: { email: 'Z@docchula.com' } }] }));
+    global.window = { indexedDB: idb, localStorage: store({}), sessionStorage: store({}) };
+    const live = await identity.currentFlickIdentity();
+    check('currentFlickIdentity() reads the page\'s IndexedDB',
+        live?.email === 'z@docchula.com' && live.source === 'indexedDB:firebase:authUser', JSON.stringify(live));
+    delete global.window;
+}
+
 console.log('\n=== two different @docchula.com accounts are still two accounts ===');
 {
     // The whole reason the domain check is not enough.
@@ -161,7 +276,28 @@ console.log('\n=== signing in is refused unless it matches Flick ===');
     check('and says why, naming the shared-computer reason',
         /shared computer|logged in to Flick/i.test(message), message);
 
-    // 3. The reader missing altogether (script failed to load) fails the same way.
+    // 3. Flick definitely signed out is refused too, with a message that says
+    //    what to do about it rather than "could not tell".
+    global.window.FlickemonFlickIdentity = {
+        ...identity,
+        currentFlickIdentity: async () => ({ email: null, source: 'indexedDB:firebase', signedOut: true }),
+    };
+    threw = false; message = '';
+    try { await e.signIn(); } catch (err) { threw = true; message = err.message; }
+    check('a signed-out Flick blocks sign-in', threw);
+    check('and says to sign in to Flick first', /Sign in to Flick first/.test(message), message);
+
+    // 4. The reader answering asynchronously, as the live one does.
+    global.window.FlickemonFlickIdentity = {
+        ...identity,
+        currentFlickIdentity: async () => ({ email: 'alice@docchula.com', source: 'indexedDB:firebase:authUser' }),
+    };
+    sent = null;
+    await e.signIn();
+    check('an async reading is awaited, not sent as a promise',
+        sent && sent.requireEmail === 'alice@docchula.com', JSON.stringify(sent));
+
+    // 5. The reader missing altogether (script failed to load) fails the same way.
     global.window.FlickemonFlickIdentity = null;
     threw = false;
     try { await e.signIn(); } catch { threw = true; }

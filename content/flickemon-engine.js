@@ -834,7 +834,7 @@ class FlickemonEngine {
 
     async signIn({ prompt } = {}) {
         // Bind to the Flick session before anything else. See requireFlickAccount.
-        const requireEmail = this.requireFlickAccount();
+        const requireEmail = await this.requireFlickAccount();
 
         const res = await this.sendToWorker({ type: 'AUTH_SIGN_IN', prompt, requireEmail });
         if (!res || res.ok === false) {
@@ -967,7 +967,7 @@ class FlickemonEngine {
      * flickemon-flick-identity.js is updated. That is the trade deliberately
      * taken, because the alternative silently mis-attributes study time.
      */
-    requireFlickAccount() {
+    async requireFlickAccount() {
         const reader = typeof window !== 'undefined' && window.FlickemonFlickIdentity;
         if (!reader || typeof reader.currentFlickIdentity !== 'function') {
             throw new Error(
@@ -976,7 +976,13 @@ class FlickemonEngine {
             );
         }
 
-        const identity = reader.currentFlickIdentity();
+        const identity = await reader.currentFlickIdentity();
+        if (identity && identity.signedOut) {
+            throw new Error(
+                'Flick is signed out on this computer. Sign in to Flick first, ' +
+                'then sign in here with the same Google account.'
+            );
+        }
         if (!identity || !identity.email) {
             throw new Error(
                 'Could not tell which account Flick is signed in as, so signing in ' +
@@ -1006,7 +1012,7 @@ class FlickemonEngine {
         const reader = typeof window !== 'undefined' && window.FlickemonFlickIdentity;
         if (!reader) return false;
 
-        const identity = reader.currentFlickIdentity();
+        const identity = await reader.currentFlickIdentity();
 
         // Only a POSITIVE, different reading acts. An unreadable session is not
         // evidence of a handover — Flick renders asynchronously and a route

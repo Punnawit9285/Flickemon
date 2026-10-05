@@ -128,19 +128,28 @@ refused. Local-only play still works via "Continue without signing in", so a
 Flick redesign costs cloud sync, never the game — but it *does* cost cloud sync
 for everyone until the reader is updated.
 
-⚠️ **Because of that, confirm the reader works on the live site before you
-publish.** Open a Flick page while logged in and run:
+Flick signs in with Firebase Auth, which keeps the signed-in user in
+**IndexedDB** (`firebaseLocalStorageDb` → `firebaseLocalStorage`, key
+`firebase:authUser:<apiKey>:[DEFAULT]`). The reader opens that record first and
+never creates the database. The first release read only localStorage, found
+nothing, and refused every sign-in.
+
+⚠️ **Confirm the reader works on the live site before you publish.** Open a
+Flick page while logged in, open DevTools → Console, switch the context
+dropdown from **top** to **Flickémon** (the extension's scripts are not visible
+from the page's own context), and run:
 
 ```js
-window.FlickemonFlickIdentity.currentFlickIdentity()
+await window.FlickemonFlickIdentity.currentFlickIdentity()
 ```
 
-- `{ email: 'you@docchula.com', source: 'localStorage:…' }` → working. Pin that
-  key into `KNOWN_KEYS` at the top of `flickemon-flick-identity.js` so the read
-  is exact instead of heuristic.
-- `null` → **do not ship**. Nobody would be able to sign in. Use the snippet in
-  that file's header comment to find where Flick keeps the session, add the key
-  to `KNOWN_KEYS`, and re-check.
+- `{ email: 'you@docchula.com', source: 'indexedDB:firebase:authUser' }` →
+  working.
+- `{ email: null, signedOut: true, … }` → Flick is signed out in this browser.
+  Sign in to Flick and run it again.
+- `null` → **do not ship**. Nobody would be able to sign in: Flick has moved its
+  session somewhere the reader does not look. See the header comment in
+  `content/flickemon-flick-identity.js`.
 
 Like `ALLOWED_EMAIL_DOMAINS`, this is not a security boundary — anyone running
 the extension unpacked can edit it out. It stops the accident and the casual
