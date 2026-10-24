@@ -15,7 +15,7 @@ import { signIn, signOut, getStatus, switchAccount, getAuthDiagnostics } from '.
 import { pullState, pushState, checkAdmin, listSlots, wipeSlot, renameSlot } from './firestore.js';
 import { codeForUid, openLobby, readBattle, joinBattle, submitAction, commitTurn, closeLobby } from './pvp.js';
 import { openTrade, readTrade, joinTrade, offerPokemon, confirmTrade, acknowledgeTrade, closeTrade } from './trade.js';
-import { claimUsername, releaseUsername, writeProfile, lookup,
+import { claimUsername, releaseUsername, writeProfile, lookup, ensureFindable,
          requestFriend, acceptFriend, removeFriend, listFriendships,
          publishFeed, readFeeds, publishLeaderboard, readLeaderboard } from './friends.js';
 
@@ -43,6 +43,10 @@ if (chrome.tabs && chrome.tabs.onRemoved) {
         if (await getMusicTabId() === tabId) await setMusicTabId(null);
     });
 }
+
+/** Accounts a silent sign-in was refused for, and when. See AUTH_SIGN_IN_SILENT. */
+const SILENT_TRIED_KEY = 'flickemon_silent_signin_v1';
+const SILENT_RETRY_MS = 15 * 60 * 1000;
 
 /** Offline pushes park here until connectivity returns. */
 const PENDING_KEY = 'flickemon_pending_push_v1';
@@ -115,10 +119,37 @@ const handlers = {
         // `requireEmail` is the account Flick is signed in as; the content script
         // reads it, because only a script on the page can see Flick's session.
         const { uid, email } = await signIn({
-            prompt: msg.prompt,
+            prompt: msg.prompt || undefined,
             requireEmail: msg.requireEmail || null,
         });
+        await chrome.storage.session.remove([SILENT_TRIED_KEY]).catch(() => {});
         return { ok: true, uid, email };
+    },
+
+    /**
+     * Signs in as the Flick account without opening anything, if Google can
+     * say yes on its own. Tried when a Flick page opens signed out, and after
+     * a shared computer changes hands.
+     *
+     * A refusal is remembered for this browser session, per account, so a
+     * student who has never signed in here does not send Google a silent
+     * request on every page they open. Signing in by hand clears it.
+     */
+    async AUTH_SIGN_IN_SILENT(msg) {
+        const requireEmail = String(msg.requireEmail || '').trim().toLowerCase();
+        if (!requireEmail) return { ok: false, reason: 'no-account' };
+        const data = await chrome.storage.session.get([SILENT_TRIED_KEY]).catch(() => ({}));
+        const tried = (data && data[SILENT_TRIED_KEY]) || {};
+        if (Date.now() - (tried[requireEmail] || 0) < SILENT_RETRY_MS) return { ok: false, reason: 'tried' };
+        try {
+            const { uid, email } = await signIn({ requireEmail, silent: true });
+            return { ok: true, uid, email };
+        } catch (err) {
+            await chrome.storage.session.set({
+                [SILENT_TRIED_KEY]: { ...tried, [requireEmail]: Date.now() },
+            }).catch(() => {});
+            return { ok: false, reason: 'needs-you', error: String(err.message || err) };
+        }
     },
 
     async AUTH_SIGN_OUT() {
@@ -168,8 +199,9 @@ const handlers = {
     async FRIEND_RELEASE_NAME(msg){ return await releaseUsername(msg.name); },
     async FRIEND_PROFILE(msg)     { return await writeProfile(msg.payload || {}); },
     async FRIEND_LOOKUP(msg)      { return await lookup(msg.query || {}); },
-    async FRIEND_REQUEST(msg)     { return await requestFriend(msg.uid); },
-    async FRIEND_ACCEPT(msg)      { return await acceptFriend(msg.uid); },
+    async FRIEND_FINDABLE()       { return await ensureFindable(); },
+    async FRIEND_REQUEST(msg)     { return await requestFriend(msg.uid, { name: msg.name || '' }); },
+    async FRIEND_ACCEPT(msg)      { return await acceptFriend(msg.uid, { name: msg.name || '' }); },
     async FRIEND_REMOVE(msg)      { return await removeFriend(msg.uid); },
     async FRIEND_LIST(msg)        { return await listFriendships({ fresh: msg.fresh === true }); },
     async FRIEND_PUBLISH(msg)     { return await publishFeed(msg.payload || {}); },

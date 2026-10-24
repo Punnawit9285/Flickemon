@@ -106,39 +106,62 @@ console.log('\n=== readDoc ===');
 
 console.log('\n=== mutateDoc: shape, version and conflict ===');
 {
-    const url = 'https://example.test/doc/2';
+    const url = 'https://firestore.test/v1/projects/p/databases/(default)/documents/battles/123456';
+    const isWrite = (u, init) => init && init.method === 'POST' && u.endsWith('/documents:commit');
     let sent = [];
     invalidateDoc(url);
 
     global.fetch = async (u, init) => {
-        if (!init || init.method !== 'PATCH') {
+        if (!isWrite(u, init)) {
             return { ok: true, status: 200,
                      json: async () => ({ fields: {}, updateTime: 'V1' }) };
         }
         sent.push({ url: u, body: JSON.parse(init.body) });
-        return { ok: true, status: 200, json: async () => ({ fields: {}, updateTime: 'V2' }) };
+        return { ok: true, status: 200, json: async () => ({ writeResults: [{ updateTime: 'V2' }] }) };
     };
 
     const res = await mutateDoc(url, 'tok', () => ({ host: { stringValue: 'me' } }));
     check('the write succeeds', res.ok === true);
-    check('the body is wrapped in `fields`',
-        Object.keys(sent[0].body).join() === 'fields', JSON.stringify(sent[0].body).slice(0, 60));
+    const w = sent[0] && sent[0].body.writes && sent[0].body.writes[0];
+    check('the body is a Document inside the write',
+        w && w.update && Object.keys(w.update).sort().join() === 'fields,name', JSON.stringify(sent[0] && sent[0].body).slice(0, 80));
+    check('it addresses the document by name',
+        w && w.update.name === 'projects/p/databases/(default)/documents/battles/123456', w && w.update.name);
     check('the write is conditional on the version read',
-        sent[0].url.includes('currentDocument.updateTime=V1'), sent[0].url);
+        w && w.currentDocument && w.currentDocument.updateTime === 'V1', JSON.stringify(w && w.currentDocument));
+    check('and the version it wrote is remembered', res.doc && res.doc.updateTime === 'V2');
+
+    // Judged as the edit it is: the PATCH form was taken for a create.
+    const src = fs.readFileSync(R + 'background/cache.js', 'utf8');
+    check('it never sends currentDocument.updateTime as a PATCH query',
+        !/currentDocument\.updateTime=/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')));
+
+    // A document that is not there yet is created, and only created.
+    sent = []; invalidateDoc(url);
+    global.fetch = async (u, init) => {
+        if (!isWrite(u, init)) return { ok: false, status: 404 };
+        sent.push({ url: u, body: JSON.parse(init.body) });
+        return { ok: true, status: 200, json: async () => ({ writeResults: [{ updateTime: 'V1' }] }) };
+    };
+    await mutateDoc(url, 'tok', () => ({ x: { stringValue: '1' } }));
+    check('a first write may not land on a document someone else made meanwhile',
+        sent[0] && sent[0].body.writes[0].currentDocument.exists === false,
+        JSON.stringify(sent[0] && sent[0].body.writes[0].currentDocument));
 
     // A conflicting write must not overwrite; it rebuilds and retries once.
     sent = []; invalidateDoc(url);
-    let patches = 0, seenVersions = [];
+    let writes = 0, seenVersions = [];
     global.fetch = async (u, init) => {
-        if (!init || init.method !== 'PATCH') {
+        if (!isWrite(u, init)) {
             return { ok: true, status: 200,
-                     json: async () => ({ fields: {}, updateTime: patches ? 'V9' : 'V1' }) };
+                     json: async () => ({ fields: {}, updateTime: writes ? 'V9' : 'V1' }) };
         }
-        patches++;
-        seenVersions.push(decodeURIComponent(u.split('updateTime=')[1] || ''));
-        return patches === 1
-            ? { ok: false, status: 409 }
-            : { ok: true, status: 200, json: async () => ({ fields: {}, updateTime: 'V10' }) };
+        writes++;
+        seenVersions.push(JSON.parse(init.body).writes[0].currentDocument.updateTime);
+        return writes === 1
+            ? { ok: false, status: 400,
+                json: async () => ({ error: { code: 400, status: 'FAILED_PRECONDITION' } }) }
+            : { ok: true, status: 200, json: async () => ({ writeResults: [{ updateTime: 'V10' }] }) };
     };
     const retried = await mutateDoc(url, 'tok', () => ({ x: { stringValue: '1' } }));
     check('a rejected write is retried', retried.ok === true, JSON.stringify(retried));
@@ -147,27 +170,36 @@ console.log('\n=== mutateDoc: shape, version and conflict ===');
 
     // Two conflicts in a row give up rather than looping.
     invalidateDoc(url);
-    global.fetch = async (u, init) => (!init || init.method !== 'PATCH')
+    global.fetch = async (u, init) => !isWrite(u, init)
         ? { ok: true, status: 200, json: async () => ({ fields: {}, updateTime: 'V1' }) }
-        : { ok: false, status: 409 };
+        : { ok: false, status: 409, json: async () => ({}) };
     const gave = await mutateDoc(url, 'tok', () => ({ x: { stringValue: '1' } }));
     check('it gives up rather than looping', gave.ok === false && gave.conflict === true,
         JSON.stringify(gave));
 
     // A real server error must surface, not be mistaken for a conflict.
     invalidateDoc(url);
-    global.fetch = async (u, init) => (!init || init.method !== 'PATCH')
+    global.fetch = async (u, init) => !isWrite(u, init)
         ? { ok: true, status: 200, json: async () => ({ fields: {}, updateTime: 'V1' }) }
-        : { ok: false, status: 500 };
+        : { ok: false, status: 500, json: async () => ({}) };
     let threw = false;
     try { await mutateDoc(url, 'tok', () => ({ x: { stringValue: '1' } })); } catch { threw = true; }
     check('a 500 throws rather than retrying forever', threw);
+
+    // A refusal by the rules is not a conflict either.
+    invalidateDoc(url);
+    global.fetch = async (u, init) => !isWrite(u, init)
+        ? { ok: true, status: 200, json: async () => ({ fields: {}, updateTime: 'V1' }) }
+        : { ok: false, status: 400, json: async () => ({ error: { status: 'INVALID_ARGUMENT' } }) };
+    threw = false;
+    try { await mutateDoc(url, 'tok', () => ({ x: { stringValue: '1' } })); } catch { threw = true; }
+    check('a 400 that is not a precondition throws', threw);
 
     // Aborting the transform must not write at all.
     invalidateDoc(url);
     let wrote = false;
     global.fetch = async (u, init) => {
-        if (init && init.method === 'PATCH') { wrote = true; }
+        if (isWrite(u, init)) { wrote = true; }
         return { ok: true, status: 200, json: async () => ({ fields: {}, updateTime: 'V1' }) };
     };
     const aborted = await mutateDoc(url, 'tok', () => null);

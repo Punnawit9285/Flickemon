@@ -418,6 +418,64 @@ async function board() {
             !/writeProfile[\s\S]{0,700}?email: S\(/.test(t));
     }
 
+    console.log('\n=== newest choice wins, wherever it was made ===');
+    {
+        reset();
+        e.gameState.onLeaderboard = true; e.gameState.onLeaderboardAt = 2000;
+        e.mergeCloudState({ ...e.buildCloudPayload(), onLeaderboard: false, onLeaderboardAt: 1000 });
+        check('an older "not on the board" does not take you off it', e.isOnLeaderboard() === true);
+        e.mergeCloudState({ ...e.buildCloudPayload(), onLeaderboard: false, onLeaderboardAt: 3000 });
+        check('a newer one does', e.isOnLeaderboard() === false);
+        e.gameState.onLeaderboard = true; e.gameState.onLeaderboardAt = 0;
+        e.mergeCloudState({ ...e.buildCloudPayload(), onLeaderboard: false, onLeaderboardAt: 0 });
+        check('between two untimed saves, being on still needs both', e.isOnLeaderboard() === false);
+
+        e.gameState.friendPrivacy = { ...cfg.defaultFriendPrivacy(), today: true }; e.gameState.friendPrivacyAt = 5;
+        e.mergeCloudState({ ...e.buildCloudPayload(), friendPrivacy: { ...cfg.defaultFriendPrivacy(), today: false }, friendPrivacyAt: 9 });
+        check('hiding something on another device holds here', e.getFriendPrivacy().today === false);
+        e.mergeCloudState({ ...e.buildCloudPayload(), friendPrivacy: { ...cfg.defaultFriendPrivacy(), today: true }, friendPrivacyAt: 7 });
+        check('and an older copy cannot share it again', e.getFriendPrivacy().today === false);
+
+        e.gameState.username = 'newname'; e.gameState.usernameAt = 50;
+        e.mergeCloudState({ ...e.buildCloudPayload(), username: 'oldname', usernameAt: 10 });
+        check('an older name does not replace a newer one', e.getUsername() === 'newname');
+    }
+
+    console.log('\n=== another student\'s friends are not ours ===');
+    {
+        reset();
+        e.friendCache = [{ uid: 'their-friend', accepted: true }];
+        e.lastFeedFingerprint = 'x'; e.lastFeedPublishAt = Date.now();
+        e.gameState.ownerUid = 'student-a';
+        e.discardLocalState();
+        check('a handover forgets the previous account\'s friend list', e.friendCache === null);
+        check('and its feed bookkeeping', e.lastFeedFingerprint === null && e.lastFeedPublishAt === 0);
+        e.friendCache = [{ uid: 'x', accepted: true }];
+        await e.signOut();
+        check('so does signing out', e.friendCache === null);
+    }
+
+    console.log('\n=== the feed goes up with the save, not only while friends is open ===');
+    {
+        reset();
+        e.friendCache = null; e.friendsLoadTried = false;
+        e.sendToWorker = async (msg) => {
+            e.sent.push(msg);
+            if (msg.type === 'FRIEND_LIST') return { ok: true, friendships: [{ uid: 'f1', accepted: true }], me: 'me' };
+            return { ok: true };
+        };
+        e.creditDailyProgress({ exp: 500 });
+        await e.refreshFriendFeed();
+        check('the friend list is loaded once for it', e.sent.filter(m => m.type === 'FRIEND_LIST').length === 1);
+        check('and the feed is published', e.sent.some(m => m.type === 'FRIEND_PUBLISH'));
+        e.sent = [];
+        await e.refreshFriendFeed();
+        check('not again while nothing has changed', !e.sent.some(m => m.type === 'FRIEND_PUBLISH')
+            && !e.sent.some(m => m.type === 'FRIEND_LIST'));
+        const flush = code('content/flickemon-engine.js').match(/async flushCloud\(\) \{[\s\S]*?\n    \}/)[0];
+        check('it rides the cloud push', /refreshFriendFeed\(\)/.test(flush));
+    }
+
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);
 }

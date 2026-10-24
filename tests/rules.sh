@@ -33,4 +33,4 @@ has_java || {
 }
 
 exec firebase emulators:exec --only firestore --project flickemon-rules-test \
-    'node tests/test_rules.mjs'
+    'node tests/test_rules.mjs && node tests/test_social_e2e.mjs'

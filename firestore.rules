@@ -257,7 +257,19 @@ service cloud.firestore {
     // `members` is pinned on update: without that, either side could rewrite
     // who the friendship is with and read a stranger's feed through it.
     match /friendships/{pairKey} {
-      allow read: if signedInStudent() && request.auth.uid in resource.data.members;
+      // A friendship that does not exist yet has no members to check, and the
+      // read every first request made was refused for it. Its id is the two
+      // uids, sorted and joined with '_', so the id is what says whose it
+      // would be: either of them may learn that it is not there; nobody else
+      // may learn anything about it.
+      function memberByKey() {
+        return pairKey.matches(request.auth.uid + '_.+')
+               || pairKey.matches('.+_' + request.auth.uid);
+      }
+
+      allow read: if signedInStudent()
+                  && (resource == null ? memberByKey()
+                                       : request.auth.uid in resource.data.members);
 
       allow create: if signedInStudent()
                     && request.auth.uid in request.resource.data.members
@@ -277,8 +289,10 @@ service cloud.firestore {
                     && request.resource.data.members == resource.data.members
                     && request.resource.data.requestedBy == resource.data.requestedBy;
 
-      // Either side can walk away.
-      allow delete: if signedInStudent() && request.auth.uid in resource.data.members;
+      // Either side can walk away, including from one the other already left.
+      allow delete: if signedInStudent()
+                    && (resource == null ? memberByKey()
+                                         : request.auth.uid in resource.data.members);
     }
 
     // The feed a student publishes about themselves. `audience` lists exactly

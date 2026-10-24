@@ -431,6 +431,12 @@ const CAPTURE_CHANCE = 0.40;
 // the first one free, which is the same as having no cost at all.
 const INSTANT_CAPTURE_EXP_DEBT = 10;
 
+// The most debt a save may carry. Catch now is refused when it would go past
+// this, so three presses is the most anyone can stack. A save already above it
+// -- one that stacked them before there was a ceiling -- cannot catch anything
+// or gain EXP at all until winning has paid it back down to this.
+const EXP_DEBT_MAX = 30;
+
 const BATTLE_MODES = { CAPTURE: 'capture', EXP: 'exp' };
 
 // ── Team & EXP share ──
@@ -3082,6 +3088,7 @@ window.FlickemonConfig = {
     FLICK_UNIDENTIFIED_SETTLE_MS,
     FLICK_MAX_PLAYED_HERE,
     INSTANT_CAPTURE_EXP_DEBT,
+    EXP_DEBT_MAX,
     BATTLE_MODES,
     MAX_TEAM_SIZE,
     MAX_PARTY_SIZE,

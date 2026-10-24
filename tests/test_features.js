@@ -36,6 +36,8 @@ const battle=async(sid,lvl,shiny=false)=>{
 const win=async(sid,lvl,shiny=false)=>withRoll(0.2,()=>battle(sid,lvl,shiny));
 // The other 60%: beaten, not caught.
 const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,shiny));
+// The debt is a ledger now (see expDebtLedger); this books `n` as owed.
+const setDebt=(n)=>{ e.gameState.expDebtLedger={test:{owed:n,paid:0}}; e.gameState.expDebt=n; };
 
 (async()=>{
   e.isLoaded=true;
@@ -137,7 +139,7 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
   console.log('\n=== capture is a 40% roll ===');
   {
     e.gameState.party=[]; seq=0;
-    e.gameState.expDebt=0;
+    setDebt(0);
     e.gameState.pokedex=[];         // earlier blocks already caught some of these
     e.gameState.activeInstanceId=add(1,50);
     e.gameState.battleMode='capture';
@@ -200,7 +202,7 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
   {
     e.gameState.party=[]; seq=0;
     e.gameState.pokedex=[];
-    e.gameState.expDebt=0;
+    setDebt(0);
     e.gameState.battleMode='capture';
     e.gameState.activeInstanceId=add(1,50);
     const legend=cfg.POKEMON_REGISTRY.find(sp=>sp.isLegendary);
@@ -236,7 +238,7 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
   {
     e.gameState.party=[]; seq=0;
     e.gameState.pokedex=[];
-    e.gameState.expDebt=0;
+    setDebt(0);
     e.gameState.battleMode='capture';
     e.gameState.activeInstanceId=add(1,50);
 
@@ -436,7 +438,7 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
   console.log('\n=== instant capture ===');
   {
     e.gameState.party=[]; seq=0;
-    e.gameState.expDebt=0;
+    setDebt(0);
     e.gameState.battleMode='capture';
     e.gameState.activeInstanceId=add(1,50);
 
@@ -479,7 +481,7 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
 
     // Capturing must keep working throughout -- the debt costs levels, not
     // Pokémon. This is the part the request was explicit about.
-    e.gameState.expDebt=cfg.INSTANT_CAPTURE_EXP_DEBT;
+    setDebt(cfg.INSTANT_CAPTURE_EXP_DEBT);
     const n=e.gameState.party.length;
     await win(147,10);
     check('catching still works while in debt', e.gameState.party.length===n+1);
@@ -489,7 +491,7 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
     offEnc();
 
     // Uses stack, or the second press would be free.
-    e.gameState.expDebt=4;
+    setDebt(4);
     e.wildOpponent={wildSpecies:cfg.getSpeciesById(129),wildLevel:5,maxHp:100,
                     currentHp:100,status:'fighting',shiny:false};
     e.wildHpAcc=100;
@@ -515,10 +517,15 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
           e.normalizeState({hasStarted:true,activeInstanceId:'a',
             party:[{instanceId:'a',speciesId:1,level:5,totalExp:125}],
             expDebt:-3}).expDebt===0);
-    check('and it is bounded',
+    // It used to be trimmed to 100 on every load, which was a way to shed it.
+    check('a large debt is not trimmed on load',
           e.normalizeState({hasStarted:true,activeInstanceId:'a',
             party:[{instanceId:'a',speciesId:1,level:5,totalExp:125}],
-            expDebt:1e9}).expDebt===cfg.INSTANT_CAPTURE_EXP_DEBT*10);
+            expDebt:150}).expDebt===150);
+    check('but nonsense is still bounded',
+          e.normalizeState({hasStarted:true,activeInstanceId:'a',
+            party:[{instanceId:'a',speciesId:1,level:5,totalExp:125}],
+            expDebt:1e9}).expDebt<=1e6);
     check('it rides the cloud payload',
           typeof e.buildCloudPayload().expDebt==='number');
   }
@@ -1035,13 +1042,13 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
   {
     e.gameState.party=[]; seq=0;
     const me=add(1,30); e.gameState.activeInstanceId=me;
-    e.gameState.expDebt=0;
+    setDebt(0);
 
     check('nothing owed by default', e.getExpDebt()===0);
     check('clearing nothing is honest about it',
           (await e.adminClearExpDebt()).cleared===0);
 
-    e.gameState.expDebt=cfg.INSTANT_CAPTURE_EXP_DEBT;
+    setDebt(cfg.INSTANT_CAPTURE_EXP_DEBT);
     check('an instant capture leaves a debt',
           e.getExpDebt()===cfg.INSTANT_CAPTURE_EXP_DEBT);
     check('a win under debt pays no EXP', e.consumeWinExp(40)===0);
@@ -1058,13 +1065,13 @@ const winNoCatch=async(sid,lvl,shiny=false)=>withRoll(0.95,()=>battle(sid,lvl,sh
     // The debt is the entire cost of the instant-capture button, so clearing
     // it must not quietly hand out anything else.
     const before=e.getActivePokemon().totalExp;
-    e.gameState.expDebt=5;
+    setDebt(5);
     await e.adminClearExpDebt();
     check('clearing grants no EXP of its own',
           e.getActivePokemon().totalExp===before);
 
     // A corrupt value must not become a negative debt that pays EXP forever.
-    e.gameState.expDebt=-5;
+    setDebt(-5);
     check('a negative debt reads as none', e.getExpDebt()===0);
     check('and clearing it is a no-op', (await e.adminClearExpDebt()).cleared===0);
 

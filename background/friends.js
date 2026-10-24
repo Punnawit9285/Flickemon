@@ -111,6 +111,15 @@ const readB = (f, k) => Boolean(f && f[k] && f[k].booleanValue);
 const readI = (f, k) => Number((f && f[k] && f[k].integerValue) || 0);
 const readA = (f, k) => ((f && f[k] && f[k].arrayValue && f[k].arrayValue.values) || [])
     .map(v => v.stringValue).filter(Boolean);
+// { uid: name } as a Firestore map, and back.
+const M = (obj) => ({ mapValue: { fields: Object.fromEntries(
+    Object.entries(obj || {}).filter(([k, v]) => k && v).map(([k, v]) => [k, S(String(v).slice(0, 40))])) } });
+const readM = (f, k) => Object.fromEntries(Object.entries(
+    (f && f[k] && f[k].mapValue && f[k].mapValue.fields) || {})
+    .map(([uid, v]) => [uid, (v && v.stringValue) || '']).filter(([, v]) => v));
+
+/** Where this device remembers it has already made its account findable. */
+const FINDABLE_KEY = 'flickemon_findable_v1';
 
 // ─────────────────────────── Identity ───────────────────────────
 
@@ -231,6 +240,26 @@ async function ensureEmailKey(a) {
     await mutateDoc(url, a.idToken, () => ({ uid: S(a.uid) }));
 }
 
+/**
+ * Makes this account findable by its address, once per account per device.
+ *
+ * The email key used to be written only when a username was claimed, so a
+ * student who never chose one could not be found by the address everybody
+ * actually knows -- "Nobody found" for half the class. It is written the first
+ * time the friends screen opens instead: one read and one write, and then a
+ * flag on this device so it is never paid for again.
+ */
+export async function ensureFindable() {
+    const a = await auth();
+    if (!a.email) return { ok: false };
+    const mark = `${a.uid}:${await emailKey(a.email)}`;
+    const seen = await chrome.storage.local.get([FINDABLE_KEY]).catch(() => ({}));
+    if (seen && seen[FINDABLE_KEY] === mark) return { ok: true, cached: true };
+    await ensureEmailKey(a);
+    await chrome.storage.local.set({ [FINDABLE_KEY]: mark }).catch(() => {});
+    return { ok: true };
+}
+
 export async function readProfile(uid) {
     const a = await auth();
     const current = await readDoc(docUrl(PROFILES_COLLECTION, uid), a.idToken);
@@ -284,6 +313,7 @@ function friendshipFrom(doc, key) {
         accepted: readB(f, 'accepted'),
         blockedBy: readA(f, 'blockedBy'),
         createdAt: readI(f, 'createdAt'),
+        names: readM(f, 'names'),
     };
 }
 
@@ -294,11 +324,27 @@ function friendshipFields(o) {
         accepted: B(o.accepted),
         blockedBy: A(o.blockedBy || []),
         createdAt: I(o.createdAt || Date.now()),
+        // What each side goes by, so a request arrives with a name on it rather
+        // than eight characters of somebody's uid. Readable only by the two of
+        // them, like the rest of this document.
+        names: M(o.names),
     };
 }
 
-/** Sends a request. Accepting one that was already sent the other way. */
-export async function requestFriend(otherUid) {
+/** A friendship that is gone, or never was: the rules refuse the read (403). */
+const isGone = (err) => err && (err.status === 403 || err.status === 404);
+
+/**
+ * Sends a request. Accepting one that was already sent the other way.
+ *
+ * Created outright rather than read first. The rules let only the two members
+ * read a friendship, and a document that does not exist yet has no members --
+ * so the read every first request began with was refused with a 403 and no
+ * request was ever sent, while the panel said "Request sent." A create needs
+ * no read: the server answers 409 when the pair already has a document, and
+ * only then is there something this side may read.
+ */
+export async function requestFriend(otherUid, { name = '' } = {}) {
     const a = await auth();
     // The list we hand out is cached; we are about to change it.
     await friendshipsCache.delete(a.uid);
@@ -306,52 +352,71 @@ export async function requestFriend(otherUid) {
 
     const key = pairKey(a.uid, otherUid);
     const url = docUrl(FRIENDSHIPS_COLLECTION, key);
-    let outcome = 'requested';
+    invalidateDoc(url);
 
-    const res = await mutateDoc(url, a.idToken, (current) => {
-        if (current) {
-            const existing = friendshipFrom(current.doc, key);
-            if (existing.accepted) { outcome = 'already'; return null; }
-            // They asked first and we are now asking back, which is an accept
-            // in every way that matters. Doing it here means two people adding
-            // each other simultaneously become friends instead of deadlocking
-            // on two pending requests.
-            if (existing.requestedBy !== a.uid) {
-                outcome = 'accepted';
-                return friendshipFields({ ...existing, accepted: true });
-            }
-            outcome = 'pending';
-            return null;
-        }
-        return friendshipFields({
-            members: [a.uid, otherUid].sort(),
-            requestedBy: a.uid,
-            accepted: false,
-            blockedBy: [],
-            createdAt: Date.now(),
+    const created = await fetch(
+        `${BASE()}/${FRIENDSHIPS_COLLECTION}?documentId=${encodeURIComponent(key)}`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${a.idToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fields: friendshipFields({
+                members: [a.uid, otherUid].sort(),
+                requestedBy: a.uid,
+                accepted: false,
+                blockedBy: [],
+                createdAt: Date.now(),
+                names: { [a.uid]: name },
+            }) }),
         });
+    if (created.ok) return { ok: true, outcome: 'requested', pairKey: key };
+    if (created.status !== 409) throw new Error(`Could not send that request (${created.status}).`);
+
+    let outcome = 'pending';
+    const res = await mutateDoc(url, a.idToken, (current) => {
+        // Deleted between the create and this read: ask again next time.
+        if (!current) { outcome = 'retry'; return null; }
+        const existing = friendshipFrom(current.doc, key);
+        if (existing.accepted) { outcome = 'already'; return null; }
+        // They asked first and we are now asking back, which is an accept
+        // in every way that matters. Doing it here means two people adding
+        // each other simultaneously become friends instead of deadlocking
+        // on two pending requests.
+        if (existing.requestedBy !== a.uid) {
+            outcome = 'accepted';
+            return friendshipFields({ ...existing, accepted: true,
+                                      names: { ...existing.names, [a.uid]: name } });
+        }
+        outcome = 'pending';
+        return null;
     });
 
     if (!res.ok && !res.aborted) throw new Error('Could not send that request.');
+    if (outcome === 'retry') throw new Error('That request changed just now. Try again.');
     return { ok: true, outcome, pairKey: key };
 }
 
 /** Accepts a request somebody else sent. */
-export async function acceptFriend(otherUid) {
+export async function acceptFriend(otherUid, { name = '' } = {}) {
     const a = await auth();
     // The list we hand out is cached; we are about to change it.
     await friendshipsCache.delete(a.uid);
     const key = pairKey(a.uid, otherUid);
 
     let ok = false;
-    await mutateDoc(docUrl(FRIENDSHIPS_COLLECTION, key), a.idToken, (current) => {
-        if (!current) return null;
-        const existing = friendshipFrom(current.doc, key);
-        // Accepting your own request would make anyone a friend of anyone.
-        if (existing.requestedBy === a.uid || existing.accepted) return null;
-        ok = true;
-        return friendshipFields({ ...existing, accepted: true });
-    });
+    try {
+        await mutateDoc(docUrl(FRIENDSHIPS_COLLECTION, key), a.idToken, (current) => {
+            if (!current) return null;
+            const existing = friendshipFrom(current.doc, key);
+            // Accepting your own request would make anyone a friend of anyone.
+            if (existing.requestedBy === a.uid || existing.accepted) return null;
+            ok = true;
+            return friendshipFields({ ...existing, accepted: true,
+                                      names: { ...existing.names, [a.uid]: name } });
+        });
+    } catch (err) {
+        // They withdrew it before we got there.
+        if (isGone(err)) return { ok: false, reason: 'gone' };
+        throw err;
+    }
     return { ok };
 }
 
@@ -367,7 +432,11 @@ export async function removeFriend(otherUid) {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${a.idToken}` },
     });
-    if (!res.ok && res.status !== 404) throw new Error('Could not remove that friend.');
+    // 403 is the same answer as 404 here: the other side already removed it,
+    // and a friendship with no document has no members the rules can check.
+    if (!res.ok && res.status !== 404 && res.status !== 403) {
+        throw new Error('Could not remove that friend.');
+    }
     return { ok: true };
 }
 
@@ -419,6 +488,8 @@ async function queryFriendships(a) {
             incoming: !fs.accepted && fs.requestedBy !== a.uid,
             outgoing: !fs.accepted && fs.requestedBy === a.uid,
             blockedByThem: fs.blockedBy.includes(other),
+            // What they go by, as they wrote it when they asked or answered.
+            name: fs.names[other] || '',
         });
     }
     return { ok: true, friendships: out, me: a.uid };
@@ -543,47 +614,74 @@ export async function readLeaderboard(dayKey) {
     const a = await auth();
 
     return await boardCache.through(`board:${dayKey}`, async () => {
-        const res = await fetch(`${BASE()}:runQuery`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${a.idToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                structuredQuery: {
-                    from: [{ collectionId: LEADERBOARD_COLLECTION }],
-                    where: {
-                        fieldFilter: {
-                            field: { fieldPath: 'dayKey' },
-                            op: 'EQUAL',
-                            value: { stringValue: dayKey },
-                        },
-                    },
-                    orderBy: [{ field: { fieldPath: 'todayExp' }, direction: 'DESCENDING' }],
-                    limit: LEADERBOARD_LIMIT,
-                },
-            }),
-        });
-        if (!res.ok) {
-            const body = await res.text();
-            // The one failure worth naming, because the fix is a deploy rather
-            // than anything in the code.
-            if (/index/i.test(body)) {
-                throw new Error('The leaderboard index has not been deployed yet.');
+        // Ordered by the server when the index is there. Without it Firestore
+        // refuses the query outright, and the board was simply broken until
+        // somebody ran a deploy -- so it falls back to today's rows unordered,
+        // ranked here. That costs a read per row instead of per top-25, which
+        // is why the index is still worth deploying, and it is remembered for
+        // an hour so the refused query is not paid for on every view.
+        if (!(await boardCache.get('no-index'))) {
+            const res = await runBoardQuery(a, dayKey, { ordered: true });
+            if (res.ok) return { ok: true, board: boardRows(await res.json()), me: a.uid };
+            const body = await res.text().catch(() => '');
+            if (!(res.status === 400 || res.status === 412) || !/index/i.test(body)) {
+                throw new Error(`Could not load the board (${res.status})`);
             }
-            throw new Error(`Could not load the board (${res.status})`);
+            await boardCache.set('no-index', true, BOARD_NO_INDEX_TTL_MS);
         }
 
-        const rows = await res.json();
-        const board = [];
-        for (const row of rows) {
-            if (!row.document) continue;
-            const f = row.document.fields || {};
-            board.push({
-                uid: readS(f, 'uid') || row.document.name.split('/').pop(),
-                label: readS(f, 'label'),
-                todayExp: readI(f, 'todayExp'),
-                levels: readI(f, 'levels'),
-                streak: readI(f, 'streak'),
-            });
-        }
-        return { ok: true, board, me: a.uid };
+        const res = await runBoardQuery(a, dayKey, { ordered: false });
+        if (!res.ok) throw new Error(`Could not load the board (${res.status})`);
+        const board = boardRows(await res.json())
+            .sort((x, y) => y.todayExp - x.todayExp)
+            .slice(0, LEADERBOARD_LIMIT);
+        return { ok: true, board, me: a.uid, unindexed: true };
     });
+}
+
+/** How long a missing index is remembered before the ordered query is tried again. */
+const BOARD_NO_INDEX_TTL_MS = 60 * 60 * 1000;
+/** The most rows the unordered fallback reads to rank today's board. */
+const BOARD_FALLBACK_LIMIT = 300;
+
+function runBoardQuery(a, dayKey, { ordered }) {
+    return fetch(`${BASE()}:runQuery`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${a.idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            structuredQuery: {
+                from: [{ collectionId: LEADERBOARD_COLLECTION }],
+                where: {
+                    fieldFilter: {
+                        field: { fieldPath: 'dayKey' },
+                        op: 'EQUAL',
+                        value: { stringValue: dayKey },
+                    },
+                },
+                // An equality filter alone needs only the single-field index
+                // Firestore builds by itself; adding the order is what needs
+                // the composite one.
+                ...(ordered
+                    ? { orderBy: [{ field: { fieldPath: 'todayExp' }, direction: 'DESCENDING' }],
+                        limit: LEADERBOARD_LIMIT }
+                    : { limit: BOARD_FALLBACK_LIMIT }),
+            },
+        }),
+    });
+}
+
+function boardRows(rows) {
+    const board = [];
+    for (const row of rows || []) {
+        if (!row.document) continue;
+        const f = row.document.fields || {};
+        board.push({
+            uid: readS(f, 'uid') || row.document.name.split('/').pop(),
+            label: readS(f, 'label'),
+            todayExp: readI(f, 'todayExp'),
+            levels: readI(f, 'levels'),
+            streak: readI(f, 'streak'),
+        });
+    }
+    return board;
 }

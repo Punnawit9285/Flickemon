@@ -123,6 +123,9 @@ class FlickemonFriends {
         }
         this.myEmail = status.email || '';
         this.myUid = status.uid || '';
+        // Findable by address from now on, whether or not a username is ever
+        // chosen. Once per account per device; see ensureFindable.
+        this.engine.friendFindable().catch(() => {});
 
         this.render();
         await this.refresh({ fresh: true });
@@ -165,6 +168,10 @@ class FlickemonFriends {
                 }
             } else if (this.tab === 'global') {
                 this.boardError = '';
+                // Our own row first, if it is due: a board that leaves out the
+                // person looking at it reads as broken. Usually skipped by its
+                // own floor and fingerprint, and then costs nothing.
+                await this.engine.publishBoardRow().catch(() => {});
                 const res = await this.engine.friendBoardRead(this.engine.today());
                 if (res && res.ok) this.board = res.board || [];
                 else this.boardError = (res && res.error) || 'Could not load the board.';
@@ -288,18 +295,22 @@ class FlickemonFriends {
             shared: true,
         };
 
+        const todayKey = this.engine.today();
         const rows = accepted.map(f => {
             const feed = this.feeds[f.uid];
             const p = (feed && feed.payload) || null;
+            // Figures published on an earlier day are that day's, not today's:
+            // somebody who has not studied yet today has earned nothing yet.
+            const fresh = Boolean(p && p.today && (!p.dayKey || p.dayKey === todayKey));
             return {
                 uid: f.uid,
-                label: (p && p.username) || 'Trainer',
+                label: (p && p.username) || f.name || 'Trainer',
                 // A friend who shares nothing is not an error and not a zero:
                 // they are simply private, and the row says so rather than
                 // ranking them last for it.
                 shared: Boolean(p && p.today),
-                exp: (p && p.today && p.today.exp) || 0,
-                levels: (p && p.today && p.today.levels) || 0,
+                exp: fresh ? (p.today.exp || 0) : 0,
+                levels: fresh ? (p.today.levels || 0) : 0,
                 streak: (p && p.streak) || 0,
                 // Aged here rather than trusted from the document: a feed
                 // published twenty minutes ago said "studying" then, and the
@@ -429,6 +440,8 @@ class FlickemonFriends {
             <div class="friends-add-box">
                 <p class="pvp-8bit small">ADD SOMEONE</p>
                 <p class="pvp-sub">Their username, or their @docchula.com email.</p>
+                ${name ? '' : `<p class="pvp-sub small">Set a username above first, so whoever
+                    you add can tell who is asking.</p>`}
                 <div class="friends-inline">
                     <input class="friends-add-input" placeholder="username or email"/>
                     <button class="pvp-btn friends-add-send">SEND</button>
@@ -442,7 +455,7 @@ class FlickemonFriends {
                 <ul class="friends-requests">
                     ${incoming.map(f => `
                         <li class="friends-request">
-                            <span class="friends-name">${fesc(f.uid.slice(0, 8))}…</span>
+                            <span class="friends-name">${fesc(this.nameFor(f))}</span>
                             <button class="pvp-btn friends-accept" data-uid="${fesc(f.uid)}">ACCEPT</button>
                             <button class="pvp-btn ghost friends-decline" data-uid="${fesc(f.uid)}">DECLINE</button>
                         </li>`).join('')}
@@ -453,7 +466,7 @@ class FlickemonFriends {
                 <ul class="friends-requests">
                     ${outgoing.map(f => `
                         <li class="friends-request">
-                            <span class="friends-name">${fesc(f.uid.slice(0, 8))}…</span>
+                            <span class="friends-name">${fesc(this.nameFor(f))}</span>
                             <span class="friends-private">waiting</span>
                             <button class="pvp-btn ghost friends-decline" data-uid="${fesc(f.uid)}">CANCEL</button>
                         </li>`).join('')}
@@ -491,7 +504,7 @@ class FlickemonFriends {
                         const named = (feed && feed.payload && feed.payload.username) || null;
                         return `
                         <li class="friends-request ${blocked ? 'blocked' : ''}">
-                            <span class="friends-name">${fesc(named || (f.uid.slice(0, 8) + '…'))}</span>
+                            <span class="friends-name">${fesc(named || this.nameFor(f))}</span>
                             <span class="friends-private">${blocked ? 'sees nothing' : 'sees the above'}</span>
                             <button class="pvp-btn ghost friends-block" data-uid="${fesc(f.uid)}"
                                     data-on="${blocked ? '1' : '0'}">${blocked ? 'UNHIDE' : 'HIDE'}</button>
@@ -499,6 +512,11 @@ class FlickemonFriends {
                         </li>`;
                     }).join('')}
                 </ul>` : ''}`;
+    }
+
+    /** What a friendship's other side goes by, or a stable stand-in. */
+    nameFor(f) {
+        return f.name || `Trainer ${String(f.uid || '').slice(0, 6)}…`;
     }
 
     // ─────────────────────────── Wiring ───────────────────────────
@@ -560,17 +578,25 @@ class FlickemonFriends {
             }
 
             const res = await this.guard(() => this.engine.friendRequest(found.uid));
-            this.notice = res && res.outcome === 'accepted'
+            // Only an answer that says so is a success. This used to fall
+            // through to "Request sent." for anything at all -- including the
+            // refusal every request was getting -- so it never looked broken.
+            this.notice = !res || res.ok === false
+                ? `Could not send that request. ${(res && res.error) || 'Check your connection and try again.'}`
+                : res.outcome === 'accepted'
                 ? 'They had already asked you — you are now friends.'
-                : res && res.outcome === 'already' ? 'You are already friends.'
-                : res && res.outcome === 'pending' ? 'You have already asked them.'
+                : res.outcome === 'already' ? 'You are already friends.'
+                : res.outcome === 'pending' ? 'You have already asked them.'
                 : 'Request sent.';
             this.refresh({ fresh: true });
         });
 
         body.querySelectorAll('.friends-accept').forEach(btn => {
             btn.addEventListener('click', async () => {
-                await this.guard(() => this.engine.friendAccept(btn.dataset.uid));
+                const res = await this.guard(() => this.engine.friendAccept(btn.dataset.uid));
+                this.notice = res && res.ok ? 'You are now friends.'
+                    : res && res.reason === 'gone' ? 'They withdrew that request.'
+                    : `Could not accept. ${(res && res.error) || 'Try again.'}`;
                 this.refresh({ fresh: true });
             });
         });

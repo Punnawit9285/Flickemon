@@ -98,6 +98,8 @@
                      uid: PLAYER.uid, pending: false };
         },
         async AUTH_SIGN_IN() { return { ok: true, email: PLAYER.email, uid: PLAYER.uid }; },
+        // Signed in already, so there is nothing for a silent attempt to do.
+        async AUTH_SIGN_IN_SILENT() { return { ok: false, reason: 'tried' }; },
         async AUTH_SIGN_OUT() { return { ok: true }; },
         async AUTH_SWITCH() { return { ok: true, email: PLAYER.email, uid: PLAYER.uid }; },
         // Stand-ins: the sandbox has no chrome.identity, and the sign-in gate
@@ -369,6 +371,13 @@
             return { found: true, uid, profile: lobbies.get(profileKey(uid)) || null };
         },
 
+        // Parity with ensureFindable: opening friends makes the address work
+        // whether or not a username was ever chosen.
+        async FRIEND_FINDABLE() {
+            lobbies.put(emailKeyOf(PLAYER.email), { uid: PLAYER.uid });
+            return { ok: true };
+        },
+
         async FRIEND_REQUEST(msg) {
             const other = msg.uid;
             if (!other || other === PLAYER.uid) return { ok: false, reason: 'self' };
@@ -381,7 +390,8 @@
                 // Without this, two people adding each other at the same moment
                 // deadlock on two pending requests.
                 if (existing.requestedBy !== PLAYER.uid) {
-                    lobbies.put(key, { ...existing, accepted: true });
+                    lobbies.put(key, { ...existing, accepted: true,
+                                       names: { ...(existing.names || {}), [PLAYER.uid]: msg.name || '' } });
                     return { ok: true, outcome: 'accepted' };
                 }
                 return { ok: true, outcome: 'pending' };
@@ -390,6 +400,7 @@
                 members: [PLAYER.uid, other].sort(),
                 requestedBy: PLAYER.uid, accepted: false,
                 blockedBy: [], createdAt: Date.now(),
+                names: { [PLAYER.uid]: msg.name || '' },
             });
             return { ok: true, outcome: 'requested' };
         },
@@ -398,10 +409,10 @@
             const key = friendKey(PLAYER.uid, msg.uid);
             const existing = lobbies.get(key);
             // Accepting your own request would make anyone a friend of anyone.
-            if (!existing || existing.accepted || existing.requestedBy === PLAYER.uid) {
-                return { ok: false };
-            }
-            lobbies.put(key, { ...existing, accepted: true });
+            if (!existing) return { ok: false, reason: 'gone' };
+            if (existing.accepted || existing.requestedBy === PLAYER.uid) return { ok: false };
+            lobbies.put(key, { ...existing, accepted: true,
+                               names: { ...(existing.names || {}), [PLAYER.uid]: msg.name || '' } });
             return { ok: true };
         },
 
@@ -422,6 +433,7 @@
                     incoming: !doc.accepted && doc.requestedBy !== PLAYER.uid,
                     outgoing: !doc.accepted && doc.requestedBy === PLAYER.uid,
                     blockedByThem: (doc.blockedBy || []).includes(other),
+                    name: (doc.names && doc.names[other]) || '',
                 });
             }
             return { ok: true, friendships: out, me: PLAYER.uid };

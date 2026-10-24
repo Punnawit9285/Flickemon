@@ -22,6 +22,14 @@
             window.flickemonEngine.startFlickAccountGuard();
         }
 
+        // Signed out, but signed in to Flick: ask Google, without a window,
+        // for that one account. Most returning students are simply signed in;
+        // anyone else sees the sign-in button exactly as before.
+        if (window.flickemonEngine
+            && typeof window.flickemonEngine.trySilentSignIn === 'function') {
+            window.flickemonEngine.trySilentSignIn().catch(() => {});
+        }
+
         // Create extension container root
         const rootContainer = document.createElement('div');
         rootContainer.className = 'flickemon-ext-root';
