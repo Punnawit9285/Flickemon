@@ -305,6 +305,19 @@ console.log('\n=== friendship: request and accept, with members pinned ===');
 
     check('either side may walk away',
         await allowed(deleteDoc(doc(bob, 'friendships', key))));
+
+    // A friendship that does not exist has no members to check. Its id says
+    // whose it would be, and the first request used to be refused right here.
+    check('either side may find out that it is not there',
+        await allowed(getDoc(doc(alice, 'friendships', key))));
+    check('and so may the other',
+        await allowed(getDoc(doc(bob, 'friendships', key))));
+    check('a stranger may not, even about one that does not exist',
+        await denied(getDoc(doc(carol, 'friendships', key))));
+    check('walking away from one already left is not an error',
+        await allowed(deleteDoc(doc(alice, 'friendships', key))));
+    check('but a stranger cannot "delete" it either',
+        await denied(deleteDoc(doc(carol, 'friendships', key))));
 }
 
 console.log('\n=== the feed audience gate — the headline privacy claim ===');

@@ -120,7 +120,8 @@ already signed in to Flick on that machine.** Enforced in two places —
 
 | When | What happens |
 |---|---|
-| At sign-in | `content/flickemon-flick-identity.js` reads Flick's session, passes it as `login_hint` so Google pre-selects it, and `background/auth.js` rejects the sign-in if the address Google returns is a different account. Nothing is persisted before that check passes. |
+| At sign-in | `content/flickemon-flick-identity.js` reads Flick's session (retrying briefly if Firebase is still opening its database). `background/auth.js` then asks Google for **that account by name**: first silently (`prompt=none` + `login_hint`, no window at all), then, only if Google needs the student, with its page pointed at that account (`login_hint`, no forced chooser). The account chooser appears only for **Use a different Google account**. A different address is still refused before anything is persisted. |
+| Automatically | When a Flick page opens signed out, and right after a handover, the extension tries the silent sign-in by itself. A refusal is remembered per account for 15 minutes so Google is not asked on every page, and an account the student **signed out of by hand** is left alone until they sign in again. |
 | While playing | Every 60s and on tab focus, `enforceFlickAccount()` re-reads Flick. If it now reports a *different* account — the student left, someone else logged in — the previous student's progress is flushed to **their own** save, they are signed out, and their party is cleared from the screen. |
 
 **This fails closed.** If Flick's session cannot be read at all, sign-in is
@@ -215,8 +216,15 @@ deploy fails with *"Not in a Firebase project directory"*.
 | `firestore.indexes.json` | the one ordered query in the game — today's leaderboard | the global board returns an **error**, not an empty list, while everything else looks healthy |
 
 The index takes a few minutes to build after deploying. Until it reports
-**Enabled** in the console the board still errors, so check
-**Firestore → Indexes** before concluding something is broken.
+**Enabled**, the board falls back to reading today's rows unordered and ranking
+them in the extension — it works, but costs a read per row instead of 25 per
+view, so do deploy the index.
+
+> ⚠️ **Redeploy the rules after updating to this version.** `firestore.rules` now
+> lets the two members of a friendship learn that it does not exist yet (and
+> delete one the other side already removed). The extension works around the old
+> rules, but the new ones are the correct statement of who may see what, and
+> `./tests/rules.sh` executes them.
 
 **Do not skip this.** The default production ruleset denies everything (sync will
 silently fail), and a permissive ruleset would expose every student's save to every

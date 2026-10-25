@@ -114,15 +114,24 @@ function randomState() {
 }
 
 /**
- * Opens Google's account chooser and returns an OAuth access token.
- *
- * The chooser is forced on EVERY sign-in, not just when switching. Students
- * are usually browsing signed into a personal Google account while needing to
- * use their faculty one; without this, Google silently reuses whichever session
- * it already has and the student never gets to pick, then hits a confusing
- * "this account can't be used" rejection from the domain check.
+ * How long a sign-in with no window may take. Google's silent answer is a
+ * couple of redirects; a page that would need a person is given up on.
  */
-function launchGoogleAuth({ prompt, loginHint } = {}) {
+const SILENT_TIMEOUT_MS = 10000;
+
+/**
+ * Asks Google for an OAuth access token.
+ *
+ * `prompt` is passed through: 'select_account' opens the account chooser,
+ * 'none' asks for an answer without any page at all. `interactive: false`
+ * opens no window, and fails rather than show one.
+ *
+ * Without a prompt and with a `loginHint`, Google goes straight to that one
+ * account -- its consent page, its password page, or nothing at all if it is
+ * signed in and has already said yes. See signIn for why that, and not the
+ * chooser, is now the default.
+ */
+function launchGoogleAuth({ prompt, loginHint, interactive = true } = {}) {
     const state = randomState();
     const redirectUri = chrome.identity.getRedirectURL();
 
@@ -136,11 +145,11 @@ function launchGoogleAuth({ prompt, loginHint } = {}) {
     });
     if (prompt) params.set('prompt', prompt);
 
-    // Pre-selects the Flick account in Google's chooser. On a library PC that
-    // chooser lists every account the machine has ever used, and the student's
-    // own is rarely first. It is a HINT ONLY -- Google still lets any account be
-    // picked -- so it saves a misclick but decides nothing. requireEmail below
-    // is what actually holds.
+    // The Flick account. Without a prompt it is where Google goes directly;
+    // with the chooser it is the one pre-selected in a list that, on a library
+    // PC, holds every account the machine has ever used. Either way it is a
+    // HINT ONLY -- the address Google returns is checked in signIn() below, and
+    // that check is what actually holds.
     if (loginHint) params.set('login_hint', loginHint);
 
     // Domain hint: pre-filters the chooser when exactly one domain is allowed.
@@ -150,8 +159,16 @@ function launchGoogleAuth({ prompt, loginHint } = {}) {
 
     const url = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
 
+    // A silent attempt may pass through a page or two of Google's own redirects
+    // before it lands, so it is not abandoned at the first page load.
+    const details = interactive ? { url, interactive: true } : {
+        url, interactive: false,
+        abortOnLoadForNonInteractive: false,
+        timeoutMsForNonInteractive: SILENT_TIMEOUT_MS,
+    };
+
     return new Promise((resolve, reject) => {
-        chrome.identity.launchWebAuthFlow({ url, interactive: true }, (responseUrl) => {
+        const start = (d) => chrome.identity.launchWebAuthFlow(d, (responseUrl) => {
             if (chrome.runtime.lastError || !responseUrl) {
                 const reason = chrome.runtime.lastError?.message || 'Sign-in was cancelled.';
                 reject(signInFailure(reason.endsWith('.') ? reason : reason + '.'));
@@ -173,8 +190,17 @@ function launchGoogleAuth({ prompt, loginHint } = {}) {
             if (!token) return reject(new Error('Google returned no access token'));
             resolve(token);
         });
+        try {
+            start(details);
+        } catch (err) {
+            // A Chrome too old for the two silent options refuses the object
+            // outright. Without them a silent attempt just gives up sooner.
+            if (interactive) throw err;
+            start({ url, interactive: false });
+        }
     });
 }
+
 
 /** Trade a Google access token for Firebase credentials. */
 async function exchangeForFirebase(googleToken) {
@@ -236,10 +262,10 @@ async function refreshIdToken(auth) {
  * Interactive sign-in. Only call in response to a user gesture — Chrome
  * suppresses the account chooser otherwise.
  */
-export async function signIn({ prompt = 'select_account', requireEmail = null } = {}) {
+export async function signIn({ prompt, requireEmail = null, silent = false } = {}) {
     if (!isConfigured()) throw new Error('Cloud sync is not configured yet (see SETUP-SYNC.md)');
 
-    const googleToken = await launchGoogleAuth({ prompt, loginHint: requireEmail });
+    const googleToken = await requestGoogleToken({ prompt, requireEmail, silent });
     const auth = await exchangeForFirebase(googleToken);
 
     // Shared-machine binding: the Google account must be the one already signed
@@ -278,6 +304,40 @@ export async function signIn({ prompt = 'select_account', requireEmail = null } 
 
     await writeAuth({ ...auth, googleToken });
     return { uid: auth.uid, email: auth.email };
+}
+
+/**
+ * Which way to ask Google, in order.
+ *
+ * When Flick's account is known -- and sign-in is refused when it is not -- the
+ * question is not "which account?", it is "may we have THIS one?", and the
+ * chooser was the wrong way to ask it. On a library PC it lists a dozen
+ * @docchula.com accounts; the right one is rarely first, the wrong pick is
+ * refused afterwards, and a student can go round that loop until they give up.
+ * So:
+ *
+ *   1. Silently, for exactly that account: no window at all. Anyone signed in
+ *      to Google as the Flick account who has used Flickémon before is simply
+ *      signed in.
+ *   2. Interactively, but pointed at that account rather than at a list:
+ *      Google shows its password or consent page for it, or nothing if it can.
+ *
+ * An explicit prompt -- "Use a different Google account" -- still opens the
+ * chooser, and with no Flick account to aim at, so does a plain sign-in.
+ */
+async function requestGoogleToken({ prompt, requireEmail, silent }) {
+    if (silent) {
+        if (!requireEmail) throw new Error('A silent sign-in needs the Flick account to ask for.');
+        return await launchGoogleAuth({ prompt: 'none', loginHint: requireEmail, interactive: false });
+    }
+    if (prompt) return await launchGoogleAuth({ prompt, loginHint: requireEmail });
+    if (!requireEmail) return await launchGoogleAuth({ prompt: 'select_account' });
+
+    try {
+        return await launchGoogleAuth({ prompt: 'none', loginHint: requireEmail, interactive: false });
+    } catch {
+        return await launchGoogleAuth({ loginHint: requireEmail });
+    }
 }
 
 /**

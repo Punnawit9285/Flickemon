@@ -119,6 +119,55 @@ function fitPlayedHere(span) {
     span.to = Math.max(...parts.map(c => c[1]));
 }
 
+// A bound on each debt counter, so a mangled save cannot hold a number that
+// breaks the arithmetic. Far beyond anything play reaches.
+const DEBT_COUNTER_MAX = 1000000;
+
+/** A debt ledger with only whole, non-negative counters, keys in order. */
+function cleanDebtLedger(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+    const count = n => (Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), DEBT_COUNTER_MAX) : 0);
+    // Sorted, because the cloud fingerprint is JSON of the whole payload: two
+    // copies holding the same buckets in another order would never match.
+    for (const source of Object.keys(raw).sort()) {
+        const b = raw[source];
+        if (!b || typeof b !== 'object') continue;
+        out[source] = { owed: count(b.owed), paid: count(b.paid) };
+    }
+    return out;
+}
+
+/** Wins still owed: everything owed, less everything paid, never below zero. */
+function debtOf(ledger) {
+    const count = n => (Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
+    let owed = 0, paid = 0;
+    if (ledger && typeof ledger === 'object') {
+        for (const b of Object.values(ledger)) {
+            owed += count(b && b.owed);
+            paid += count(b && b.paid);
+        }
+    }
+    return Math.max(0, owed - paid);
+}
+
+/**
+ * Two ledgers folded into one: the larger of each counter, per device. Neither
+ * counter ever goes down, so this can only ever keep debt, never shed it.
+ */
+function mergeDebtLedgers(a, b) {
+    const left = cleanDebtLedger(a), right = cleanDebtLedger(b);
+    const out = { ...left };
+    for (const [source, bucket] of Object.entries(right)) {
+        const mine = out[source] || { owed: 0, paid: 0 };
+        out[source] = {
+            owed: Math.max(mine.owed, bucket.owed),
+            paid: Math.max(mine.paid, bucket.paid),
+        };
+    }
+    return cleanDebtLedger(out);
+}
+
 class FlickemonEngine {
     constructor() {
         // Slot 1's save. Slots 2-6 are this key with ':slot<n>' on the end, so
@@ -137,6 +186,9 @@ class FlickemonEngine {
         this.DEVICE_KEY = 'flickemon_device_id_v1';
         // Per-device UI preference — not synced, not part of the game state.
         this.THEME_KEY = 'flickemon_pokemon_theme_v1';
+        // The account a student signed out of by hand, on this device. Signing
+        // in by itself must not undo that; see trySilentSignIn.
+        this.SIGNED_OUT_KEY = 'flickemon_signed_out_by_hand_v1';
         this.deviceId = null;
         this.config = window.FlickemonConfig;
 
@@ -230,7 +282,10 @@ class FlickemonEngine {
         const cleared = this.getExpDebt();
         if (cleared === 0) return { ok: true, cleared: 0 };
 
-        this.gameState.expDebt = 0;
+        // Paid off rather than zeroed: the ledger only counts up, so a copy
+        // elsewhere that still has the debt cannot bring it back.
+        this.debtBucket().paid += cleared;
+        this.syncDebtScalar();
         this.emitState();
         await this.saveGameState({ immediate: true });
         return { ok: true, cleared };
@@ -315,9 +370,17 @@ class FlickemonEngine {
             // Set on a PVP loss; wins earn nothing until it passes. See
             // PVP_LOSS_LOCKOUT_MS in flickemon-config.js.
             rewardLockUntil: 0,
-            // Wins still owed to an instant capture. Counts DOWN, one per win.
-            // See INSTANT_CAPTURE_EXP_DEBT in flickemon-config.js.
+            // Wins still owed to an instant capture. Derived from the ledger
+            // below and kept only for older clients and the admin portal, which
+            // read it as a column. See INSTANT_CAPTURE_EXP_DEBT.
             expDebt: 0,
+            // What the debt is made of, per device: wins owed and wins paid,
+            // { [deviceId]: { owed, paid } }. Both only ever count up, so every
+            // copy merges with max() and the debt is the difference of the sums
+            // -- the wallet's trick, for the same reason. A single number merged
+            // newest-write-wins let any stale copy wipe it: a second Flick tab
+            // writing the save after a catch, then a slot switch reading it back.
+            expDebtLedger: {},
             pokedex: [],
             // Derived — the sum of studyMinutes below. Kept as a field because
             // the admin portal queries it as a column, and because every older
@@ -386,6 +449,13 @@ class FlickemonEngine {
             // The name other students see. Claimed in usernames/{name}; held
             // here so the panel can render before the network answers.
             username: '',
+            // When each account-level choice below was last made. They live in
+            // every save slot but belong to the account -- one name, one feed,
+            // one board row -- so the newest choice wins wherever it was made,
+            // and a slot switch carries it across. See carrySocial.
+            usernameAt: 0,
+            friendPrivacyAt: 0,
+            onLeaderboardAt: 0,
             // Which of FRIEND_FIELDS this account publishes. Absent from the
             // feed document entirely when off — see publishFriendFeed.
             friendPrivacy: null,
@@ -520,12 +590,15 @@ class FlickemonEngine {
 
         if (s.battleMode !== this.config.BATTLE_MODES.EXP) s.battleMode = this.config.BATTLE_MODES.CAPTURE;
 
-        // Whole, non-negative, and not unbounded: the debt stacks, so a save
-        // that has been round-tripped through something that mangled it should
-        // not be able to owe a thousand wins.
-        s.expDebt = Number.isFinite(s.expDebt) && s.expDebt > 0
-            ? Math.min(Math.floor(s.expDebt), this.config.INSTANT_CAPTURE_EXP_DEBT * 10)
-            : 0;
+        // Whole, non-negative counters. Never trimmed to a ceiling: that used
+        // to cut a debt over 100 back to 100 on every load and every slot
+        // switch, which was a way to shed it.
+        s.expDebtLedger = cleanDebtLedger(s.expDebtLedger);
+        // A save from before the ledger: whatever it owed is carried as owed.
+        if (!Object.keys(s.expDebtLedger).length && Number.isFinite(s.expDebt) && s.expDebt >= 1) {
+            s.expDebtLedger = { legacy: { owed: Math.min(Math.floor(s.expDebt), DEBT_COUNTER_MAX), paid: 0 } };
+        }
+        s.expDebt = debtOf(s.expDebtLedger);
 
         // Anything traded away is gone, whichever list it turns up in.
         const released = new Set(s.releasedIds);
@@ -732,6 +805,9 @@ class FlickemonEngine {
             ? [...new Set(s.blockedUids.filter(id => typeof id === 'string'))]
             : [];
         s.onLeaderboard = s.onLeaderboard === true;
+        for (const k of ['usernameAt', 'friendPrivacyAt', 'onLeaderboardAt']) {
+            if (!Number.isFinite(s[k]) || s[k] < 0) s[k] = 0;
+        }
 
         if (!Number.isFinite(s.lastSyncedAt)) s.lastSyncedAt = 0;
 
@@ -874,6 +950,49 @@ class FlickemonEngine {
         if (!res || res.ok === false) {
             throw new Error(res?.error || 'Sign-in failed');
         }
+        return await this.adoptSignIn(res);
+    }
+
+    /**
+     * Signs in as the Flick account with no window, if Google can say yes by
+     * itself. Never throws and never prompts: false just means the student has
+     * to press the button. Tried when a Flick page opens signed out, and after
+     * a shared computer changes hands, so the student at the keyboard is
+     * usually signed in before they have looked for the button.
+     */
+    async trySilentSignIn() {
+        try {
+            if (this.silentSignInPending) return false;
+            this.silentSignInPending = true;
+            const status = await this.getSyncStatus();
+            if (!status.reachable || !status.configured || status.signedIn) return false;
+            const requireEmail = await this.requireFlickAccount().catch(() => null);
+            if (!requireEmail) return false;
+            if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                const out = await chrome.storage.local.get([this.SIGNED_OUT_KEY]).catch(() => ({}));
+                if (out && out[this.SIGNED_OUT_KEY] === String(requireEmail).toLowerCase()) return false;
+            }
+            const res = await this.sendToWorker({ type: 'AUTH_SIGN_IN_SILENT', requireEmail });
+            if (!res || res.ok !== true) return false;
+            await this.adoptSignIn(res);
+            return true;
+        } catch {
+            return false;
+        } finally {
+            this.silentSignInPending = false;
+        }
+    }
+
+    /** Everything that follows a successful sign-in, however it happened. */
+    async adoptSignIn(res) {
+        // A different account's friends, feed and board bookkeeping, if this
+        // tab had any, are not this one's.
+        if (this.myUid && this.myUid !== res.uid) this.forgetFriends();
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            await chrome.storage.local.remove([this.SIGNED_OUT_KEY]).catch(() => {});
+        }
+        // A feed attempt made while signed out gave up; this account may try.
+        if (!Array.isArray(this.friendCache)) this.friendsLoadTried = false;
 
         // Shared-device guard. On a faculty lab PC, student B signing in after
         // student A would otherwise merge A's still-resident local party into
@@ -951,6 +1070,7 @@ class FlickemonEngine {
 
         this.gameState = this.createEmptyState();
         if (flick) Object.assign(this.gameState, flick);
+        if (!keepFlick) this.forgetFriends();
         this.wildOpponent = null;
         if (this.respawnTimer) clearTimeout(this.respawnTimer);
         this.emitWild();
@@ -1010,7 +1130,15 @@ class FlickemonEngine {
             );
         }
 
-        const identity = await reader.currentFlickIdentity();
+        // Flick's database can be briefly unreadable while Firebase itself is
+        // starting up or holding it, which on a slow library PC is long enough
+        // to refuse a student who did nothing wrong. A couple of quick retries
+        // cost nothing when it answers first time.
+        let identity = await reader.currentFlickIdentity();
+        for (let i = 1; i <= 2 && !(identity && (identity.email || identity.signedOut)); i++) {
+            await new Promise(r => setTimeout(r, 400 * i));
+            identity = await reader.currentFlickIdentity();
+        }
         if (identity && identity.signedOut) {
             throw new Error(
                 'Flick is signed out on this computer. Sign in to Flick first, ' +
@@ -1066,6 +1194,9 @@ class FlickemonEngine {
         // to B, which is half the problem. discardLocalState snapshots first.
         this.discardLocalState();
         this.emitState();
+        // And sign B in, if Google will without asking: B has just signed in
+        // to Flick, usually with this very Google session.
+        this.trySilentSignIn().then(ok => { if (ok) this.emitState(); }).catch(() => {});
         return true;
     }
 
@@ -1103,10 +1234,18 @@ class FlickemonEngine {
         }
     }
 
-    async signOut() {
+    async signOut({ byHand = false } = {}) {
         // Don't strand unsaved progress in the cloud queue.
         await this.flushCloud();
+        const status = byHand ? await this.getSyncStatus().catch(() => null) : null;
         await this.sendToWorker({ type: 'AUTH_SIGN_OUT' });
+        // A student who pressed Sign out meant it: the silent sign-in leaves
+        // that account alone until it is signed in to again by hand.
+        if (status && status.email && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            await chrome.storage.local.set({ [this.SIGNED_OUT_KEY]: String(status.email).toLowerCase() })
+                .catch(() => {});
+        }
+        this.forgetFriends();
         this.emitState();
     }
 
@@ -1404,6 +1543,7 @@ class FlickemonEngine {
         const arriving = (await this.readSlotLocally(target, owner)) || this.createEmptyState();
         arriving.ownerUid = arriving.ownerUid || owner;
         this.carryFlickAccounting(leaving, arriving);
+        this.carrySocial(leaving, arriving);
 
         // Everything the sync keeps about the slot being left.
         this.cloudDirty = false;
@@ -1450,6 +1590,36 @@ class FlickemonEngine {
         to.flickLocalMinutes = from.flickLocalMinutes || 0;
         to.flickPlayedHere = from.flickPlayedHere || {};
         if (from.flickRebaseline === true) to.flickRebaseline = true;
+    }
+
+    /**
+     * The account's friend settings, from the save being left to the one
+     * arriving. Every slot keeps a copy, but there is one username, one feed
+     * and one board row per account: left behind, switching slots silently
+     * took a student off the board, renamed them, and re-shared what they had
+     * hidden. The newer choice of the two is kept; the blocked list unions.
+     */
+    carrySocial(from, to) {
+        if ((from.ownerUid || null) !== (to.ownerUid || null)) return;
+        const newer = k => (from[k] || 0) >= (to[k] || 0);
+        // A choice made before these were timed is stamped 1: newer than the
+        // untimed copy in the arriving slot's cloud save, which would otherwise
+        // take it straight back, and older than any choice actually timed.
+        const at = k => from[k] || 1;
+        if (from.username && newer('usernameAt')) {
+            to.username = from.username;
+            to.usernameAt = at('usernameAt');
+        }
+        if (from.friendPrivacy && newer('friendPrivacyAt')) {
+            to.friendPrivacy = { ...from.friendPrivacy };
+            to.friendPrivacyAt = at('friendPrivacyAt');
+        }
+        if (newer('onLeaderboardAt')) {
+            to.onLeaderboard = from.onLeaderboard === true;
+            to.onLeaderboardAt = at('onLeaderboardAt');
+            to.leaderboardLabel = from.leaderboardLabel || '';
+        }
+        to.blockedUids = [...new Set([...(to.blockedUids || []), ...(from.blockedUids || [])])];
     }
 
     /**
@@ -1535,9 +1705,12 @@ class FlickemonEngine {
             flickCheckedAt: this.gameState.flickCheckedAt || 0,
             dailyProgress: this.gameState.dailyProgress || {},
             username: this.gameState.username || '',
+            usernameAt: this.gameState.usernameAt || 0,
             friendPrivacy: this.gameState.friendPrivacy || this.config.defaultFriendPrivacy(),
+            friendPrivacyAt: this.gameState.friendPrivacyAt || 0,
             blockedUids: this.gameState.blockedUids || [],
             onLeaderboard: this.gameState.onLeaderboard === true,
+            onLeaderboardAt: this.gameState.onLeaderboardAt || 0,
             leaderboardLabel: this.gameState.leaderboardLabel || '',
             battleMode: this.gameState.battleMode,
             favouriteIds: this.gameState.favouriteIds,
@@ -1545,6 +1718,7 @@ class FlickemonEngine {
             pvpTeamIds: this.gameState.pvpTeamIds || [],
             rewardLockUntil: this.gameState.rewardLockUntil || 0,
             expDebt: this.getExpDebt(),
+            expDebtLedger: cleanDebtLedger(this.gameState.expDebtLedger),
             shopWallet: this.gameState.shopWallet || {},
             eggs: this.gameState.eggs || [],
             incubatingId: this.gameState.incubatingId || null,
@@ -1609,22 +1783,31 @@ class FlickemonEngine {
         this.gameState.dailyProgress = this.pruneDailyProgress(
             this.mergeDailyProgress(this.gameState.dailyProgress, cloud.dailyProgress));
 
-        // A name is claimed in Firestore, so the cloud copy is the true one --
-        // but only when there IS one. A device that has not seen the claim yet
-        // must not erase it.
+        // A name is claimed in Firestore, so the cloud copy is taken -- but
+        // only when there IS one, so a device that has not seen the claim yet
+        // cannot erase it, and only when it is not older than the name here.
         const cloudName = this.config.normaliseUsername(cloud.username);
-        if (cloudName) this.gameState.username = cloudName;
+        const nameAt = Number(cloud.usernameAt) || 0;
+        if (cloudName && nameAt >= (this.gameState.usernameAt || 0)) {
+            this.gameState.username = cloudName;
+            this.gameState.usernameAt = nameAt;
+        }
 
-        // Privacy: the more private answer wins whenever two devices disagree.
-        // A student who turned sharing off on their phone and has not synced
-        // the laptop should not have the laptop turn it back on.
+        // Privacy: the newest choice wins, on its own clock, so a change made
+        // on the phone holds on a laptop that has not synced since. Between two
+        // saves that never recorded when, the more private answer wins.
         if (cloud.friendPrivacy && typeof cloud.friendPrivacy === 'object') {
             const mine = this.gameState.friendPrivacy || this.config.defaultFriendPrivacy();
+            const cloudAt = Number(cloud.friendPrivacyAt) || 0;
+            const mineAt = this.gameState.friendPrivacyAt || 0;
             const out = {};
             for (const f of this.config.FRIEND_FIELDS) {
-                out[f.key] = mine[f.key] !== false && cloud.friendPrivacy[f.key] !== false;
+                out[f.key] = cloudAt || mineAt
+                    ? (cloudAt > mineAt ? cloud.friendPrivacy[f.key] !== false : mine[f.key] !== false)
+                    : mine[f.key] !== false && cloud.friendPrivacy[f.key] !== false;
             }
             this.gameState.friendPrivacy = out;
+            this.gameState.friendPrivacyAt = Math.max(mineAt, cloudAt);
         }
         // Blocks union, for the same reason: a block made anywhere holds
         // everywhere, and unblocking is a deliberate act on a synced device.
@@ -1634,11 +1817,24 @@ class FlickemonEngine {
                 ...cloud.blockedUids.filter(id => typeof id === 'string'),
             ])];
         }
-        // Being ON the board is the less private state, so it needs BOTH sides
-        // to agree — leaving on one device takes effect everywhere.
+        // Joining or leaving the board: the newest choice, wherever it was
+        // made. Between two saves that never recorded when, being ON is the
+        // less private state, so it needs BOTH to agree.
         if (typeof cloud.onLeaderboard === 'boolean') {
-            this.gameState.onLeaderboard = this.gameState.onLeaderboard === true
-                                        && cloud.onLeaderboard === true;
+            const cloudAt = Number(cloud.onLeaderboardAt) || 0;
+            const mineAt = this.gameState.onLeaderboardAt || 0;
+            if (cloudAt || mineAt) {
+                if (cloudAt > mineAt) {
+                    this.gameState.onLeaderboard = cloud.onLeaderboard === true;
+                    this.gameState.onLeaderboardAt = cloudAt;
+                    if (typeof cloud.leaderboardLabel === 'string' && !cloud.leaderboardLabel.includes('@')) {
+                        this.gameState.leaderboardLabel = cloud.leaderboardLabel.slice(0, 24);
+                    }
+                }
+            } else {
+                this.gameState.onLeaderboard = this.gameState.onLeaderboard === true
+                                            && cloud.onLeaderboard === true;
+            }
         }
 
         // Pokédex: union. Caught outranks merely seen.
@@ -1783,12 +1979,18 @@ class FlickemonEngine {
                     ? this.config.BATTLE_MODES.EXP
                     : this.config.BATTLE_MODES.CAPTURE;
             }
-            // Newest write, NOT max(). max() would be the harsher rule and
-            // therefore the tempting one, but it can never reach zero: a device
-            // that still remembers a debt already paid off elsewhere would keep
-            // reimposing it forever.
-            if (Number.isFinite(cloud.expDebt)) {
-                this.gameState.expDebt = Math.max(0, Math.floor(cloud.expDebt));
+            // A save from a client older than the debt ledger carries only the
+            // number. It may raise the debt to that, never lower it: lowering
+            // is how a stale copy used to wipe a debt out.
+            if (!cloud.expDebtLedger && Number.isFinite(cloud.expDebt)) {
+                const short = Math.floor(cloud.expDebt) - this.getExpDebt();
+                if (short > 0) {
+                    const ledger = cleanDebtLedger(this.gameState.expDebtLedger);
+                    const legacy = ledger.legacy || { owed: 0, paid: 0 };
+                    ledger.legacy = { owed: legacy.owed + short, paid: legacy.paid };
+                    this.gameState.expDebtLedger = cleanDebtLedger(ledger);
+                    this.syncDebtScalar();
+                }
             }
             // These lists speak the remote's schema: v2 sends instanceIds, v1
             // sent speciesIds. Either way, only ids naming a Pokémon this device
@@ -1891,6 +2093,16 @@ class FlickemonEngine {
                 Math.max(this.gameState.rewardLockUntil || 0, cloud.rewardLockUntil);
         }
 
+        // Instant-capture debt: the ledger, max() per device per counter, and
+        // regardless of which save is newer -- for the lockout's reason. Owed
+        // and paid only ever count up, so a stale copy can neither wipe a debt
+        // nor bring back one that was paid off.
+        if (cloud.expDebtLedger && typeof cloud.expDebtLedger === 'object') {
+            this.gameState.expDebtLedger =
+                mergeDebtLedgers(this.gameState.expDebtLedger, cloud.expDebtLedger);
+            this.syncDebtScalar();
+        }
+
         this.gameState.lastSyncedAt = Math.max(this.gameState.lastSyncedAt || 0, cloud.lastSyncedAt || 0);
 
         return JSON.stringify(this.buildCloudPayload()) !== before;
@@ -1915,6 +2127,11 @@ class FlickemonEngine {
         // Rides the push rather than a timer of its own: this is already the
         // moment the game decided something was worth telling the server.
         if (this.isOnLeaderboard()) this.publishBoardRow().catch(() => {});
+        // The friend feed too. It used to go up only while the friends screen
+        // was open, so a friend saw whatever EXP someone had the last time
+        // they happened to look -- usually zero. Its own floor and fingerprint
+        // still decide whether anything is written.
+        this.refreshFriendFeed().catch(() => {});
 
         // saveGameState runs on every video tick, so the dirty flag says only
         // that *something* called it — not that anything actually changed. A
@@ -2039,9 +2256,42 @@ class FlickemonEngine {
         const key = this.slotStorageKey(this.activeSlot);
         const state = this.gameState;
         return this.withSaveLock(async () => {
-            this.mergeFlickAccounting(await this.readStoredSave(key), state);
+            const stored = await this.readStoredSave(key);
+            this.mergeFlickAccounting(stored, state);
+            const owedBefore = debtOf(state.expDebtLedger);
+            this.mergeStoredDebt(stored, state);
             await withTimeout(chrome.storage.local.set({ [key]: state }), STORAGE_TIMEOUT_MS);
+            // Another tab's catch, now ours too: the widget has to say so.
+            if (state === this.gameState && debtOf(state.expDebtLedger) !== owedBefore) this.emitState();
         }).catch(err => console.warn('[Flickémon] Local save failed:', err));
+    }
+
+    /**
+     * Folds the debt ledger another Flick tab on this device wrote into `state`.
+     *
+     * Every tab holds its own copy of the save and writes the whole thing. A
+     * tab opened before a catch-now still held the save from before it, and
+     * its next write put that back on disk -- debt and all gone -- where a slot
+     * switch or a reload then read it. Folded in here, under the same lock,
+     * the debt survives whichever tab writes last.
+     *
+     * Only the same student's same run: a save left by another account, or by
+     * a run an administrator deleted, owes this one nothing.
+     */
+    mergeStoredDebt(stored, state = this.gameState) {
+        if (!stored || typeof stored !== 'object' || !state || stored === state) return;
+        if ((stored.ownerUid || null) !== (state.ownerUid || null)) return;
+        const theirs = stored.saveGeneration || null;
+        if (theirs && theirs !== (state.saveGeneration || null)) return;
+        const ledger = stored.expDebtLedger && typeof stored.expDebtLedger === 'object'
+            ? stored.expDebtLedger
+            // A copy from before the ledger, written by a tab still running
+            // the old build until it is reloaded.
+            : (Number.isFinite(stored.expDebt) && stored.expDebt >= 1
+                ? { legacy: { owed: Math.floor(stored.expDebt), paid: 0 } } : null);
+        if (!ledger) return;
+        state.expDebtLedger = mergeDebtLedgers(state.expDebtLedger, ledger);
+        state.expDebt = debtOf(state.expDebtLedger);
     }
 
     /**
@@ -2303,16 +2553,19 @@ class FlickemonEngine {
     // and removing someone would leave them able to see everything until then —
     // which is the half that actually matters.
     async friendRequest(uid) {
-        const res = await this.sendToWorker({ type: 'FRIEND_REQUEST', uid });
+        const res = await this.sendToWorker({ type: 'FRIEND_REQUEST', uid, name: this.getUsername() });
         await this.afterFriendChange();
         return res;
     }
 
     async friendAccept(uid) {
-        const res = await this.sendToWorker({ type: 'FRIEND_ACCEPT', uid });
+        const res = await this.sendToWorker({ type: 'FRIEND_ACCEPT', uid, name: this.getUsername() });
         await this.afterFriendChange();
         return res;
     }
+
+    /** Makes this account findable by its address; see ensureFindable. */
+    async friendFindable() { return await this.sendToWorker({ type: 'FRIEND_FINDABLE' }); }
 
     async friendRemove(uid) {
         const res = await this.sendToWorker({ type: 'FRIEND_REMOVE', uid });
@@ -2340,6 +2593,7 @@ class FlickemonEngine {
         this.gameState.friendPrivacy = {
             ...this.getFriendPrivacy(), [key]: on !== false,
         };
+        this.gameState.friendPrivacyAt = Date.now();
         this.emitState();
         await this.saveGameState({ immediate: true });
         // Republished at once and unconditionally: turning sharing OFF must
@@ -2381,6 +2635,7 @@ class FlickemonEngine {
         }
 
         this.gameState.username = check.name;
+        this.gameState.usernameAt = Date.now();
         this.emitState();
         await this.saveGameState({ immediate: true });
         // Best effort, and after the claim: an old name left behind is untidy,
@@ -2400,6 +2655,7 @@ class FlickemonEngine {
      */
     async setOnLeaderboard(joined, email) {
         this.gameState.onLeaderboard = joined === true;
+        this.gameState.onLeaderboardAt = Date.now();
         // Kept so publishBoardRow can republish without asking for the address
         // again. Already truncated, and already public to everyone on the board.
         this.gameState.leaderboardLabel =
@@ -2557,6 +2813,37 @@ class FlickemonEngine {
 
     /** Drops the cached list, so the next read goes to the server. */
     invalidateFriends() { this.friendCache = null; }
+
+    /**
+     * Forgets everything friend-shaped this tab learned about the account that
+     * was signed in. Without it, the next student on a shared computer had the
+     * previous one's friend list in memory -- and their feed was published to
+     * that audience.
+     */
+    forgetFriends() {
+        this.friendCache = null;
+        this.friendsLoadTried = false;
+        this.myUid = null;
+        this.lastFeedFingerprint = null;
+        this.lastFeedPublishAt = 0;
+        this.lastBoardFingerprint = null;
+        this.lastBoardPublishAt = 0;
+    }
+
+    /**
+     * Republishes the feed on the cloud push's cadence. The friendship list is
+     * loaded once per page for it -- a single query -- if the friends screen
+     * has not already done so; publishFriendFeed's floor and fingerprint then
+     * decide whether a write happens at all.
+     */
+    async refreshFriendFeed() {
+        if (!Array.isArray(this.friendCache)) {
+            if (this.friendsLoadTried) return { ok: false, reason: 'no-friends-loaded' };
+            this.friendsLoadTried = true;
+            await this.loadFriends().catch(() => {});
+        }
+        return await this.publishFriendFeed();
+    }
 
     /** Accepted friends, minus anyone blocked. Absence IS the block. */
     friendAudience() {
@@ -3675,7 +3962,8 @@ class FlickemonEngine {
             if (levelDiff >= 4 && this.wildOpponent.fightDurationSeconds >= 90
                 && !this.isGuaranteedCatch(this.wildOpponent)) {
                 this.wildOpponent.status = 'escaped';
-                const partialExp = Math.round(
+                // Over the debt ceiling, an escape pays nothing either.
+                const partialExp = this.isOverDebtLimit() ? 0 : Math.round(
                     this.wildOpponent.wildLevel * this.config.ESCAPE_EXP_MULTIPLIER
                 );
                 this.wildOpponent.expGained = partialExp;
@@ -3738,13 +4026,19 @@ class FlickemonEngine {
                 // deliberate: the point of EXP mode is giving up the ordinary
                 // catches, not the once-a-month ones.
                 const guaranteed = this.isGuaranteedCatch(this.wildOpponent);
-                const captured = guaranteed || (inCaptureMode && wonRoll);
+                // Over the instant-capture debt ceiling nothing is caught, not
+                // even a guaranteed one: that is the price of having stacked
+                // past it. Read before the win pays a step of it off.
+                const debtLocked = this.isOverDebtLimit();
+                const captured = !debtLocked && (guaranteed || (inCaptureMode && wonRoll));
 
                 this.wildOpponent.status = captured ? 'captured' : 'defeated';
                 // Beaten in capture mode but not caught. The status is a defeat
                 // either way -- it lost the fight -- but the widget has to say
                 // which of the two happened or a 60% miss reads as a bug.
-                this.wildOpponent.brokeFree = inCaptureMode && !captured;
+                this.wildOpponent.brokeFree = inCaptureMode && !captured && !debtLocked;
+                // Said apart from a miss, or a lost shiny reads as bad luck.
+                this.wildOpponent.debtLocked = debtLocked && (inCaptureMode || guaranteed);
                 // Worth telling apart from an ordinary catch on the results
                 // line, especially in EXP mode where a capture is otherwise
                 // impossible and would read as a bug.
@@ -3788,6 +4082,7 @@ class FlickemonEngine {
                     joined,
                     guaranteed: this.wildOpponent.guaranteed === true,
                     brokeFree: this.wildOpponent.brokeFree === true,
+                    debtLocked: this.wildOpponent.debtLocked === true,
                     expGained: winExp,
                     moneyGained: winMoney,
                     expDebtLeft: this.getExpDebt(),
@@ -3871,8 +4166,40 @@ class FlickemonEngine {
 
     /** Wins still owed to an instant capture, or 0. */
     getExpDebt() {
-        const n = this.gameState.expDebt;
-        return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+        return debtOf(this.gameState.expDebtLedger);
+    }
+
+    /** The most debt a save may carry; see EXP_DEBT_MAX in flickemon-config.js. */
+    getExpDebtMax() {
+        return this.config.EXP_DEBT_MAX;
+    }
+
+    /**
+     * Over the ceiling: no catching of any kind and no EXP from anywhere until
+     * winning has paid the debt back down to it. Only a save that stacked debt
+     * before there was a ceiling can be here -- catch now refuses to cross it.
+     */
+    isOverDebtLimit() {
+        return this.getExpDebt() > this.getExpDebtMax();
+    }
+
+    /** Whether one more catch now would stay within the ceiling. */
+    canInstantCapture() {
+        return this.getExpDebt() + this.config.INSTANT_CAPTURE_EXP_DEBT <= this.getExpDebtMax();
+    }
+
+    /** This device's debt counters, created on first use. See expDebtLedger. */
+    debtBucket() {
+        const ledger = this.gameState.expDebtLedger && typeof this.gameState.expDebtLedger === 'object'
+            ? this.gameState.expDebtLedger : (this.gameState.expDebtLedger = {});
+        const key = this.studySource();
+        if (!ledger[key]) ledger[key] = { owed: 0, paid: 0 };
+        return ledger[key];
+    }
+
+    /** Keeps the plain number older clients and the admin portal read in step. */
+    syncDebtScalar() {
+        this.gameState.expDebt = this.getExpDebt();
     }
 
     /**
@@ -3885,9 +4212,9 @@ class FlickemonEngine {
      * wait out the debt for free.
      */
     consumeWinExp(wildLevel) {
-        const debt = this.getExpDebt();
-        if (debt > 0) {
-            this.gameState.expDebt = debt - 1;
+        if (this.getExpDebt() > 0) {
+            this.debtBucket().paid += 1;
+            this.syncDebtScalar();
             return 0;
         }
         return Math.round(wildLevel * this.getWinExpBonus());
@@ -3910,16 +4237,52 @@ class FlickemonEngine {
         if (!wild || wild.status !== 'fighting') return { ok: false, reason: 'no-battle' };
         if (!this.isCaptureMode()) return { ok: false, reason: 'mode' };
 
-        wild.status = 'captured';
-        wild.brokeFree = false;
-        wild.instant = true;
-        wild.currentHp = 0;
-        wild.expGained = 0;
-        this.wildHpAcc = 0;
+        // Booked under the save lock, against the debt as it stands on disk.
+        // Two Flick tabs share one device's counters, so two presses at once,
+        // each in a tab that had not yet seen the other's, would both write
+        // "owed 10" and one of them would cost nothing. Taking the lock, folding
+        // in what is on disk, then booking and writing before letting go makes
+        // the second press see the first -- and the ceiling hold across tabs.
+        const key = this.slotStorageKey(this.activeSlot);
+        const state = this.gameState;
+        let refused = null;
+        let joined = false;
+        await this.withSaveLock(async () => {
+            const stored = await this.readStoredSave(key);
+            this.mergeFlickAccounting(stored, state);
+            this.mergeStoredDebt(stored, state);
+            // The battle may have ended, or the slot changed, while waiting.
+            if (state !== this.gameState || this.wildOpponent !== wild || wild.status !== 'fighting') {
+                refused = { ok: false, reason: 'no-battle' };
+                return;
+            }
+            // Never past the ceiling, and nothing at all while over it.
+            if (!this.canInstantCapture()) {
+                refused = { ok: false, reason: 'debt-limit', debt: this.getExpDebt(), max: this.getExpDebtMax() };
+                return;
+            }
 
-        const joined = this.addWildToParty(wild);
-        this.updatePokedex(wild.wildSpecies.id, true, wild.shiny === true);
-        this.gameState.expDebt = this.getExpDebt() + this.config.INSTANT_CAPTURE_EXP_DEBT;
+            wild.status = 'captured';
+            wild.brokeFree = false;
+            wild.instant = true;
+            wild.currentHp = 0;
+            wild.expGained = 0;
+            this.wildHpAcc = 0;
+
+            joined = this.addWildToParty(wild);
+            this.updatePokedex(wild.wildSpecies.id, true, wild.shiny === true);
+            this.debtBucket().owed += this.config.INSTANT_CAPTURE_EXP_DEBT;
+            this.syncDebtScalar();
+            this.gameState.wildOpponent = wild;
+            if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                await withTimeout(chrome.storage.local.set({ [key]: state }), STORAGE_TIMEOUT_MS)
+                    .catch(err => console.warn('[Flickémon] Local save failed:', err));
+            }
+        });
+        if (refused) {
+            this.emitState();
+            return refused;
+        }
 
         this.encounterListeners.forEach(cb => cb({
             wildSpecies: wild.wildSpecies,
@@ -3940,7 +4303,7 @@ class FlickemonEngine {
         this.emitWild();
         this.emitState();
         await this.saveGameState({ immediate: true });
-        return { ok: true, joined, debt: this.getExpDebt() };
+        return { ok: true, joined, debt: this.getExpDebt(), max: this.getExpDebtMax() };
     }
 
     spawnWildOpponent() {
@@ -4038,6 +4401,9 @@ class FlickemonEngine {
     addExpToActive(rawExp) {
         const active = this.getActivePokemon();
         if (!active || active.level >= this.config.MAX_LEVEL) return null;
+        // Over the instant-capture debt ceiling no EXP lands from anywhere --
+        // wins, escapes, Flick progress. This is the one funnel they all share.
+        if (this.isOverDebtLimit()) return null;
 
         // Every EXP gain in the game funnels through here — battle wins, escape
         // consolation, and by extension the team's share — so both boosts are
@@ -4655,7 +5021,9 @@ class FlickemonEngine {
         // the better or the worse way to play as the curve is retuned.
         const active = this.getActivePokemon();
         const perMinute = active ? (active.level * this.getWinExpBonus()) / 2.5 : 0;
-        const exp = Math.round(perMinute * minutes);
+        // Nothing over the instant-capture debt ceiling, and the return value
+        // says so rather than announcing EXP that never landed.
+        const exp = this.isOverDebtLimit() ? 0 : Math.round(perMinute * minutes);
         // Read BEFORE the award, because addExpToActive mutates the same object.
         const levelBefore = active ? active.level : 0;
         const speciesId = active ? active.speciesId : null;

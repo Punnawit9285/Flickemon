@@ -361,6 +361,38 @@ const reset = async () => {
         e.sendToWorker = realSend;
     }
 
+    console.log('\n=== the account\'s friend settings follow it across slots ===');
+    {
+        await reset();
+        // Slot 1: on the board, a name, sharing trimmed. Slot 2's own cloud copy
+        // still says what it said the last time it was played.
+        e.gameState = game(4, 12, { username: 'nan', usernameAt: 500, onLeaderboard: true,
+            onLeaderboardAt: 500, leaderboardLabel: 'nan',
+            friendPrivacy: { ...e.config.defaultFriendPrivacy(), today: false }, friendPrivacyAt: 500,
+            blockedUids: ['pest'] });
+        e.writeLocal();
+        cloud[2] = { state: { ...game(7, 20), username: 'old', usernameAt: 0, onLeaderboard: false,
+                              onLeaderboardAt: 0, lastSyncedAt: Date.now() + 9e6 }, generation: 'g2' };
+
+        await e.switchSlot(2);
+        check('still on the board', e.isOnLeaderboard() === true);
+        check('still the same name', e.getUsername() === 'nan', e.getUsername());
+        check('still not sharing what was hidden', e.getFriendPrivacy().today === false);
+        check('still blocking who was blocked', e.isBlocked('pest'));
+
+        // Leaving the board here holds when going back to slot 1.
+        e.sendToWorker = async msg => (msg.type === 'FRIEND_BOARD_PUBLISH' ? { ok: true } : (await (async () => {
+            switch (msg.type) {
+                case 'AUTH_STATUS': return { configured: true, signedIn: true, uid: ME, email: 'me@docchula.com' };
+                case 'CLOUD_PULL': return { signedIn: true, state: null };
+                default: return { ok: true };
+            }
+        })()));
+        await e.setOnLeaderboard(false, 'me@docchula.com');
+        await e.switchSlot(1);
+        check('leaving the board in one slot holds in the other', e.isOnLeaderboard() === false);
+    }
+
     console.log('\n  ' + pass + ' passed, ' + fail + ' failed\n');
     process.exit(fail ? 1 : 0);
 })();

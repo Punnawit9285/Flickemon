@@ -138,10 +138,39 @@ export async function readDoc(url, idToken, { fresh = false } = {}) {
     return await docCache.through(url, async () => {
         const res = await fetch(url, { headers: { Authorization: `Bearer ${idToken}` } });
         if (res.status === 404) return null;
-        if (!res.ok) throw new Error(`Could not read (${res.status})`);
+        if (!res.ok) {
+            // The status rides along, so a caller can tell "the rules refused"
+            // from "the network failed" without parsing the message.
+            const err = new Error(`Could not read (${res.status})`);
+            err.status = res.status;
+            throw err;
+        }
         const doc = await res.json();
         return { doc, updateTime: doc.updateTime || null };
     });
+}
+
+/**
+ * Where a document URL is committed to, and the name a commit addresses it by.
+ * `.../v1/projects/P/databases/(default)/documents/col/id` becomes the commit
+ * endpoint and `projects/P/databases/(default)/documents/col/id`.
+ */
+function commitTarget(url) {
+    const at = url.indexOf('/documents/');
+    const root = url.slice(0, at);
+    const path = url.slice(at + '/documents/'.length).split('?')[0]
+        .split('/').map(decodeURIComponent).join('/');
+    const project = root.slice(root.indexOf('/v1/') + 4);
+    return { commitUrl: `${root}/documents:commit`, name: `${project}/documents/${path}` };
+}
+
+/** Did the server refuse a write because the document moved under it? */
+async function isConflict(res) {
+    if (res.status === 409 || res.status === 412) return true;
+    if (res.status !== 400) return false;
+    const body = await res.json().catch(() => null);
+    const status = body && (Array.isArray(body) ? body[0] : body).error;
+    return Boolean(status && status.status === 'FAILED_PRECONDITION');
 }
 
 /**
@@ -152,35 +181,49 @@ export async function readDoc(url, idToken, { fresh = false } = {}) {
  * document in between, the server rejects it and this retries once against a
  * guaranteed-fresh copy. One retry is enough — two clients cannot livelock when
  * each only writes on its own turn.
+ *
+ * Sent as a commit with a precondition -- the document's update time, or "does
+ * not exist yet" -- rather than a PATCH carrying `currentDocument.updateTime`.
+ * The PATCH form was answered by the Firestore emulator as a CREATE, so the
+ * rules judged an edit to somebody else's document by the create rule and
+ * refused it: accepting a friend request failed every time. The commit form is
+ * judged as the update it is, and is what the save path already uses.
  */
 export async function mutateDoc(url, idToken, transform) {
+    const { commitUrl, name } = commitTarget(url);
     for (let attempt = 0; attempt < 2; attempt++) {
         const current = await readDoc(url, idToken, { fresh: attempt > 0 });
         const fields = await transform(current);
         if (!fields) return { ok: false, aborted: true };
 
-        const target = current && current.updateTime
-            ? `${url}?currentDocument.updateTime=${encodeURIComponent(current.updateTime)}`
-            : url;
-
-        const res = await fetch(target, {
-            method: 'PATCH',
+        const res = await fetch(commitUrl, {
+            method: 'POST',
             headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fields }),
+            body: JSON.stringify({ writes: [{
+                update: { name, fields },
+                currentDocument: current && current.updateTime
+                    ? { updateTime: current.updateTime }
+                    : { exists: false },
+            }] }),
         });
 
         if (res.ok) {
-            const doc = await res.json();
-            docCache.set(url, { doc, updateTime: doc.updateTime || null });
+            const out = await res.json().catch(() => null);
+            const updateTime = (out && out.writeResults && out.writeResults[0]
+                                && out.writeResults[0].updateTime) || (out && out.commitTime) || null;
+            const doc = { name, fields, updateTime };
+            docCache.set(url, { doc, updateTime });
             return { ok: true, doc };
         }
 
-        // 409/412: someone else wrote first. Drop the stale copy and rebuild.
-        if (res.status === 409 || res.status === 412) {
+        // Someone else wrote first. Drop the stale copy and rebuild.
+        if (await isConflict(res)) {
             docCache.delete(url);
             continue;
         }
-        throw new Error(`Could not write (${res.status})`);
+        const err = new Error(`Could not write (${res.status})`);
+        err.status = res.status;
+        throw err;
     }
 
     return { ok: false, conflict: true };

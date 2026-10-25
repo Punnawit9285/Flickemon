@@ -37,6 +37,7 @@
     --flick-danger: var(--ion-color-danger, #ef4444);
     --flick-success: var(--ion-color-success, #10b981);
     --flick-warning: var(--ion-color-warning, #f59e0b);
+    --flick-warning-rgb: var(--ion-color-warning-rgb, 245, 158, 11);
     --flick-on-semantic: var(--ion-color-danger-contrast, #ffffff);
 
     /* Neutral fills. Ionic derives its step scale between the background and
@@ -1875,6 +1876,16 @@
 }
 .signin-gate-error.visible { display: block; }
 
+/* Which account it has to be, said before the button rather than after a refusal. */
+.signin-gate-account {
+    display: none;
+    margin: 0 auto 1rem auto;
+    max-width: 22rem;
+    font-size: 0.8rem;
+    color: var(--flick-text-muted);
+}
+.signin-gate-account.visible { display: block; }
+
 /* Offered alongside the retry once an attempt fails: the account Google reuses
    silently is very often the wrong one, and the failure names it. */
 .signin-gate-switch {
@@ -1965,6 +1976,27 @@
     font-size: 0.6rem; font-weight: 700;
     color: var(--flick-danger);
 }
+/* Over the ceiling, where it stops catching and EXP altogether. */
+.exp-debt-flag.over { font-weight: 800; text-transform: uppercase; letter-spacing: 0.02em; }
+
+/* At the ceiling the button stays pressable -- the warning says why not. */
+.catch-now-btn.at-limit { opacity: 0.55; border-style: dashed; }
+.catch-now-limit { font-weight: 700; opacity: 0.85; }
+
+/* The warning every press of CATCH NOW opens. Short: it is read once a press. */
+.catch-now-overlay .flickemon-modal-container { height: auto; max-height: 90vh; max-width: 420px; }
+.catch-now-warning { display: flex; flex-direction: column; gap: 10px; }
+.catch-now-lead { margin: 0; font-size: 0.86rem; font-weight: 700; color: var(--flick-text); }
+.catch-now-terms {
+    margin: 0; padding: 8px 10px 8px 26px;
+    border-left: 3px solid var(--flick-warning);
+    background: rgba(var(--flick-warning-rgb), 0.08);
+    font-size: 0.74rem; line-height: 1.5;
+    color: var(--flick-text);
+}
+.catch-now-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.catch-now-result { display: none; margin: 0; font-size: 0.72rem; color: var(--flick-danger); }
+.catch-now-result.visible { display: block; }
 
 
 /* The header gets tight on narrow widgets — drop to just the icon. */

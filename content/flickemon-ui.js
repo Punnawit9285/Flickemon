@@ -343,6 +343,9 @@ class FlickemonUI {
         const reward = this.engine.getActiveReward ? this.engine.getActiveReward() : null;
         const money = this.engine.getMoney ? this.engine.getMoney() : 0;
         const expDebt = this.engine.getExpDebt ? this.engine.getExpDebt() : 0;
+        const debtMax = this.config.EXP_DEBT_MAX;
+        const overDebt = expDebt > debtMax;
+        const canCatchNow = expDebt + this.config.INSTANT_CAPTURE_EXP_DEBT <= debtMax;
 
         // onVideoProgress fires ~4x/sec, and rebuilding innerHTML each time tore
         // down every button mid-click and wiped the open popover — the widget
@@ -467,7 +470,8 @@ class FlickemonUI {
                                         // A capture that missed its roll is still a win —
                                         // it just did not end with a Pokémon. Saying so is
                                         // what stops a 60% miss reading as a lost catch.
-                                        ? `${wild.brokeFree ? '💨 It broke free and fled!' : '💥 Defeated!'} (+${wild.expGained || 0} EXP, +${this.config.formatMoney(wild.moneyGained || 0)})`
+                                        ? `${wild.debtLocked ? '⛔ Defeated — no catching while over the debt limit'
+                                            : wild.brokeFree ? '💨 It broke free and fled!' : '💥 Defeated!'} (+${wild.expGained || 0} EXP, +${this.config.formatMoney(wild.moneyGained || 0)})`
                                         : wild.status === 'escaped'
                                         ? `💨 Escaped! (+${wild.expGained || 0} EXP, +${this.config.formatMoney(wild.moneyGained || 0)})`
                                         : `⚔️ Fighting... (HP ${wild.currentHp}/${wild.maxHp})`}
@@ -481,18 +485,29 @@ class FlickemonUI {
                                     // sitting beside it. Never offer to sell
                                     // what is already free — ten wins of EXP for
                                     // nothing you were not getting anyway.
-                                    (wild.wildSpecies.isLegendary || wild.shiny)
+                                    overDebt
+                                    ? `<div class="exp-debt-flag over">No catching until your debt is back to ${debtMax}</div>`
+                                    : (wild.wildSpecies.isLegendary || wild.shiny)
                                     ? `<div class="guaranteed-flag">Guaranteed catch — just win</div>`
                                     : isCaptureMode
-                                    ? `<button class="catch-now-btn"
-                                            title="Catch it now, without finishing the fight. Costs the EXP from your next ${this.config.INSTANT_CAPTURE_EXP_DEBT} wins.">
-                                        ${pokeballSvg} CATCH NOW
+                                    // Always pressable, even at the limit: every
+                                    // press opens the warning, and at the limit
+                                    // the warning is what says why not.
+                                    ? `<button class="catch-now-btn ${canCatchNow ? '' : 'at-limit'}"
+                                            title="${canCatchNow
+                                                ? `Catch it now, without finishing the fight. Costs the EXP from your next ${this.config.INSTANT_CAPTURE_EXP_DEBT} wins.`
+                                                : `Debt limit reached (${expDebt}/${debtMax}). Win battles to pay it down.`}">
+                                        ${pokeballSvg} CATCH NOW${canCatchNow ? '' : ` <span class="catch-now-limit">${expDebt}/${debtMax}</span>`}
                                     </button>`
                                     : '') : ''}
                                 ${expDebt > 0 ? `
-                                    <div class="exp-debt-flag"
-                                         title="You spent this on an instant capture. Catching still works normally.">
-                                        No EXP for ${expDebt} more win${expDebt === 1 ? '' : 's'}
+                                    <div class="exp-debt-flag ${overDebt ? 'over' : ''}"
+                                         title="${overDebt
+                                             ? `Over the limit of ${debtMax}: no catching and no EXP from anything until winning pays it down to ${debtMax}.`
+                                             : 'You spent this on an instant capture. Catching still works normally.'}">
+                                        ${overDebt
+                                            ? `Debt ${expDebt}/${debtMax} — no catching or EXP for ${expDebt - debtMax} more win${expDebt - debtMax === 1 ? '' : 's'}`
+                                            : `No EXP for ${expDebt} more win${expDebt === 1 ? '' : 's'} · debt ${expDebt}/${debtMax}`}
                                     </div>` : ''}
                             </div>
                         ` : '<div class="searching-text">Searching for wild Pokémon...</div>'}
@@ -503,22 +518,10 @@ class FlickemonUI {
 
         // Irreversible, and expensive enough to be worth a beat of thought:
         // ten wins is roughly twenty-five minutes of lectures with nothing to
-        // show for them. Confirm rather than let a mis-click spend it.
-        card.querySelector('.catch-now-btn')?.addEventListener('click', async (e) => {
+        // show for them. Every press warns, every time -- see openCatchNowWarning.
+        card.querySelector('.catch-now-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
-            const cost = this.config.INSTANT_CAPTURE_EXP_DEBT;
-            const owed = this.engine.getExpDebt();
-            if (!confirm(
-                `Catch it now, without finishing the fight?\n\n`
-                + `Your next ${cost} wins will award no EXP`
-                + (owed > 0 ? ` — on top of the ${owed} you already owe.` : '.')
-                + `\nCatching still works normally the whole time.`
-            )) return;
-            const res = await this.engine.instantCapture();
-            if (res.ok && !res.joined) {
-                alert('Your party is full, so it could not join — but it is '
-                    + 'recorded in your Pokédex.');
-            }
+            this.openCatchNowWarning();
         });
 
         // Each segment selects its own mode directly, rather than one button
@@ -678,6 +681,81 @@ class FlickemonUI {
         this.pvp.open();
     }
 
+    // ────────────────────────── Catch now ──────────────────────────
+
+    /**
+     * The warning every press of CATCH NOW opens, before anything is spent.
+     *
+     * Drawn in the page rather than with confirm(): a page that has once been
+     * told to stop showing dialogs answers every later confirm() with "cancel"
+     * at once, which turned the button into one that silently did nothing. At
+     * the limit it still opens, and says why the catch cannot happen.
+     */
+    openCatchNowWarning() {
+        const wild = this.engine.wildOpponent;
+        if (!wild || wild.status !== 'fighting') return;
+        const cost = this.config.INSTANT_CAPTURE_EXP_DEBT;
+        const max = this.config.EXP_DEBT_MAX;
+        const owed = this.engine.getExpDebt();
+        const after = owed + cost;
+        const allowed = after <= max;
+
+        const modal = this.createModalOverlay('⚠️ Catch now?');
+        modal.overlay.classList.add('catch-now-overlay');
+        modal.body.innerHTML = `
+            <div class="catch-now-warning">
+                ${allowed ? `
+                    <p class="catch-now-lead">Catch <b>${esc(wild.wildSpecies.name)}</b> right now, without finishing the fight?</p>
+                    <ul class="catch-now-terms">
+                        <li>Your next <b>${cost} wins</b> give <b>no EXP</b>.</li>
+                        <li>Debt: <b>${owed}</b> → <b>${after}</b> of a maximum <b>${max}</b>.</li>
+                        <li>Catch now cannot take you past ${max}. Over ${max} you can't catch anything or earn EXP until winning pays it back down.</li>
+                        <li>The debt stays with this save on every tab and device. Switching save slots or tabs does not clear it.</li>
+                    </ul>
+                    <div class="catch-now-actions">
+                        <button class="pvp-btn ghost catch-now-cancel">CANCEL</button>
+                        <button class="pvp-btn catch-now-confirm">CATCH IT (+${cost} DEBT)</button>
+                    </div>
+                ` : `
+                    <p class="catch-now-lead">You can't use Catch Now right now.</p>
+                    <ul class="catch-now-terms">
+                        <li>Your debt is <b>${owed}</b>, and one more catch would make it <b>${after}</b> — over the maximum of <b>${max}</b>.</li>
+                        <li>Each win pays off 1. Win <b>${after - max}</b> more battle${after - max === 1 ? '' : 's'} and Catch Now opens again.</li>
+                        ${owed > max ? `<li>You are over the limit already: until it is back to ${max}, nothing can be caught and no EXP is earned.</li>` : ''}
+                    </ul>
+                    <div class="catch-now-actions">
+                        <button class="pvp-btn catch-now-cancel">OK</button>
+                    </div>
+                `}
+                <p class="catch-now-result"></p>
+            </div>`;
+
+        const close = () => this.closeModal(modal.overlay);
+        modal.overlay.addEventListener('click', (e) => { if (e.target === modal.overlay) close(); });
+        modal.body.querySelector('.catch-now-cancel')?.addEventListener('click', close);
+        modal.body.querySelector('.catch-now-confirm')?.addEventListener('click', async (e) => {
+            e.currentTarget.disabled = true;
+            const res = await this.engine.instantCapture();
+            const out = modal.body.querySelector('.catch-now-result');
+            if (res && res.ok) {
+                if (!res.joined) {
+                    out.textContent = 'Your party is full, so it could not join — but it is recorded in your Pokédex.';
+                    out.classList.add('visible');
+                    modal.body.querySelector('.catch-now-actions').innerHTML =
+                        '<button class="pvp-btn catch-now-cancel">OK</button>';
+                    modal.body.querySelector('.catch-now-cancel').addEventListener('click', close);
+                    return;
+                }
+                close();
+                return;
+            }
+            out.textContent = res && res.reason === 'debt-limit'
+                ? `Not caught: your debt is ${res.debt}/${res.max}, and catch now cannot take it past ${res.max}.`
+                : 'Not caught — the battle already ended.';
+            out.classList.add('visible');
+        });
+    }
+
     // ────────────────────────── Sign-In Gate ──────────────────────────
 
     /**
@@ -697,7 +775,9 @@ class FlickemonUI {
             return;
         }
 
-        if (!status.signedIn) {
+        // Google may sign the Flick account in without a window at all; only
+        // when it will not is the student asked.
+        if (!status.signedIn && !(status.reachable && await this.engine.trySilentSignIn())) {
             this.openSignInGateModal({ workerDown: !status.reachable });
             return;
         }
@@ -736,6 +816,7 @@ class FlickemonUI {
                     Your Pokémon, Pokédex and study time are saved to your account,
                     so your progress follows you to any device you study on.
                 </p>
+                <p class="signin-gate-account"></p>
                 <button class="signin-gate-btn">Sign in with Google</button>
                 <p class="signin-gate-error"></p>
                 <button class="signin-gate-switch">Use a different Google account</button>
@@ -759,6 +840,22 @@ class FlickemonUI {
             skipBtn.classList.add('visible');
             skipNote.classList.add('visible');
         };
+
+        // Say up front which account this has to be. On a computer with many
+        // Google accounts that is the whole difficulty, and Google's own page
+        // will not say it.
+        const accountEl = modal.body.querySelector('.signin-gate-account');
+        const reader = window.FlickemonFlickIdentity;
+        if (accountEl && reader && typeof reader.currentFlickIdentity === 'function') {
+            Promise.resolve(reader.currentFlickIdentity()).then(id => {
+                if (id && id.email) {
+                    accountEl.innerHTML = `Flick is signed in as <b>${esc(id.email)}</b>, so you will be signed in as that account.`;
+                } else if (id && id.signedOut) {
+                    accountEl.textContent = 'Sign in to Flick first, then sign in here with the same Google account.';
+                }
+                if (accountEl.textContent) accountEl.classList.add('visible');
+            }).catch(() => {});
+        }
 
         // Google's failure page names whichever account it silently reused, so
         // the student's first reading of any failure is "wrong account" — give
@@ -1765,7 +1862,7 @@ class FlickemonUI {
         });
 
         signOutBtn?.addEventListener('click', async () => {
-            await this.engine.signOut();
+            await this.engine.signOut({ byHand: true });
             renderSyncStatus();
         });
 
@@ -2448,7 +2545,7 @@ class FlickemonUI {
                         ['EXP mode', `No ordinary captures, but ${c.EXP_MODE_WIN_EXP_BONUS}x EXP — about twice as fast.`],
                         ['Shinies and legendaries', 'Always caught, in either mode, and they never flee.'],
                         ['Escapes', `A Pokémon ${4}+ levels above you flees after 90 seconds, leaving ${pct(c.ESCAPE_EXP_MULTIPLIER)} EXP.`],
-                        ['Catch now', `Skips the fight and the roll. Costs the EXP from your next ${c.INSTANT_CAPTURE_EXP_DEBT} wins.`],
+                        ['Catch now', `Skips the fight and the roll. Costs the EXP from your next ${c.INSTANT_CAPTURE_EXP_DEBT} wins, and the debt can never go past ${c.EXP_DEBT_MAX}. Over ${c.EXP_DEBT_MAX}, nothing can be caught and no EXP is earned until wins pay it down.`],
                     ])}
                     <p>Who you meet depends on how far your partner has come — the world
                     grows up with it.</p>
